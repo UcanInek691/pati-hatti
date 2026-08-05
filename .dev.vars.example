@@ -1,0 +1,4 @@
+WHATSAPP_VERIFY_TOKEN=[whatsapp-verify-token]
+WHATSAPP_APP_SECRET=[whatsapp-app-secret]
+SUPABASE_URL=[supabase-url]
+SUPABASE_SERVICE_ROLE_KEY=[supabase-service-role-key]
