@@ -143,3 +143,86 @@ Kabul kriterleri:
 - İmza doğrulanmadan JSON işlenmez.
 - Standart teslim formatıyla rapor ver.
 ```
+
+## Görev 02 Codex sonucu
+
+**Karar: GEÇTİ.** Codex; medya türü kontrolünü tam eşleşmeye çevirdi, boş APP_SECRET durumunu fail-closed yaptı ve JSON çözümlemesini geçersiz UTF-8 için katılaştırdı. Frozen install, typecheck, 30 test ve Wrangler dry-run başarılıdır. Güvenli başlangıç durumu `e50a2f7` commit'i olarak kaydedilmiştir.
+
+## Görev 03 — Sonnet'e gönderilecek prompt
+
+```text
+VetAI Görev 03'ü uygula. Önce AI_WORKFLOW.md, mevcut Git durumu ve mevcut kaynakları oku. Bu görev yalnızca Supabase/PostgreSQL çekirdek tenant şeması, RLS politikaları ve ilgili kısa dokümantasyon içindir. Worker runtime entegrasyonu, Supabase JS client, webhook event işleme, LLM, randevu, triyaj, RAG ve admin panel ekleme.
+
+Başlamadan önce:
+- git status ile başlangıç durumunu kaydet.
+- Mevcut commit ve dosyaları değiştirme veya yeniden biçimlendirme.
+- Docker bu makinede kurulu değil. Migration'ı yerel veritabanında çalıştırmadıysan çalıştırılmış gibi raporlama.
+
+Oluştur:
+1. Gerekliyse minimal supabase/config.toml.
+2. Tek bir ileri yönlü migration: supabase/migrations/20260805_core_tenant_schema.sql
+3. docs/database-schema.md
+
+Migration'da yalnızca şu tabloları oluştur:
+- clinics
+- clinic_staff
+- whatsapp_accounts
+- owners
+- pets
+- conversations
+- messages
+- webhook_events
+
+Zorunlu veri modeli:
+- UUID primary key ve timestamptz alanları kullan.
+- Tenant altındaki her tabloda clinic_id NOT NULL olsun.
+- clinic_staff, auth.users ile user_id üzerinden ilişkilensin; (clinic_id, user_id) primary key olsun.
+- whatsapp_accounts.phone_number_id global unique olsun; secret/token veritabanında tutulmasın.
+- owners için (clinic_id, phone_e164) unique ve temel E.164 CHECK kullan.
+- Pet'in owner'ı aynı clinic'e ait olmalı.
+- Conversation owner ve opsiyonel pet ilişkisi aynı clinic/owner sınırını aşamamalı. Bunu yalnızca uygulama koduna bırakma; composite foreign key/unique constraint ile uygula.
+- Message'ın conversation ilişkisi aynı clinic içinde composite foreign key ile korunmalı.
+- messages.whatsapp_message_id için NULL olmayan değerlerde clinic bazlı partial unique index oluştur.
+- webhook_events için clinic bazlı provider_event_id unique olsun; payload_hash, processing_status, received_at, processed_at ve maskelenmiş last_error alanlarını değerlendir. Ham WhatsApp payload'ını bu tabloda saklama.
+- Yalnızca gerçekten sorgulanacak foreign key, telefon, durum ve zaman alanlarına gerekli indexleri ekle.
+- Tek bir set_updated_at() trigger fonksiyonunu mutable tablolarda yeniden kullan.
+- Gelişmesi zor PostgreSQL enum tipleri oluşturma; text + CHECK kullan.
+
+Minimum durum değerleri:
+- clinic_staff.role: admin, veterinarian, receptionist
+- conversations.status: active, handoff, completed
+- messages.direction: inbound, outbound, system
+- webhook_events.processing_status: received, processing, processed, failed
+
+RLS ve yetki kuralları:
+- Tüm tablolarda RLS enable et.
+- auth.uid() ve clinic_staff üyeliğini kullanan, SECURITY DEFINER + sabit search_path içeren tek küçük is_clinic_staff(uuid) helper oluştur.
+- Helper'da SQL injection'a açık dynamic SQL kullanma.
+- public execute yetkisini revoke et; yalnızca authenticated ve service_role için gereken yetkiyi ver.
+- anon rolüne hiçbir tablo erişimi verme ve mevcut yetkileri açıkça revoke et.
+- clinics, clinic_staff ve whatsapp_accounts için authenticated rolüne sadece aynı tenant verisini okuma izni ver. Üyelik/klinik/WhatsApp hesap yönetimi service_role üzerinden olsun.
+- owners, pets, conversations ve messages için authenticated staff'a aynı clinic içinde SELECT/INSERT/UPDATE/DELETE politikaları yaz; USING ve WITH CHECK birlikte doğru uygulanmalı.
+- webhook_events için authenticated/anon policy oluşturma; yalnızca güvenli backend service_role işlesin.
+- Service role anahtarını veya gerçek proje bilgisini hiçbir dosyaya yazma.
+- Bir kullanıcının başka clinic_id yazarak çapraz tenant kayıt oluşturmasını veya ilişki kurmasını DB constraint + RLS birlikte engellesin.
+
+Dokümantasyon:
+- Her tablonun amacını ve temel ilişkilerini kısa açıkla.
+- Neden ham webhook payload'ı tutulmadığını belirt.
+- Service role'un yalnızca Worker secret binding'inde kullanılacağını belirt.
+- Migration'ın henüz gerçek Supabase projesine uygulanmadığını açıkça yaz.
+- Sonraki aşamada uygulanmadan önce Opus güvenlik incelemesi ve gerçek test projesinde migration/RLS testleri gerektiğini belirt.
+
+Doğrulama:
+- Yeni dependency ekleme.
+- pnpm install --frozen-lockfile, pnpm typecheck, pnpm test ve Wrangler dry-run çalıştır.
+- Supabase CLI mevcutsa yalnızca syntax/yerel kontrol için güvenli, bağlantısız komutları kullan. Docker veya linked test projesi yoksa DB migration/RLS testlerini BLOCKED/NOT RUN olarak raporla; sahte başarı yazma.
+- Migration dosyasında gerçek DROP, seed hasta verisi, secret veya production URL bulunmasın.
+- git diff --check çalıştır.
+- Commit veya push yapma.
+
+Standart teslim formatına ek olarak şunları raporla:
+- DB üzerinde gerçekten çalıştırılan kontroller
+- Çalıştırılamayan DB kontrolleri ve nedeni
+- Opus'un özellikle incelemesi gereken RLS/composite-FK kararları
+```
