@@ -30,6 +30,8 @@ The secure Worker baseline is committed on `main`:
 - No webhook payload, token, signature, or secret is logged.
 - Real secrets are excluded; `.dev.vars.example` contains placeholders.
 - pnpm is pinned to `11.9.0`; Wrangler is on major version 4.
+- The reviewed core Supabase migration defines eight tenant tables, composite tenant-safe foreign keys, explicit grants, and RLS policies. Privileged helpers live in `vetai_private` with restricted execution and an empty `search_path`.
+- Claude Opus's RLS review findings were resolved: the migration uses a 14-digit timestamp filename, relies on Supabase CLI's implicitly transactional migration batch, and does not grant direct access to the trigger function.
 
 Verified evidence before the context-system change:
 
@@ -43,7 +45,7 @@ Verified evidence before the context-system change:
 
 ## Not implemented
 
-- Supabase schema, migrations, RLS, or runtime client.
+- Runtime Supabase client and application queries.
 - Webhook idempotency, persistence, queue/retry, or outbound WhatsApp messages.
 - Owner/pet matching and conversation state.
 - Deterministic triage and human handoff.
@@ -61,7 +63,7 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-`CURRENT_TASK.md` is the authoritative active task. The next task establishes the minimal core tenant schema and RLS. After Codex review, Claude Opus must perform a read-only security review before the migration is applied to any real project.
+Task 003's core tenant schema and static RLS review are complete. The next phase should validate the migration and tenant isolation in a disposable Supabase/Postgres environment, then connect the Worker to predefined persistence operations for webhook idempotency. The migration must not be applied to a real-data project before that disposable database gate passes.
 
 ## Durable safety invariants
 
