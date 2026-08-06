@@ -32,6 +32,7 @@ The secure Worker baseline is committed on `main`:
 - pnpm is pinned to `11.9.0`; Wrangler is on major version 4.
 - The reviewed core Supabase migration defines eight tenant tables, composite tenant-safe foreign keys, explicit grants, and RLS policies. Privileged helpers live in `vetai_private` with restricted execution and an empty `search_path`.
 - Claude Opus's RLS review findings were resolved: the migration uses a 14-digit timestamp filename, relies on Supabase CLI's implicitly transactional migration batch, and does not grant direct access to the trigger function.
+- The migration was applied successfully to the disposable `vetai-test` Supabase project. A rollback-based PostgreSQL 17 test verified all eight RLS-enabled tables, zero anonymous grants, same-clinic staff access, cross-clinic denial, backend-only `webhook_events`, composite tenant foreign keys, and zero surviving fixture rows.
 
 Verified evidence before the context-system change:
 
@@ -56,14 +57,14 @@ Verified evidence before the context-system change:
 
 ## Environment constraints
 
-- Supabase CLI is present on the machine.
-- Docker is not installed, and no disposable linked Supabase test project is configured.
-- Therefore database migrations and RLS cannot currently be claimed as applied or integration-tested.
+- Supabase CLI is present and authenticated for project discovery.
+- Docker is not installed. The disposable remote project `vetai-test` is available but the repository is intentionally not CLI-linked because no database credential is persisted.
+- The test migration was executed through the authenticated Supabase SQL editor, so it is integration-tested but is not recorded in Supabase CLI migration history. A real deployment must still use `supabase db push` or the equivalent managed migration workflow.
 - `rtk` was not available in earlier Codex shell sessions; agents may use native commands when a fresh availability check fails.
 
 ## Current phase
 
-Task 003's core tenant schema and static RLS review are complete. The next phase should validate the migration and tenant isolation in a disposable Supabase/Postgres environment, then connect the Worker to predefined persistence operations for webhook idempotency. The migration must not be applied to a real-data project before that disposable database gate passes.
+Task 004's disposable database and tenant-isolation gate passed. The next phase is to connect the Worker to predefined Supabase persistence operations for webhook idempotency; production deployment remains out of scope.
 
 ## Durable safety invariants
 

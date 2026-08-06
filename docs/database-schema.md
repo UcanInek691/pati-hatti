@@ -2,12 +2,11 @@
 
 Defined in `supabase/migrations/20260806000000_core_tenant_schema.sql`.
 
-> **Not yet applied.** This migration has not been run against any real
-> Supabase project. Claude Opus's read-only security review is complete;
-> migration and RLS testing in a disposable local/test project is still
-> required before it is used against real data. Docker and a linked disposable
-> Supabase project are not currently available in this environment, so no
-> database check beyond static SQL review has been performed.
+> **Disposable validation passed.** On 2026-08-06 the migration was applied to
+> the `vetai-test` Supabase project and `supabase/tests/004_core_tenant_rls.sql`
+> passed against PostgreSQL 17. The test verified tenant isolation and rolled
+> back every fixture. This is not a production deployment; production must use
+> the managed Supabase CLI migration workflow.
 
 ## Tables
 
