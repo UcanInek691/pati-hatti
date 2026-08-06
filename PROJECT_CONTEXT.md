@@ -63,6 +63,12 @@ The secure Worker baseline is committed on `main`:
   007 runtime parser; all provider, refusal, and malformed-output failures are
   generic and fail closed. Tests use a mocked fetch; no live model call has
   been made.
+- A provider-neutral deterministic safety gate now routes the validated intake
+  contract with fixed precedence: any explicit emergency signal stops normal
+  automation, human and medical-advice requests route to staff, unknown safety
+  facts require clarification, and only eight explicit false values may
+  continue. The canonical signal list is compile-time exhaustive, the gate is
+  not wired into runtime yet, and both Codex and Claude Opus reviews passed.
 
 Verified evidence before the context-system change:
 
@@ -96,10 +102,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 008's OpenAI extraction adapter passed with mocked transport and no live
-call. The next phase is a provider-neutral deterministic safety decision gate
-before any adapter wiring, AI-generated response, state mutation, or outbound
-WhatsApp delivery. Production deployment remains out of scope.
+Task 009's deterministic safety decision gate passed Codex and Claude Opus
+review but remains unwired. The next phase is the smallest fail-closed runtime
+orchestration step that preserves the validated extraction boundary before any
+AI-generated response or outbound WhatsApp delivery. Production deployment
+remains out of scope.
 
 ## Durable safety invariants
 
