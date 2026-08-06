@@ -57,3 +57,48 @@ This boundary does not call an LLM, does not write to Supabase, does not
 advance `intake_stage`, does not classify triage, and does not generate or
 send any message. Wiring the prompt and parser into an actual model call and
 into `advance_conversation_intake` (Task 006) is future work.
+
+## OpenAI provider boundary (Task 008)
+
+Scope: `src/openaiIntake.ts`. This adds one provider adapter around the Task
+007 boundary above; it does not change what that boundary guarantees.
+
+- **Model and cost tier**: `gpt-5.6-luna`, the cost-sensitive/high-volume
+  model in the GPT-5.6 family, called through the Responses API with
+  `reasoning.effort: "none"`. This is an evaluation baseline for a narrow,
+  low-ambiguity extraction task, not a final choice — quality must still be
+  compared against `effort: "low"` before production use.
+- **No application-state storage**: every request sets `store: false`. This
+  turns off Responses API storage of this call's input/output as retrievable
+  application state; it is not a promise of Zero Data Retention or of what
+  OpenAI's infrastructure retains for abuse monitoring. Production use still
+  requires appropriate OpenAI organization data controls and a privacy/legal
+  review.
+- **One message, no history**: exactly one system input item (the unmodified
+  Task 007 `INTAKE_EXTRACTION_SYSTEM_PROMPT`) and one user input item (the
+  original owner message, sent unmodified as untrusted content) are sent. No
+  `previous_response_id`, conversation id, tools, metadata, or user/profile
+  data. `safety_identifier` is a caller-supplied, privacy-preserving value —
+  this adapter never constructs it and never sends a phone number, email,
+  owner name, or raw database id in its place.
+- **Strict Structured Outputs, still not trusted**: `text.format` uses
+  `type: "json_schema"`, `strict: true`, and a schema mirroring the Task 007
+  `IntakeExtraction` shape (required keys, `additionalProperties: false` at
+  both the top level and inside `reported_safety_signals`, and the same
+  intent/missing-information enums). This narrows what the model can emit,
+  but it does not replace validation: the response is parsed and only
+  accepted after every provider-shape check (completed status, exactly one
+  message, exactly one `output_text` item, no refusal/mixed content) passes
+  and the resulting JSON is run through `parseIntakeExtraction`. A
+  schema-conforming response that the runtime parser rejects is still
+  discarded.
+- **Fail closed, no leakage**: network errors, non-2xx responses, malformed
+  JSON, unexpected status, wrong output shape, refusals, and parser
+  rejection all return the same generic `{ ok: false }`. Provider response
+  bodies, refusal text, the API key, and the accepted message are never
+  logged or included in a thrown error.
+
+Not implemented here: an actual production call (tests mock `fetch`
+entirely), the `none`-versus-`low` reasoning-effort evaluation, retry or
+fallback-model policy, request orchestration, and any change to conversation
+state, pet resolution, triage, or outbound messaging.

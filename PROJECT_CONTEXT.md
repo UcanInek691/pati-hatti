@@ -56,6 +56,13 @@ The secure Worker baseline is committed on `main`:
 - Pet references resolve only by exact normalized name against the already-
   loaded tenant-scoped pet list, with a single-pet fallback and clarification
   for zero, multiple, duplicate-name, or fuzzy cases.
+- A native-fetch OpenAI Responses adapter now submits one untrusted message to
+  `gpt-5.6-luna` with `store: false`, current-turn/no reasoning, a
+  privacy-preserving safety identifier, and strict Structured Outputs. It
+  accepts only a completed single-message response that also passes the Task
+  007 runtime parser; all provider, refusal, and malformed-output failures are
+  generic and fail closed. Tests use a mocked fetch; no live model call has
+  been made.
 
 Verified evidence before the context-system change:
 
@@ -76,7 +83,7 @@ Verified evidence before the context-system change:
   orchestration.
 - Deterministic triage and human handoff.
 - Appointment operations.
-- LLM integration, summaries, memory, embeddings, or RAG.
+- Live/wired LLM orchestration, summaries, memory, embeddings, or RAG.
 - Staff/admin panel.
 - Production deployment and real external-service configuration.
 
@@ -89,11 +96,10 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 007's provider-neutral structured extraction and exact pet-resolution
-gate passed. The next phase is to connect a single LLM provider only for this
-validated extraction path, then add deterministic safety/triage rules before
-any AI-generated response or outbound WhatsApp delivery. Production deployment
-remains out of scope.
+Task 008's OpenAI extraction adapter passed with mocked transport and no live
+call. The next phase is a provider-neutral deterministic safety decision gate
+before any adapter wiring, AI-generated response, state mutation, or outbound
+WhatsApp delivery. Production deployment remains out of scope.
 
 ## Durable safety invariants
 

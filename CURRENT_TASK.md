@@ -173,17 +173,111 @@ Supabase, or touch another external service.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD:
-- Initial worktree state:
-- Relevant code/tests evidence:
-- Planned files:
-- Conflicts or blockers:
+- Starting HEAD: `a461b47` (on top of `3f30940`, docs-only). Worktree clean.
+- Initial worktree state: clean, matches task's stated starting context.
+- Relevant code/tests evidence: `prompts/intake-extraction-prompt.ts` exports
+  `INTAKE_EXTRACTION_PROMPT_VERSION` and `INTAKE_EXTRACTION_SYSTEM_PROMPT`
+  (not in `src/intakeExtraction.ts` as the task text implied by proximity —
+  same exports exist, just in the prompt module; not a conflict).
+  `src/intakeExtraction.ts` exports `IntakeExtraction` (8 top-level keys:
+  intent, pet_name, species, complaint, symptoms, reported_safety_signals,
+  missing_information, user_requested_human; `reported_safety_signals` has 8
+  boolean-or-null keys) and `parseIntakeExtraction`. `src/env.ts` currently
+  has no OpenAI key. No runtime deps in `package.json`; `vitest run` /
+  `tsc --noEmit` are the test/typecheck scripts. Existing modules use plain
+  functions (no classes), Result-style unions, `as const` key lists, 2-space
+  indent, double quotes. `test/webhookSignature.test.ts` shows the house
+  vitest style (describe/it, direct fetch/Request usage, no fixtures/mocks
+  framework beyond vitest itself).
+- Planned files: new `src/openaiIntake.ts`, new `test/openaiIntake.test.ts`,
+  one line added to `src/env.ts`, one line added to `.dev.vars.example`, an
+  appended section in `docs/ai-behavior-and-safety.md`, this file's Observed
+  context and Delivery record.
+- Conflicts or blockers: none found.
 
 ## Delivery record — Sonnet fills after coding
 
 - Changed files:
+  - New `src/openaiIntake.ts` — exports `OPENAI_INTAKE_MODEL` and
+    `extractIntakeViaOpenAi(message, safetyIdentifier, env)`.
+  - New `test/openaiIntake.test.ts` — 22 tests, `globalThis.fetch` mocked,
+    restored in `afterEach`.
+  - `src/env.ts` — added required `OPENAI_API_KEY: string`.
+  - Existing typed Env fixtures in `test/index.test.ts`,
+    `test/conversationState.test.ts`, and `test/supabaseIngest.test.ts` — added
+    inert placeholder values after Codex review so the binding stays required.
+  - `.dev.vars.example` — added `OPENAI_API_KEY=[openai-api-key]` placeholder.
+  - `docs/ai-behavior-and-safety.md` — appended the "OpenAI provider boundary
+    (Task 008)" section only; Task 007 section untouched.
+  - This file — Observed context and this Delivery record.
 - Acceptance criteria satisfied:
+  - Adapter uses only TypeScript/native Web APIs (`fetch`, `TextEncoder`
+    unused/not needed here) — no SDK, schema library, provider interface,
+    HTTP client, or class.
+  - Rejects empty/whitespace API key, empty message, message over 65,536
+    code points, and empty/whitespace safety identifier before calling
+    `fetch`; message is never trimmed/rewritten/logged (asserted in tests).
+  - Exactly one POST to `https://api.openai.com/v1/responses` with the
+    required headers, `model: "gpt-5.6-luna"`, separate system/user input
+    items, `safety_identifier`, `store: false`,
+    `reasoning: { effort: "none", context: "current_turn" }`,
+    `max_output_tokens: 1200`, no tools/previous-response/conversation/
+    metadata/user, and strict `text.format` json_schema mirroring the Task
+    007 shape (required keys, both `additionalProperties: false`
+    boundaries, exact enums, nullable text/signal fields).
+  - Response handling: network-catch, non-2xx rejected unread, JSON
+    parsed in try/catch, requires `status === "completed"`, requires
+    exactly one `message` output item (ignoring e.g. `reasoning` items),
+    requires exactly one `output_text` content item with string `text`,
+    `JSON.parse`s that text, and only returns success when
+    `parseIntakeExtraction` (imported, unmodified) accepts it. All failure
+    paths return the same generic `{ ok: false }` with no logged payload,
+    refusal text, key, or parsed extraction.
 - Commands and exact results:
-- Checks not run and why:
+  - `pnpm install --frozen-lockfile` → "Already up to date".
+  - `pnpm typecheck` → passed, no errors.
+  - `pnpm test` → 10 test files, 190 tests, all passed (22 new in
+    `openaiIntake.test.ts`).
+  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+    succeeded, `--dry-run: exiting now.`
+  - `git diff --check` → only benign "LF will be replaced by CRLF" advisory
+    warnings, no conflict markers or whitespace errors, exit 0.
+  - `git status --porcelain` → only the files listed above; no stray
+    changes.
+- Checks not run and why: none of the required verification commands were
+  skipped. No real OpenAI call, commit, push, or deploy was made, per the
+  task's constraints.
 - Known limitations:
+  - None within the implemented adapter boundary. The live provider call,
+    eval comparison, retry policy, and orchestration remain intentionally
+    deferred as described above.
+  - The JSON Schema encodes nullability with `type: ["string", "null"]` /
+    `["boolean", "null"]` (OpenAI Structured Outputs' documented way to
+    express a nullable field under `strict: true`); the task text doesn't
+    name a specific schema encoding, so this is an implementation choice
+    worth Codex's review.
+  - `gpt-5.6-luna` / GPT-5.6 family and the cited Responses API behavior are
+    outside this Sonnet session's verifiable knowledge; per the task, no
+    real call was made, so this was taken as given from Codex's stated
+    documentation review rather than independently confirmed.
 - Risks for Codex review:
+  - Confirm the input-item shape `{ role: "system"/"user", content: <string> }`
+    matches the intended Responses API "system input item" / "user input
+    item" phrasing (no other shape is described in the task).
+
+## Codex review and verification
+
+- Reviewed the native-fetch adapter, all request/response branches, schema,
+  tests, environment binding, documentation, and official OpenAI guidance.
+- Kept the provider code unchanged: the Responses input-item shape,
+  `text.format` Structured Outputs request, nullable unions, `store: false`,
+  `safety_identifier`, and `reasoning.context: "current_turn"` match the
+  reviewed API guidance.
+- Made `OPENAI_API_KEY` a required `Env` binding, consistent with the task and
+  all existing secrets; added inert placeholders to the three existing typed
+  test fixtures. Runtime missing/blank-key rejection remains unchanged.
+- Codex verification: frozen install passed; strict typecheck passed; 190/190
+  tests passed; Wrangler dry-run passed at 11.44 KiB / gzip 3.62 KiB; final
+  secret-pattern and whitespace checks passed.
+- Decision: `PASS`. No real OpenAI request, deployment, or external mutation
+  was performed.

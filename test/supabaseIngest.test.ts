@@ -19,6 +19,7 @@ const env: Env = {
   WHATSAPP_APP_SECRET: "test-app-secret",
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+  OPENAI_API_KEY: "unused",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

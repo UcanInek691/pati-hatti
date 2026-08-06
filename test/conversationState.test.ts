@@ -9,6 +9,7 @@ const env: Env = {
   WHATSAPP_APP_SECRET: "test-app-secret",
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+  OPENAI_API_KEY: "unused",
 };
 
 const conversationId = "11111111-1111-1111-1111-111111111111";

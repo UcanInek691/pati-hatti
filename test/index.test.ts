@@ -12,6 +12,7 @@ const env: Env = {
   WHATSAPP_APP_SECRET: APP_SECRET,
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "unused",
+  OPENAI_API_KEY: "unused",
 };
 
 async function signedPost(body: string, extraHeaders: Record<string, string> = {}): Promise<Request> {
