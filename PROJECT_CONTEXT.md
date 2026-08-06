@@ -49,6 +49,13 @@ The secure Worker baseline is committed on `main`:
 - The conversation-state migration and rollback SQL test passed in
   `vetai-test`, including stale updates, pet tenant boundaries, grants, latest-
   12 message ordering, and zero surviving fixtures.
+- A provider-neutral intake contract now validates future model JSON strictly,
+  rejects extra or malformed data, represents only explicitly reported facts,
+  and cannot carry database IDs, actions, diagnosis, medication, or response
+  text. Its versioned system prompt treats user content as untrusted data.
+- Pet references resolve only by exact normalized name against the already-
+  loaded tenant-scoped pet list, with a single-pet fallback and clarification
+  for zero, multiple, duplicate-name, or fuzzy cases.
 
 Verified evidence before the context-system change:
 
@@ -65,7 +72,8 @@ Verified evidence before the context-system change:
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
 - Queue/retry orchestration or outbound WhatsApp messages.
-- Automatic pet selection/creation and webhook-to-state orchestration.
+- Provider/webhook wiring for pet resolution, new-pet creation, and state
+  orchestration.
 - Deterministic triage and human handoff.
 - Appointment operations.
 - LLM integration, summaries, memory, embeddings, or RAG.
@@ -81,10 +89,10 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 006's persisted conversation-state gate passed in the disposable
-database. The next phase is schema-validated structured extraction for pet and
-complaint intake, followed by deterministic safety/triage rules before any
-AI-generated response or outbound WhatsApp delivery. Production deployment
+Task 007's provider-neutral structured extraction and exact pet-resolution
+gate passed. The next phase is to connect a single LLM provider only for this
+validated extraction path, then add deterministic safety/triage rules before
+any AI-generated response or outbound WhatsApp delivery. Production deployment
 remains out of scope.
 
 ## Durable safety invariants
