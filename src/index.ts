@@ -2,6 +2,8 @@ import type { Env } from "./env";
 import { getHealth } from "./health";
 import { verifyWhatsAppChallenge } from "./webhookVerify";
 import { MAX_BODY_BYTES, readRawBodyWithLimit, verifyHmacSignature } from "./webhookSignature";
+import { extractTextMessages } from "./whatsappIngest";
+import { ingestWhatsAppTextMessage } from "./supabaseIngest";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -41,6 +43,29 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   }
 
   console.log("whatsapp webhook event received");
+
+  const extraction = await extractTextMessages(body);
+  if (!extraction.ok) {
+    return new Response("Bad Request", { status: 400 });
+  }
+  if (extraction.items.length === 0) {
+    return Response.json({ received: true });
+  }
+
+  let processed = 0;
+  let duplicate = 0;
+  let failed = 0;
+  for (const item of extraction.items) {
+    const outcome = await ingestWhatsAppTextMessage(item, env);
+    if (outcome === "processed") processed++;
+    else if (outcome === "duplicate") duplicate++;
+    else failed++;
+  }
+  console.log("whatsapp webhook event persisted", { processed, duplicate, failed });
+
+  if (failed > 0) {
+    return new Response("Service Unavailable", { status: 503 });
+  }
   return Response.json({ received: true });
 }
 

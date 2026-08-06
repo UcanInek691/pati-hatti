@@ -33,6 +33,15 @@ The secure Worker baseline is committed on `main`:
 - The reviewed core Supabase migration defines eight tenant tables, composite tenant-safe foreign keys, explicit grants, and RLS policies. Privileged helpers live in `vetai_private` with restricted execution and an empty `search_path`.
 - Claude Opus's RLS review findings were resolved: the migration uses a 14-digit timestamp filename, relies on Supabase CLI's implicitly transactional migration batch, and does not grant direct access to the trigger function.
 - The migration was applied successfully to the disposable `vetai-test` Supabase project. A rollback-based PostgreSQL 17 test verified all eight RLS-enabled tables, zero anonymous grants, same-clinic staff access, cross-clinic denial, backend-only `webhook_events`, composite tenant foreign keys, and zero surviving fixture rows.
+- Signed inbound WhatsApp text messages are now normalized and hashed by the
+  Worker, deduplicated within each payload, and persisted through one native
+  Supabase Data API RPC. The RPC atomically resolves the clinic, claims the
+  webhook event, upserts the owner, reuses or creates one open conversation,
+  inserts the inbound message, and marks the event processed.
+- The ingestion migration was applied to `vetai-test`; its rollback SQL test
+  passed idempotency, hash-conflict, unknown-account, owner-name preservation,
+  handoff-conversation reuse, and function-grant checks with no surviving
+  fixtures.
 
 Verified evidence before the context-system change:
 
@@ -46,8 +55,9 @@ Verified evidence before the context-system change:
 
 ## Not implemented
 
-- Runtime Supabase client and application queries.
-- Webhook idempotency, persistence, queue/retry, or outbound WhatsApp messages.
+- General-purpose application queries; only the inbound WhatsApp persistence
+  RPC is implemented.
+- Queue/retry orchestration or outbound WhatsApp messages.
 - Owner/pet matching and conversation state.
 - Deterministic triage and human handoff.
 - Appointment operations.
@@ -64,7 +74,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 004's disposable database and tenant-isolation gate passed. The next phase is to connect the Worker to predefined Supabase persistence operations for webhook idempotency; production deployment remains out of scope.
+Task 005's atomic inbound-message persistence gate passed in the disposable
+database. The next phase is deterministic conversation intake: associate or
+create pet context and gather the owner's complaint without diagnosis, before
+adding AI-generated responses or outbound WhatsApp delivery. Production
+deployment remains out of scope.
 
 ## Durable safety invariants
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import { MAX_BODY_BYTES } from "../src/webhookSignature";
@@ -132,5 +132,112 @@ describe("worker fetch routing", () => {
   it("returns 404 for unknown routes", async () => {
     const res = await worker.fetch(new Request("https://vetai.test/nope"), env);
     expect(res.status).toBe(404);
+  });
+});
+
+function textMessageWebhookBody(): unknown {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "WABA_ID",
+        changes: [
+          {
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { display_phone_number: "16505551111", phone_number_id: "123456123" },
+              contacts: [{ profile: { name: "Kerry Fisher" }, wa_id: "16315551181" }],
+              messages: [{ from: "16315551181", id: "wamid.ID1", timestamp: "1603059201", type: "text", text: { body: "Hello!" } }],
+            },
+            field: "messages",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+describe("worker whatsapp persistence", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns 200 for a status-only webhook without requiring Supabase configuration", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_SERVICE_ROLE_KEY: "" };
+    const body = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "WABA_ID", changes: [{ value: { messaging_product: "whatsapp", metadata: { phone_number_id: "123456123" }, statuses: [] }, field: "messages" }] }],
+    });
+
+    const res = await worker.fetch(await signedPost(body), noConfigEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a webhook with a malformed declared text message and performs no persistence calls", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const body = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "WABA_ID", changes: [{ value: { messaging_product: "whatsapp", metadata: { phone_number_id: "123456123" }, messages: [{ from: "bad-sender", id: "wamid.ID1", timestamp: "1603059201", type: "text", text: { body: "Hello!" } }] }, field: "messages" }] }],
+    });
+
+    const res = await worker.fetch(await signedPost(body), env);
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 for a processed text message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }])));
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 200 for a duplicate text message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "duplicate" }])));
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    expect(res.status).toBe(200);
+  });
+
+  it("calls the RPC once for an identical in-payload duplicate", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const payload = textMessageWebhookBody() as {
+      entry: Array<{ changes: Array<{ value: { messages: unknown[] } }> }>;
+    };
+    const messages = payload.entry[0]?.changes[0]?.value.messages;
+    messages?.push(structuredClone(messages[0]));
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(payload)), env);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 503 when Supabase configuration is missing", async () => {
+    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_SERVICE_ROLE_KEY: "" };
+    vi.stubGlobal("fetch", vi.fn());
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), noConfigEnv);
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 503 when the RPC reports an unknown account", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account" }])));
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 503 on a Supabase network failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    expect(res.status).toBe(503);
   });
 });

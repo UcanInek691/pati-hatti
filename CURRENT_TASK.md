@@ -1,6 +1,6 @@
 # Current task — 005 atomic inbound WhatsApp persistence
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -201,18 +201,69 @@ services, or write real credentials.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD:
-- Initial worktree state:
-- Relevant call path and tests:
-- Planned files:
-- Conflicts or blockers:
+- Starting HEAD: `7b3ee3d` ("docs: define inbound persistence task") on `main`, matches the task contract's stated starting commit lineage (`797af1d` is its parent, task 004's commit).
+- Initial worktree state: clean (`git status --porcelain` empty).
+- Relevant call path and tests: `src/index.ts` → `handleWebhookPost` currently validates content-type, 256 KiB size limit, `X-Hub-Signature-256` (via `verifyHmacSignature` in `src/webhookSignature.ts`), strict UTF-8 JSON parse, and the outer `{ object, entry[] }` envelope, then logs a generic line and returns `Response.json({ received: true })` with no persistence. `src/env.ts` already declares `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`. `test/index.test.ts` covers routing/400/401/413/415 with a shared `env` fixture (`SUPABASE_URL: "https://example.supabase.co"`) and a `signHmacSha256` helper in `test/signHelper.ts` — new tests reuse both. The applied core migration `supabase/migrations/20260806000000_core_tenant_schema.sql` defines `public.webhook_events` with `unique (clinic_id, provider_event_id)` (the idempotency target for `ON CONFLICT`), `public.messages` with a clinic-scoped partial unique index on `whatsapp_message_id`, `public.conversations.pet_id` FK using `on delete no action`, and privileged helpers living in a separate `vetai_private` schema with `search_path = ''` — this task's new function follows the same empty-search_path/fully-qualified convention but stays in `public` (per contract) since PostgREST only exposes functions in the API-exposed schema. `supabase/tests/004_core_tenant_rls.sql` is the existing rollback-test pattern (`begin; ... rollback; select 'PASS' ...` with a final row-count assertion) to mirror for `005_ingest_whatsapp_text_message.sql`.
+- Planned files: `supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql`, `src/whatsappIngest.ts` (extraction + hashing), `src/supabaseIngest.ts` (RPC caller), edits to `src/index.ts`, `test/whatsappIngest.test.ts`, `test/supabaseIngest.test.ts`, additions to `test/index.test.ts`, `supabase/tests/005_ingest_whatsapp_text_message.sql`, a short addition to `docs/database-schema.md`.
+- Conflicts or blockers: none. PROJECT_CONTEXT.md confirms task 004's disposable-project gate passed and the next phase is exactly this Worker-to-Supabase persistence wiring; repository evidence matches the task contract.
 
 ## Delivery record — Sonnet fills after coding
 
 - Changed files:
+  - Modified: `CURRENT_TASK.md` (Observed context/Delivery record only), `docs/database-schema.md` (new "Inbound WhatsApp text message ingestion" section), `src/index.ts` (persistence wiring in `handleWebhookPost`), `test/index.test.ts` (added `worker whatsapp persistence` describe block + two small fixture helpers).
+  - New: `supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql`, `src/whatsappIngest.ts`, `src/supabaseIngest.ts`, `test/whatsappIngest.test.ts`, `test/supabaseIngest.test.ts`, `supabase/tests/005_ingest_whatsapp_text_message.sql`.
+  - No changes to `Env`, Wrangler config, secrets, dependencies/lockfiles, the already-applied core migration, `AGENTS.md`, or `PROJECT_CONTEXT.md`.
+
 - Acceptance criteria satisfied:
+  - Extraction (`src/whatsappIngest.ts`): supports `type: "text"` only; ignores status-only/unsupported-type events; validates sender (2–15 digits, nonzero first digit → `+E.164`), 1–65,536-char text, positive-integer Unix timestamp; rejects the whole webhook (`{ ok: false }`) on any malformed declared-text item; contact-name matching with trim, 200-char cap, and `WhatsApp user` fallback; in-payload dedup on `(phone_number_id, message.id)` via `JSON.stringify([...])` keys (no raw NUL/unsafe separator); stable SHA-256 hex hash over `[phoneNumberId, id, senderE164, timestamp, text]`, independent of batch packaging.
+  - RPC caller (`src/supabaseIngest.ts`): builds `/rest/v1/rpc/ingest_whatsapp_text_message` via `new URL(path, SUPABASE_URL)`; native `fetch` only, no SDK; service-role key sent only in `apikey`/`Authorization: Bearer` headers; requires HTTPS except loopback HTTP; fails closed on empty config; accepts only `processed`/`duplicate`/`unknown_account`, everything else (network error, non-2xx, malformed body) maps to `"failed"`; never logs a response body.
+  - Worker wiring (`src/index.ts`): runs extraction only after existing signature/envelope checks; 400 on malformed declared-text; 200 with no Supabase call when zero supported messages; loops all items (no short-circuit) tallying processed/duplicate/failed; logs only the aggregate counts; 503 if any item failed, else 200; all prior routes/status codes (400/401/413/415/404, GET routes) unchanged.
+  - Migration (`...000100_ingest_whatsapp_text_message.sql`): adds the single partial unique index with the required `ponytail:` comment, and exactly one `SECURITY INVOKER`, `VOLATILE`, empty-`search_path`, fully-qualified, no-dynamic-SQL function matching every validation/idempotency/upsert/reuse/grant rule in the contract; adds no other table/enum/trigger/extension/dependency.
+  - Tests: unit tests cover every bullet under "Required tests" (see command output below); SQL rollback test covers processed→duplicate idempotent retry, hash-mismatch failure with no mutation, unknown-account no-mutation, preserved verified owner name, reused handoff conversation, `anon`/`authenticated` denial vs. `service_role` success, and full fixture rollback.
+
 - Commands and exact results:
+  - `pnpm install --frozen-lockfile` → `Already up to date. Done in 574ms using pnpm v11.9.0`.
+  - `pnpm typecheck` → `tsc --noEmit`, no output, exit 0.
+  - `pnpm test` → `68 passed (68)` across all test files (30 pre-existing + 38 new: 15 in `whatsappIngest.test.ts`, 9 in `supabaseIngest.test.ts`, 8 in `index.test.ts`'s new persistence block, remainder pre-existing files), 0 failed.
+  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` → `Total Upload: 10.70 KiB / gzip: 3.47 KiB`, only the pre-existing `APP_TIMEZONE` binding listed, `--dry-run: exiting now.`, no errors.
+  - `git diff --check` → exit 0, no whitespace/conflict-marker errors (only benign LF→CRLF autocrlf warnings on 4 modified files).
+
 - Database checks actually run:
+  - None against a real database — no Docker/psql/live Postgres is available in this environment (same constraint as Task 003). `supabase/tests/005_ingest_whatsapp_text_message.sql` was written and manually traced statement-by-statement against the migration's actual column/constraint/grant definitions but was NOT executed anywhere, per this task's explicit instruction ("Sonnet must not apply the migration to Supabase").
+
 - Checks not run and why:
+  - No live SQL execution of the new migration or `005_ingest_whatsapp_text_message.sql` — explicitly reserved for Codex against the disposable `vetai-test` project after review, matching the Task 003/004 precedent.
+  - No manual/browser end-to-end test of a real WhatsApp webhook delivery — out of scope; this is a backend-only Worker with no UI, and `wrangler dev` against a real Supabase project would require live credentials this task must not create or use.
+
 - Known limitations:
+  - One open conversation per **owner**, not per pet (contract-mandated MVP ceiling; `ponytail:` comment in the migration marks it).
+  - `src/supabaseIngest.ts`'s malformed-response handling only checks for a one-row array with a valid `result` string; it does not attempt to distinguish *why* a response was malformed (kept minimal per "no response body logging" and no over-engineering).
+  - Aggregate log counts (`processed`/`duplicate`/`failed`) are emitted even when the webhook eventually returns 503, so a single log line already tells an operator how many of a batch succeeded before the failure — no per-item logging was added since the contract caps logging to generic aggregates only.
+
 - Risks for Codex review:
+  - The RPC's idempotency/upsert/reuse logic (ON CONFLICT DO NOTHING + DO UPDATE-then-touch pattern) mirrors the reasoning already applied and reviewed in Task 003/005's prior sibling migration, but this is a new function body and warrants its own read, especially the `on conflict (clinic_id, owner_id) where status in ('active', 'handoff') do update set clinic_id = excluded.clinic_id` arbiter clause against the new `conversations_one_open_per_owner_idx` partial index.
+  - `src/whatsappIngest.ts` originally had a raw NUL byte (`0x00`) accidentally embedded in the dedupe-key template literal instead of the intended escape sequence; this was caught and fixed before delivery by switching to `JSON.stringify([phoneNumberId, id])`, and re-verified byte-clean via a Node byte-dump. Worth a deliberate second look since it silently produced a binary file the first time.
+  - `src/supabaseIngest.ts` allows plain HTTP only for `localhost`/`127.0.0.1`/`[::1]` hostnames; confirm this loopback allowlist matches what local `wrangler dev` + local Supabase actually present before relying on it.
+
+## Codex review and verification
+
+- Reviewed the Worker call path, extraction/hashing logic, native Data API
+  client, migration, grants, partial-index conflict inference, and rollback SQL
+  test. No unresolved blocking finding remains.
+- Tightened parser boundaries before approval: only `field: "messages"` changes
+  are inspected; IDs are capped at 512 characters; Unix timestamps must be
+  safe integers representable by JavaScript dates; contact names are capped by
+  Unicode code point; identical in-payload duplicates make one RPC call, while
+  the same key with different normalized content is rejected. Whitespace-only
+  Supabase credentials now fail closed.
+- Rechecked the disclosed NUL-byte risk: the new source, migration, and test
+  files contain no NUL bytes.
+- Codex verification: frozen install passed; strict typecheck passed; 75/75
+  tests passed; Wrangler dry-run passed; final diff checks passed.
+- Applied `20260806000100_ingest_whatsapp_text_message.sql` only to the
+  disposable `vetai-test` Supabase project. The SQL editor reported success.
+- Ran `supabase/tests/005_ingest_whatsapp_text_message.sql` against that
+  project. It returned `PASS` with zero surviving test clinics, WhatsApp
+  accounts, owners, and webhook events after rollback.
+- Decision: `PASS`. Production deployment remains out of scope and must use a
+  managed Supabase migration workflow.
