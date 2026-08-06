@@ -126,3 +126,56 @@ one open conversation per owner rather than per pet.
 > `ponytail:` one open conversation per owner (not per pet) is an MVP
 > ceiling; revisit only if concurrent per-pet conversations become a
 > verified need.
+
+## Persisted conversation intake state
+
+Defined in
+`supabase/migrations/20260806000200_conversation_intake_state.sql`.
+
+> **Disposable validation passed.** On 2026-08-06 the migration was applied to
+> `vetai-test` and `supabase/tests/006_conversation_intake_state.sql` returned
+> `PASS`. Its fixtures were rolled back. Production still requires the managed
+> Supabase migration workflow.
+
+`conversations` carries three new columns:
+
+- `intake_stage text not null default 'pet_identification'`, constrained to
+  the nine-value stage graph below.
+- `intake_data jsonb not null default '{}'::jsonb`, constrained to a JSON
+  object. It is a structured working document, not a raw webhook copy.
+- `state_version integer not null default 1`, constrained to be positive,
+  used for optimistic concurrency.
+
+The stage graph is forward-only:
+`pet_identification -> complaint_collection -> safety_check ->
+ready_for_triage -> appointment_offer -> appointment_selection ->
+appointment_confirmation -> completed`, with a side-channel transition to
+`human_handoff` permitted from any non-completed stage. `human_handoff` and
+`completed` are terminal — only a same-stage data refresh is allowed once a
+conversation reaches either one. Moving to `human_handoff` sets operational
+`status = 'handoff'`; moving to `completed` sets `status = 'completed'`.
+
+Two `SECURITY INVOKER` Data API functions, both with an empty `search_path`,
+fully qualified relations, no dynamic SQL, and granted to `service_role`
+only (revoked from `PUBLIC`, `anon`, `authenticated`):
+
+- `public.get_conversation_intake_context(p_conversation_id uuid)` — reads
+  one conversation's clinic/owner/pet ids, operational status, intake
+  stage/data/version, the owner's display name, the owner's pets ordered by
+  creation time then id, and the latest 12 messages in chronological order.
+  Returns zero rows for an unknown conversation. Never returns phone
+  numbers, WhatsApp ids, or webhook hashes.
+- `public.advance_conversation_intake(p_conversation_id, p_expected_version,
+  p_next_stage, p_pet_id, p_intake_data)` — validates the next stage against
+  the graph above and that any assigned pet belongs to the conversation's
+  own owner and clinic (the tenant-safety boundary is the existing
+  owner/pet/clinic composite relationship, not a caller-supplied clinic id),
+  then updates only when `state_version` matches the caller's expected
+  value, incrementing it by exactly one on success. A stale version returns
+  zero rows with no mutation; every other invalid input (bad stage,
+  nonpositive version, unknown conversation, foreign pet, empty/non-object
+  `intake_data`) raises and mutates nothing.
+
+Neither function calls an LLM, sends a WhatsApp message, or is wired into
+the webhook handler; `src/conversationState.ts` exposes native-`fetch`
+Worker helpers for both, unused until a later task calls them.

@@ -42,6 +42,13 @@ The secure Worker baseline is committed on `main`:
   passed idempotency, hash-conflict, unknown-account, owner-name preservation,
   handoff-conversation reuse, and function-grant checks with no surviving
   fixtures.
+- Conversations now persist a constrained intake stage, structured intake
+  document, and optimistic state version. Service-role-only RPCs return a
+  tenant-scoped owner/pet/recent-message context and enforce forward-only,
+  version-checked state changes with terminal handoff/completed behavior.
+- The conversation-state migration and rollback SQL test passed in
+  `vetai-test`, including stale updates, pet tenant boundaries, grants, latest-
+  12 message ordering, and zero surviving fixtures.
 
 Verified evidence before the context-system change:
 
@@ -58,7 +65,7 @@ Verified evidence before the context-system change:
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
 - Queue/retry orchestration or outbound WhatsApp messages.
-- Owner/pet matching and conversation state.
+- Automatic pet selection/creation and webhook-to-state orchestration.
 - Deterministic triage and human handoff.
 - Appointment operations.
 - LLM integration, summaries, memory, embeddings, or RAG.
@@ -74,11 +81,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 005's atomic inbound-message persistence gate passed in the disposable
-database. The next phase is deterministic conversation intake: associate or
-create pet context and gather the owner's complaint without diagnosis, before
-adding AI-generated responses or outbound WhatsApp delivery. Production
-deployment remains out of scope.
+Task 006's persisted conversation-state gate passed in the disposable
+database. The next phase is schema-validated structured extraction for pet and
+complaint intake, followed by deterministic safety/triage rules before any
+AI-generated response or outbound WhatsApp delivery. Production deployment
+remains out of scope.
 
 ## Durable safety invariants
 
