@@ -104,6 +104,13 @@ The secure Worker baseline is committed on `main`:
   transition rollback, privileges, and zero fixture residue. 333/333 tests,
   typecheck, frozen install, Worker dry-run, Codex review, and Claude Opus
   review passed.
+- A pure, provider-neutral intake-turn planner now validates a versioned
+  persisted snapshot, deterministically merges explicit facts across turns,
+  keeps reported danger and human requests sticky, resolves pet identity only
+  against tenant-scoped context, reuses the reviewed safety gate, and selects
+  only a same-stage, one-step-forward, or human-handoff transition. Corrupt
+  snapshots fail closed; no planner code is wired into runtime yet. Codex and
+  Claude Opus reviews passed with 386/386 tests.
 
 Verified evidence before the context-system change:
 
@@ -137,11 +144,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 013 now provides the reviewed atomic state+lease finalization boundary.
-The next phase can wire a bounded Queue consumer through parsing, claim,
-context, extraction, deterministic safety, and atomic finalization, without
-adding outbound WhatsApp effects yet. No Queue resource has been created and
-production deployment remains out of scope.
+Task 014 now provides the reviewed deterministic turn-planning boundary. The
+next phase can wire a bounded Queue consumer through parsing, claim, context,
+extraction, planning, and atomic finalization, without adding outbound WhatsApp
+effects yet. No Queue resource has been created and production deployment
+remains out of scope.
 
 ## Durable safety invariants
 
@@ -156,6 +163,12 @@ production deployment remains out of scope.
   committed atomically with current-token completion.
 - `stale_state` does not renew a lease; consumer retries must fit within the
   original expiry and poison/invalid payload failures must not retry forever.
+- A corrupt persisted intake snapshot is a poison condition: the consumer must
+  surface it for staff/handoff handling and must not silently drop it or retry
+  it forever.
+- Consumers must inspect the planner's `safetyDecision`, not infer safety from
+  `nextStage` alone; a completed stage remains terminal, and later triage work
+  must still honor the deterministic gate result.
 
 ## Context maintenance
 

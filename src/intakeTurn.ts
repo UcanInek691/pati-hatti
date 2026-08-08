@@ -1,0 +1,223 @@
+import type { ConversationIntakeContext, IntakeStage } from "./conversationState";
+import { parseIntakeExtraction, resolvePet } from "./intakeExtraction";
+import type { IntakeExtraction, IntakeIntent, MissingInformationItem, PetResolution, ReportedSafetySignals } from "./intakeExtraction";
+import { evaluateSafetyDecision } from "./safetyDecision";
+import type { SafetyDecision } from "./safetyDecision";
+
+export interface PersistedIntakeData {
+  schema_version: 1;
+  intent: IntakeIntent;
+  pet_name: string | null;
+  species: string | null;
+  complaint: string | null;
+  symptoms: string[];
+  reported_safety_signals: ReportedSafetySignals;
+  missing_information: MissingInformationItem[];
+  user_requested_human: boolean;
+}
+
+export type PlanResult =
+  | {
+      kind: "planned";
+      nextStage: IntakeStage;
+      petId: string | null;
+      intakeData: PersistedIntakeData;
+      petResolution: PetResolution;
+      safetyDecision: SafetyDecision;
+    }
+  | { kind: "failed" };
+
+const PERSISTED_DATA_KEYS = [
+  "schema_version",
+  "intent",
+  "pet_name",
+  "species",
+  "complaint",
+  "symptoms",
+  "reported_safety_signals",
+  "missing_information",
+  "user_requested_human",
+] as const;
+
+const MAX_SYMPTOMS = 20;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function emptySnapshot(): PersistedIntakeData {
+  return {
+    schema_version: 1,
+    intent: "unknown",
+    pet_name: null,
+    species: null,
+    complaint: null,
+    symptoms: [],
+    reported_safety_signals: {
+      breathing_difficulty: null,
+      loss_of_consciousness: null,
+      active_seizure: null,
+      heavy_bleeding: null,
+      major_trauma: null,
+      possible_toxin_exposure: null,
+      possible_foreign_object: null,
+      unable_to_urinate: null,
+    },
+    missing_information: [],
+    user_requested_human: false,
+  };
+}
+
+type SnapshotResult = { kind: "empty" } | { kind: "snapshot"; value: PersistedIntakeData } | { kind: "invalid" };
+
+/** Fails closed on any shape outside the exact empty-object or exact PersistedIntakeData trust boundary. */
+function parsePersistedSnapshot(value: unknown): SnapshotResult {
+  try {
+    if (!isPlainObject(value)) return { kind: "invalid" };
+
+    const keys = Reflect.ownKeys(value);
+    if (keys.length === 0) return { kind: "empty" };
+    if (
+      keys.length !== PERSISTED_DATA_KEYS.length ||
+      keys.some((key) => typeof key !== "string") ||
+      !PERSISTED_DATA_KEYS.every((key) => keys.includes(key))
+    ) {
+      return { kind: "invalid" };
+    }
+    if (value.schema_version !== 1) return { kind: "invalid" };
+
+    const parsed = parseIntakeExtraction({
+      intent: value.intent,
+      pet_name: value.pet_name,
+      species: value.species,
+      complaint: value.complaint,
+      symptoms: value.symptoms,
+      reported_safety_signals: value.reported_safety_signals,
+      missing_information: value.missing_information,
+      user_requested_human: value.user_requested_human,
+    });
+    if (!parsed.ok) return { kind: "invalid" };
+
+    return { kind: "snapshot", value: { schema_version: 1, ...parsed.value } };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+
+function mergeSymptoms(stored: readonly string[], current: readonly string[]): string[] {
+  const merged = [...stored];
+  const seen = new Set(merged);
+  for (const symptom of current) {
+    if (!seen.has(symptom)) {
+      merged.push(symptom);
+      seen.add(symptom);
+    }
+  }
+  return merged.length > MAX_SYMPTOMS ? merged.slice(merged.length - MAX_SYMPTOMS) : merged;
+}
+
+function mergeSafetySignals(stored: ReportedSafetySignals, current: ReportedSafetySignals): ReportedSafetySignals {
+  const merged: ReportedSafetySignals = { ...stored };
+  for (const key of Object.keys(stored) as (keyof ReportedSafetySignals)[]) {
+    if (stored[key] === true) {
+      merged[key] = true;
+    } else if (current[key] === null) {
+      merged[key] = stored[key];
+    } else {
+      merged[key] = current[key];
+    }
+  }
+  return merged;
+}
+
+/** Deterministic merge of a validated current-turn extraction into the accepted persisted snapshot. See `docs/intake-turn-planning.md`. */
+function mergeSnapshot(stored: PersistedIntakeData, extraction: IntakeExtraction): PersistedIntakeData {
+  return {
+    schema_version: 1,
+    intent: extraction.intent !== "unknown" ? extraction.intent : stored.intent,
+    pet_name: extraction.pet_name !== null ? extraction.pet_name : stored.pet_name,
+    species: extraction.species !== null ? extraction.species : stored.species,
+    complaint: extraction.complaint !== null ? extraction.complaint : stored.complaint,
+    symptoms: mergeSymptoms(stored.symptoms, extraction.symptoms),
+    reported_safety_signals: mergeSafetySignals(stored.reported_safety_signals, extraction.reported_safety_signals),
+    missing_information: [...extraction.missing_information],
+    user_requested_human: stored.user_requested_human || extraction.user_requested_human,
+  };
+}
+
+type PetOutcome = { petId: string | null; resolution: PetResolution };
+
+/** Retains an already-selected pet as authoritative; only a same-turn explicit conflicting name yields clarification. */
+function resolvePetForContext(context: ConversationIntakeContext, extraction: IntakeExtraction, merged: PersistedIntakeData): PetOutcome | null {
+  if (context.petId !== null) {
+    const stillPresent = context.pets.filter((pet) => pet.id === context.petId).length === 1;
+    if (!stillPresent) return null;
+
+    if (extraction.pet_name !== null) {
+      const attempt = resolvePet(extraction, context.pets);
+      if (attempt.kind === "matched" && attempt.petId === context.petId) {
+        return { petId: context.petId, resolution: { kind: "matched", petId: context.petId } };
+      }
+      return { petId: context.petId, resolution: { kind: "needs_clarification" } };
+    }
+
+    return { petId: context.petId, resolution: { kind: "matched", petId: context.petId } };
+  }
+
+  const resolution = resolvePet(merged, context.pets);
+  return resolution.kind === "matched" ? { petId: resolution.petId, resolution } : { petId: null, resolution };
+}
+
+function decideNextStage(currentStage: IntakeStage, safetyDecision: SafetyDecision, petResolution: PetResolution, merged: PersistedIntakeData): IntakeStage {
+  if (currentStage === "completed") return "completed";
+  if (safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") return "human_handoff";
+  if (currentStage === "human_handoff") return "human_handoff";
+
+  if (currentStage === "pet_identification") {
+    return petResolution.kind === "matched" ? "complaint_collection" : "pet_identification";
+  }
+  if (currentStage === "complaint_collection") {
+    return merged.complaint !== null || merged.symptoms.length > 0 ? "safety_check" : "complaint_collection";
+  }
+  if (currentStage === "safety_check") {
+    return safetyDecision.kind === "continue_intake" ? "ready_for_triage" : "safety_check";
+  }
+
+  return currentStage;
+}
+
+/**
+ * Pure, provider-neutral planner for one intake turn. Combines the already-
+ * validated current-turn extraction with the conversation's persisted intake
+ * snapshot, resolves the pet only against tenant-scoped context, evaluates
+ * the existing deterministic safety gate, and chooses a database-valid next
+ * intake stage. Performs no persistence, LLM call, or other external effect.
+ */
+export function planIntakeTurn(context: ConversationIntakeContext, extraction: IntakeExtraction): PlanResult {
+  try {
+    const snapshotResult = parsePersistedSnapshot(context.intakeData);
+    if (snapshotResult.kind === "invalid") return { kind: "failed" };
+    const stored = snapshotResult.kind === "snapshot" ? snapshotResult.value : emptySnapshot();
+
+    const merged = mergeSnapshot(stored, extraction);
+
+    const petOutcome = resolvePetForContext(context, extraction, merged);
+    if (petOutcome === null) return { kind: "failed" };
+
+    const safetyDecision = evaluateSafetyDecision(merged);
+    const nextStage = decideNextStage(context.intakeStage, safetyDecision, petOutcome.resolution, merged);
+
+    return {
+      kind: "planned",
+      nextStage,
+      petId: petOutcome.petId,
+      intakeData: merged,
+      petResolution: petOutcome.resolution,
+      safetyDecision,
+    };
+  } catch {
+    return { kind: "failed" };
+  }
+}

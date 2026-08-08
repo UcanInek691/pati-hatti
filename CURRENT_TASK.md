@@ -1,6 +1,6 @@
 # Current task — 014 deterministically plan one intake turn
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -215,17 +215,136 @@ persisted-state parsing before this task becomes complete.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD:
-- Initial worktree state:
-- Relevant code/tests/migration evidence:
-- Planned files:
-- Conflicts or blockers:
+- Starting HEAD: `390832a`, matching the task's stated starting HEAD; worktree
+  clean at start (repo ownership metadata mismatch under Windows required
+  `git config --global --add safe.directory`-style workarounds for `git`
+  commands, so verification below uses non-git evidence only where noted).
+- Initial worktree state: no local modifications; `src/intakeTurn.ts`,
+  `test/intakeTurn.test.ts`, and `docs/intake-turn-planning.md` did not exist.
+- Relevant code/tests/migration evidence: `src/conversationState.ts` defines
+  `ConversationIntakeContext`, `IntakePet`, and the 9-value `IntakeStage`
+  union; `src/intakeExtraction.ts` defines `IntakeExtraction`,
+  `ReportedSafetySignals`, `PetResolution`, `parseIntakeExtraction`, and
+  `resolvePet` (exact-normalized match, single-pet fallback, never trusts a
+  model ID); `src/safetyDecision.ts` defines `SafetyDecision` and
+  `evaluateSafetyDecision` with fixed emergency > human/medical-advice >
+  unknown-signal > continue precedence. `PersistedIntakeData`'s 8
+  non-schema-version fields are structurally identical to `IntakeExtraction`,
+  so `resolvePet`/`evaluateSafetyDecision` can be called directly on a merged
+  snapshot value.
+- Planned files: `src/intakeTurn.ts`, `test/intakeTurn.test.ts`,
+  `docs/intake-turn-planning.md`, plus this file's Observed context/Delivery
+  record sections — matching the Allowed changes list exactly.
+- Conflicts or blockers: none found; repository evidence matched the task's
+  starting-context claims.
 
 ## Delivery record — Sonnet fills after coding
 
-- Changed files:
-- Acceptance criteria satisfied:
-- Commands and exact results:
-- Checks not run and why:
-- Known limitations:
-- Risks for Codex/Opus review:
+- Changed files: new `src/intakeTurn.ts` (`PersistedIntakeData` type,
+  `planIntakeTurn`), new `test/intakeTurn.test.ts` (52 tests), new
+  `docs/intake-turn-planning.md`; this file's Observed context/Delivery
+  record sections. No other file was touched.
+- Acceptance criteria satisfied: exact-empty/exact-`PersistedIntakeData`
+  snapshot trust boundary with fail-closed rejection of arrays, exotic
+  prototypes, thrown proxies, symbol/extra/missing keys, and unknown schema
+  versions; every merge rule (sticky intent/pet_name/species/complaint,
+  20-newest symptom union, per-signal stickiness, fresh
+  `missing_information`, sticky OR `user_requested_human`) with fresh
+  non-shared nested references and no mutation of frozen inputs; pet
+  selection that never trusts an ID, fails closed on a stale retained
+  `petId`, retains an existing pet against a same-turn conflicting name
+  (`needs_clarification` while keeping the ID), and otherwise reuses
+  `resolvePet` unchanged; the exact 7-step stage precedence including
+  `completed`/`human_handoff` terminal retention, emergency/human priority
+  over normal advancement, and same-stage holds at `ready_for_triage` and
+  all three appointment stages; `evaluateSafetyDecision` reused unchanged
+  over the merged snapshot, so a sticky stored `true` signal still forces
+  `human_handoff` even when the current turn reports `null`/`false`. No
+  Queue, database, LLM, or wiring change was made.
+- Commands and exact results: `pnpm install --frozen-lockfile` → up to date;
+  `pnpm typecheck` → clean, no errors; `pnpm test` → 14 files, 385/385 passed
+  (52 new in `intakeTurn.test.ts`); `pnpm exec wrangler deploy --dry-run
+  --outdir .wrangler/dry-run` → succeeded, only the pre-existing
+  `INTAKE_QUEUE`/`APP_TIMEZONE` bindings listed, no new bindings; `git diff
+  --check` → exit 0 (one harmless LF/CRLF autocrlf notice, no whitespace
+  errors). `git` required a per-invocation `-c safe.directory=*` override to
+  run at all under this checkout's Windows ownership metadata; no git config
+  file was modified.
+- Checks not run and why: none of the required checks were skipped.
+- Known limitations: the planner is pure and intentionally not wired into
+  any runtime path (Worker, Queue consumer, or Task 013's finalizer); it
+  performs no persistence, so Task 013's atomic finalize call is still the
+  only place a plan can take effect. `missing_information` is carried only
+  as advisory data and never influences `nextStage`, by design.
+- Risks for Codex/Opus review: verify the pet-conflict rule specifically —
+  the conflict check in `resolvePetForContext` intentionally uses the raw
+  current-turn `extraction.pet_name`, not the merged snapshot's `pet_name`,
+  because using the merged value would let a turn that mentions no pet
+  spuriously re-trigger single-pet-fallback logic against an already-settled
+  `petId`; confirm this matches the intended "current extraction" wording in
+  the contract. Also verify `resolvePet(merged, context.pets)` and
+  `evaluateSafetyDecision(merged)` being called with a `PersistedIntakeData`
+  value (structurally compatible with `IntakeExtraction`, with an extra
+  `schema_version` field) is the intended reuse rather than a type
+  workaround to revisit.
+
+## Codex review record
+
+- Decision: `PASS_TO_OPUS` on 2026-08-08. The planner remains pure and
+  unwired; its merge, pet-selection, safety, and stage-decision paths match the
+  active contract.
+- Reviewed the complete new source/test/documentation files, the existing
+  extraction parser and pet resolver, the deterministic safety gate, the
+  conversation-stage RPC contract, runtime imports, and the Sonnet delivery
+  record.
+- Accepted the two implementation choices flagged by Sonnet:
+  - pet conflict detection correctly uses only the current turn's explicit
+    `pet_name`; a stored name must not manufacture a new conflict when this
+    turn names no pet;
+  - `PersistedIntakeData` deliberately has the complete `IntakeExtraction`
+    structure plus `schema_version`, so passing the merged value directly to
+    `resolvePet` and `evaluateSafetyDecision` is ordinary structural typing,
+    not a bypass of either boundary.
+- Targeted fixes made during review:
+  - replaced enumerable-only snapshot key inspection with one
+    `Reflect.ownKeys` check, so non-enumerable string extras are rejected along
+    with symbol extras;
+  - removed the new fixed safety-signal iteration list and derives merge keys
+    from the already-validated stored signal object, preventing a future signal
+    addition from being silently omitted;
+  - added a regression test for a hidden non-enumerable extra field.
+- Verification after fixes: frozen install passed; typecheck passed; all 386
+  tests in 14 files passed (53 planner tests); Wrangler dry-run passed with
+  only the existing producer/environment bindings; `git diff --check` passed;
+  runtime-wiring, forbidden-API, and NUL-byte scans were clean.
+- Database validation was not applicable: this task adds no migration, RPC, or
+  database access. No LLM, Queue, Supabase mutation, deploy, commit, or push
+  was performed during implementation/review.
+- Mandatory remaining gate: Claude Opus must perform the contracted read-only
+  review of fail-closed snapshot parsing, merge safety, sticky emergency facts,
+  pet identity/conflict behavior, and stage precedence before Codex can mark
+  the task complete and commit it.
+
+## Claude Opus review record
+
+- Decision: `PASS` on 2026-08-08 after reading the context files and actual
+  Task 014 diff, including Codex's delivery-time fixes.
+- Independently reran typecheck and all 386 tests, confirmed the allowed-file
+  scope, no runtime wiring, and no network/logging/random/time side effects.
+- Confirmed the snapshot trust boundary, tenant-scoped pet identity, current-
+  turn pet conflict rule, sticky emergency behavior, database-valid same-stage
+  terminal updates, and forward-only stage progression.
+- No current correctness or security defect was found. Follow-up requirements
+  accepted for the Queue consumer: corrupt snapshot failures are poison and
+  must not retry forever; safety must not be inferred from `nextStage` alone;
+  later triage must honor the deterministic gate even when the persisted stage
+  is already `ready_for_triage`.
+- Final cleanup after Opus:
+  - initialized merged safety signals from a complete spread of the validated
+    stored object before applying per-key updates, removing the remaining
+    empty-object assertion and preserving future validated keys by default;
+  - simplified the documentation's completed-versus-handoff precedence text;
+  - recorded the Queue-consumer safety requirements in `PROJECT_CONTEXT.md`.
+- Final verification after that cleanup: frozen install, typecheck, all 386
+  tests, Wrangler dry-run, and `git diff --check` passed. The Worker binding
+  list remained unchanged and the planner remained unwired.
