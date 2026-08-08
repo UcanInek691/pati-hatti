@@ -92,32 +92,47 @@ goes through RLS policies described above instead.
 ## Inbound WhatsApp text message ingestion
 
 Defined in
-`supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql`.
+`supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql` and
+revised by
+`supabase/migrations/20260806000300_ingest_whatsapp_conversation_locator.sql`.
 
 > **Disposable validation passed.** On 2026-08-06 the migration was applied to
 > `vetai-test` and `supabase/tests/005_ingest_whatsapp_text_message.sql`
 > returned `PASS`. Its fixtures were rolled back. Production still requires
 > the managed Supabase migration workflow.
 
+> **Locator validation passed.** On 2026-08-08 the `20260806000300` migration
+> was applied to `vetai-test` and
+> `supabase/tests/010_ingest_whatsapp_conversation_locator.sql` returned
+> `PASS` with every fixture count at zero. Production still requires the
+> managed Supabase migration workflow.
+
 `public.ingest_whatsapp_text_message(...)` is the single Data API entry
 point the Worker calls after signature/envelope validation. It is
 `SECURITY INVOKER`, `VOLATILE`, has an empty `search_path`, and is granted
 to `service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`),
 so it runs with the caller's own privileges — service-role's table grants
-and RLS bypass, not an elevated definer identity. In one call it:
+and RLS bypass, not an elevated definer identity. It returns exactly one row
+of `(result text, conversation_id uuid)`. In one call it:
 
 1. Resolves the clinic from `whatsapp_accounts.phone_number_id`, writing
-   nothing and returning `unknown_account` if no match exists.
+   nothing and returning `unknown_account` with a null `conversation_id` if
+   no match exists.
 2. Claims idempotency via `webhook_events (clinic_id, provider_event_id)`
    with `ON CONFLICT DO NOTHING RETURNING`; a redelivery with a matching
    `payload_hash` returns `duplicate` with no further mutation, and a
    redelivery with a different hash for the same provider event ID raises
    an error and writes nothing.
+   The `duplicate` locator is resolved from `public.messages` by
+   `(clinic_id, whatsapp_message_id)` — never by provider ID alone, because
+   that ID is only unique within a clinic. If a claimed event has no
+   matching persisted message the function raises instead of returning a
+   null or synthetic locator.
 3. Upserts the owner by `(clinic_id, phone_e164)`, preserving any existing
    name that isn't the `WhatsApp user` fallback.
 4. Reuses the owner's open (`active`/`handoff`) conversation or creates one,
-   then inserts the inbound message and marks the webhook event
-   `processed`.
+   then inserts the inbound message, marks the webhook event `processed`,
+   and returns that conversation's ID as the locator.
 
 A partial unique index, `conversations_one_open_per_owner_idx` on
 `(clinic_id, owner_id) where status in ('active', 'handoff')`, caps this at

@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-06 by Codex.
+Last verified: 2026-08-08 by Codex.
 
 ## Product
 
@@ -69,6 +69,12 @@ The secure Worker baseline is committed on `main`:
   facts require clarification, and only eight explicit false values may
   continue. The canonical signal list is compile-time exhaustive, the gate is
   not wired into runtime yet, and both Codex and Claude Opus reviews passed.
+- Inbound persistence now returns a validated, tenant-scoped conversation ID
+  for both newly processed and exact-duplicate WhatsApp messages. Unknown
+  accounts return no locator; malformed Data API results and orphaned duplicate
+  events fail closed. The forward migration and rollback SQL test passed on
+  `vetai-test`, including cross-tenant same-provider-ID isolation and
+  service-role-only execution, with zero surviving fixtures.
 
 Verified evidence before the context-system change:
 
@@ -102,11 +108,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 009's deterministic safety decision gate passed Codex and Claude Opus
-review but remains unwired. The next phase is the smallest fail-closed runtime
-orchestration step that preserves the validated extraction boundary before any
-AI-generated response or outbound WhatsApp delivery. Production deployment
-remains out of scope.
+Task 010 now exposes the conversation locator needed for downstream work.
+The next phase is a minimal asynchronous queue handoff so the signed webhook
+can acknowledge persistence without running LLM/state orchestration inline.
+The reviewed extraction and safety modules remain unwired; production
+deployment remains out of scope.
 
 ## Durable safety invariants
 

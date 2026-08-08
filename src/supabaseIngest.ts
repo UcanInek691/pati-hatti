@@ -1,9 +1,15 @@
 import type { Env } from "./env";
 import type { WhatsAppIngestItem } from "./whatsappIngest";
 
-export type IngestOutcome = "processed" | "duplicate" | "unknown_account" | "failed";
+export type IngestOutcome =
+  | { kind: "processed"; conversationId: string }
+  | { kind: "duplicate"; conversationId: string }
+  | { kind: "unknown_account" }
+  | { kind: "failed" };
 
-const VALID_RESULTS = new Set(["processed", "duplicate", "unknown_account"]);
+const FAILED: IngestOutcome = { kind: "failed" };
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isLoopbackHttpUrl(url: URL): boolean {
   return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
@@ -12,18 +18,18 @@ function isLoopbackHttpUrl(url: URL): boolean {
 /** Calls the `ingest_whatsapp_text_message` Data API RPC over native fetch. Never logs the request/response body. */
 export async function ingestWhatsAppTextMessage(item: WhatsAppIngestItem, env: Env): Promise<IngestOutcome> {
   if (!env.SUPABASE_URL.trim() || !env.SUPABASE_SERVICE_ROLE_KEY.trim()) {
-    return "failed";
+    return FAILED;
   }
 
   let endpoint: URL;
   try {
     endpoint = new URL("/rest/v1/rpc/ingest_whatsapp_text_message", env.SUPABASE_URL);
   } catch {
-    return "failed";
+    return FAILED;
   }
 
   if (endpoint.protocol !== "https:" && !isLoopbackHttpUrl(endpoint)) {
-    return "failed";
+    return FAILED;
   }
 
   let response: Response;
@@ -46,29 +52,42 @@ export async function ingestWhatsAppTextMessage(item: WhatsAppIngestItem, env: E
       }),
     });
   } catch {
-    return "failed";
+    return FAILED;
   }
 
   if (!response.ok) {
-    return "failed";
+    return FAILED;
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    return "failed";
+    return FAILED;
   }
 
   if (!Array.isArray(payload) || payload.length !== 1) {
-    return "failed";
+    return FAILED;
   }
 
-  const row = payload[0];
-  const result = typeof row === "object" && row !== null ? (row as Record<string, unknown>).result : undefined;
-  if (typeof result !== "string" || !VALID_RESULTS.has(result)) {
-    return "failed";
+  const row: unknown = payload[0];
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    return FAILED;
   }
 
-  return result as IngestOutcome;
+  const { result, conversation_id: conversationId } = row as Record<string, unknown>;
+
+  if (result === "unknown_account") {
+    return conversationId === null ? { kind: "unknown_account" } : FAILED;
+  }
+
+  if (result !== "processed" && result !== "duplicate") {
+    return FAILED;
+  }
+
+  if (typeof conversationId !== "string" || !UUID_PATTERN.test(conversationId)) {
+    return FAILED;
+  }
+
+  return { kind: result, conversationId };
 }

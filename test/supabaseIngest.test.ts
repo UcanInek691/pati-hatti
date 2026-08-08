@@ -3,6 +3,8 @@ import { ingestWhatsAppTextMessage } from "../src/supabaseIngest";
 import type { Env } from "../src/env";
 import type { WhatsAppIngestItem } from "../src/whatsappIngest";
 
+const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
+
 const item: WhatsAppIngestItem = {
   phoneNumberId: "123456123",
   providerMessageId: "wamid.ID1",
@@ -32,12 +34,12 @@ afterEach(() => {
 
 describe("ingestWhatsAppTextMessage", () => {
   it("calls the RPC with the documented URL, method, headers, and body", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }]));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
     vi.stubGlobal("fetch", fetchMock);
 
     const outcome = await ingestWhatsAppTextMessage(item, env);
 
-    expect(outcome).toBe("processed");
+    expect(outcome).toEqual({ kind: "processed", conversationId: CONVERSATION_ID });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/ingest_whatsapp_text_message");
@@ -57,9 +59,62 @@ describe("ingestWhatsAppTextMessage", () => {
     });
   });
 
-  it.each(["processed", "duplicate", "unknown_account"] as const)("accepts the documented result %s", async (result) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result }])));
-    expect(await ingestWhatsAppTextMessage(item, env)).toBe(result);
+  it.each(["processed", "duplicate"] as const)("returns the conversation locator for %s", async (result) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, conversation_id: CONVERSATION_ID.toUpperCase() }])));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({
+      kind: result,
+      conversationId: CONVERSATION_ID.toUpperCase(),
+    });
+  });
+
+  it("returns unknown_account without a locator", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account", conversation_id: null }])));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "unknown_account" });
+  });
+
+  it.each([
+    ["a missing conversation_id", { result: "processed" }],
+    ["a null conversation_id", { result: "processed", conversation_id: null }],
+    ["a non-string conversation_id", { result: "duplicate", conversation_id: 42 }],
+    ["an object conversation_id", { result: "duplicate", conversation_id: { id: CONVERSATION_ID } }],
+    ["a malformed conversation_id", { result: "processed", conversation_id: "not-a-uuid" }],
+    ["a truncated conversation_id", { result: "processed", conversation_id: CONVERSATION_ID.slice(0, -1) }],
+    ["a conversation_id with trailing content", { result: "duplicate", conversation_id: `${CONVERSATION_ID} ` }],
+  ])("fails closed when a persisted result has %s", async (_label, row) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([row])));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
+  });
+
+  it.each([
+    ["a UUID", { result: "unknown_account", conversation_id: CONVERSATION_ID }],
+    ["a missing field", { result: "unknown_account" }],
+    ["an empty string", { result: "unknown_account", conversation_id: "" }],
+  ])("fails closed when unknown_account carries %s instead of null", async (_label, row) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([row])));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
+  });
+
+  it.each([
+    ["a non-array body", { result: "processed", conversation_id: CONVERSATION_ID }],
+    ["an empty array", []],
+    ["two rows", [
+      { result: "processed", conversation_id: CONVERSATION_ID },
+      { result: "duplicate", conversation_id: CONVERSATION_ID },
+    ]],
+    ["an unknown result", [{ result: "unexpected", conversation_id: CONVERSATION_ID }]],
+    ["a row missing the result field", [{ conversation_id: CONVERSATION_ID }]],
+    ["a non-string result", [{ result: 1, conversation_id: CONVERSATION_ID }]],
+    ["a null row", [null]],
+    ["a string row", ["processed"]],
+    ["an array row", [["processed", CONVERSATION_ID]]],
+  ])("treats %s as a malformed response and fails", async (_label, body) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
+  });
+
+  it("treats a body that is not JSON as failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>oops</html>", { status: 200 })));
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
   });
 
   it("fails closed when Supabase configuration is missing, without calling fetch", async () => {
@@ -68,7 +123,7 @@ describe("ingestWhatsAppTextMessage", () => {
 
     const outcome = await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_URL: "" });
 
-    expect(outcome).toBe("failed");
+    expect(outcome).toEqual({ kind: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -76,7 +131,15 @@ describe("ingestWhatsAppTextMessage", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    expect(await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_SERVICE_ROLE_KEY: "   " })).toBe("failed");
+    expect(await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_SERVICE_ROLE_KEY: "   " })).toEqual({ kind: "failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an unparseable Supabase URL, without calling fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_URL: "not a url" })).toEqual({ kind: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -85,31 +148,21 @@ describe("ingestWhatsAppTextMessage", () => {
       "fetch",
       vi.fn().mockRejectedValue(new Error("network down")),
     );
-    expect(await ingestWhatsAppTextMessage(item, env)).toBe("failed");
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
   });
 
   it("treats a non-2xx response as failed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ message: "error" }, 500)));
-    expect(await ingestWhatsAppTextMessage(item, env)).toBe("failed");
-  });
-
-  it.each([
-    ["a non-array body", { result: "processed" }],
-    ["an empty array", []],
-    ["a row without a valid result", [{ result: "unexpected" }]],
-    ["a row missing the result field", [{}]],
-  ])("treats %s as a malformed response and fails", async (_label, body) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
-    expect(await ingestWhatsAppTextMessage(item, env)).toBe("failed");
+    expect(await ingestWhatsAppTextMessage(item, env)).toEqual({ kind: "failed" });
   });
 
   it("allows plain HTTP for loopback localhost testing", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }]));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
     vi.stubGlobal("fetch", fetchMock);
 
     const outcome = await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_URL: "http://localhost:54321" });
 
-    expect(outcome).toBe("processed");
+    expect(outcome).toEqual({ kind: "processed", conversationId: CONVERSATION_ID });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -119,7 +172,7 @@ describe("ingestWhatsAppTextMessage", () => {
 
     const outcome = await ingestWhatsAppTextMessage(item, { ...env, SUPABASE_URL: "http://example.supabase.co" });
 
-    expect(outcome).toBe("failed");
+    expect(outcome).toEqual({ kind: "failed" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

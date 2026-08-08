@@ -57,8 +57,8 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   let failed = 0;
   for (const item of extraction.items) {
     const outcome = await ingestWhatsAppTextMessage(item, env);
-    if (outcome === "processed") processed++;
-    else if (outcome === "duplicate") duplicate++;
+    if (outcome.kind === "processed") processed++;
+    else if (outcome.kind === "duplicate") duplicate++;
     else failed++;
   }
   console.log("whatsapp webhook event persisted", { processed, duplicate, failed });

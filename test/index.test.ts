@@ -5,6 +5,7 @@ import { MAX_BODY_BYTES } from "../src/webhookSignature";
 import { signHmacSha256 } from "./signHelper";
 
 const APP_SECRET = "test-app-secret";
+const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
 
 const env: Env = {
   APP_TIMEZONE: "Europe/Istanbul",
@@ -197,19 +198,19 @@ describe("worker whatsapp persistence", () => {
   });
 
   it("returns 200 for a processed text message", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }])));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }])));
     const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
     expect(res.status).toBe(200);
   });
 
   it("returns 200 for a duplicate text message", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "duplicate" }])));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "duplicate", conversation_id: CONVERSATION_ID }])));
     const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
     expect(res.status).toBe(200);
   });
 
   it("calls the RPC once for an identical in-payload duplicate", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }]));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
     vi.stubGlobal("fetch", fetchMock);
     const payload = textMessageWebhookBody() as {
       entry: Array<{ changes: Array<{ value: { messages: unknown[] } }> }>;
@@ -231,7 +232,13 @@ describe("worker whatsapp persistence", () => {
   });
 
   it("returns 503 when the RPC reports an unknown account", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account" }])));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account", conversation_id: null }])));
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    expect(res.status).toBe(503);
+  });
+
+  it("returns 503 when a processed result omits the conversation locator", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }])));
     const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
     expect(res.status).toBe(503);
   });
