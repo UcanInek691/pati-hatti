@@ -49,6 +49,35 @@ future consumer (Task 012) must validate the message again and behave
 idempotently before any Queue consumer, deploy, or production use is
 approved.
 
+## Future consumer: strict revalidation and lease (not yet wired)
+
+Because Queue and WhatsApp webhook delivery are both at least once, a future
+consumer must never trust a Queue body as-is and must never assume it is the
+only worker processing a given job. Two primitives now exist for that, but
+neither is wired into a `queue()` handler yet:
+
+- `parseIntakeQueueMessage` in `src/intakeQueue.ts` strictly revalidates an
+  untrusted Queue body: it accepts only a plain object with exactly
+  `version: 1`, a syntactically valid UUID `conversationId`, and a
+  non-empty, already-trimmed `providerMessageId` of at most 512 Unicode code
+  points, rejecting every other shape (missing/extra keys, arrays, exotic
+  prototypes, wrong types, malformed UUIDs, whitespace issues, overlength
+  IDs, and thrown/proxy input) without mutating or logging the input.
+- `src/intakeJobLease.ts` exposes `claimIntakeQueueJob` and
+  `completeIntakeQueueJob`, native-`fetch` service-role clients for the new
+  `claim_intake_queue_job` / `complete_intake_queue_job` database functions
+  (see `docs/database-schema.md`). Claiming locks the exact tenant-safe
+  inbound message/webhook-event pair, issues a fresh claim token, and sets a
+  fixed 120-second lease; an unexpired lease returns `busy` to a concurrent
+  claimer, while an expired lease is reclaimed with a new token. Only the
+  current token can complete the job — a worker whose lease was reclaimed
+  gets `stale`, never `completed`, if it tries to finish late.
+
+> **Disposable validation passed (2026-08-08).** Codex applied the migration
+> to `vetai-test`; the rollback test returned `PASS 0 0 0 0 0 0`. This was an
+> SQL Editor integration test rather than a Supabase CLI migration-history
+> entry, so production still needs the managed migration workflow.
+
 ## Not implemented in this step
 
 - No `queue()` consumer handler and no `[[queues.consumers]]` binding exist

@@ -80,6 +80,18 @@ The secure Worker baseline is committed on `main`:
   duplicate outcomes enqueue a versioned job containing only conversation and
   provider-message IDs; missing bindings and send failures return 503. No real
   Queue resource, consumer, or deployment exists yet.
+- Untrusted Queue bodies now have a strict three-field runtime parser, and
+  persisted inbound events have a database-backed `pending | processing |
+  completed` intake lease with a fixed 120-second expiry and UUID claim token.
+  Tenant-safe claim/completion RPCs lock the exact message/event pair, allow
+  expired-lease reclaim, and prevent a superseded token from completing. Only
+  `service_role` can execute them; native-fetch clients validate every Data API
+  success shape and fail closed.
+- The lease migration and rollback SQL test passed on disposable `vetai-test`
+  with zero surviving fixtures; 307/307 TypeScript tests, typecheck, frozen
+  install, and Worker dry-run passed. Codex and Claude Opus reviews passed.
+  The SQL test proves a sequential second claim; true two-session blocking was
+  reviewed from PostgreSQL locking semantics rather than exercised directly.
 
 Verified evidence before the context-system change:
 
@@ -113,10 +125,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 011 now provides a reviewed producer-only Queue handoff after persistence.
-The next phase is a fail-closed, idempotent Queue consumer boundary before any
-LLM or state orchestration is wired. No Queue resource has been created and
-production deployment remains out of scope.
+Task 012 now provides the reviewed Queue parser and database lease boundary.
+The next phase must make consumer state changes atomically idempotent with the
+current lease token before wiring the Queue consumer, LLM, or outbound effects.
+No Queue resource has been created and production deployment remains out of
+scope.
 
 ## Durable safety invariants
 
@@ -126,6 +139,9 @@ production deployment remains out of scope.
 - Cross-tenant relationships are rejected by database constraints even if application code is wrong.
 - Raw webhook payloads and sensitive clinical messages are not copied into logs or embeddings by default.
 - Red-priority situations stop normal automation and trigger immediate human/emergency direction.
+- A lease guarantees one successful completer, not one executing worker after
+  expiry/reclaim; irreversible effects must be independently idempotent or
+  committed atomically with current-token completion.
 
 ## Context maintenance
 

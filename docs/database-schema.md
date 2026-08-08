@@ -194,3 +194,65 @@ only (revoked from `PUBLIC`, `anon`, `authenticated`):
 Neither function calls an LLM, sends a WhatsApp message, or is wired into
 the webhook handler; `src/conversationState.ts` exposes native-`fetch`
 Worker helpers for both, unused until a later task calls them.
+
+## Intake queue job lease
+
+Defined in `supabase/migrations/20260808000100_intake_job_lease.sql`.
+
+> **Disposable validation passed (2026-08-08).** Codex applied this migration
+> to `vetai-test` and the rollback test
+> `supabase/tests/012_intake_job_lease.sql` returned `PASS 0 0 0 0 0 0`.
+> This SQL Editor integration test did not add a Supabase CLI migration-history
+> entry; production must still apply the migration through the managed
+> migration workflow.
+
+This is the fail-closed idempotency boundary a future Cloudflare Queue
+consumer will need before it may call an LLM, evaluate safety, or advance
+conversation state; no consumer, orchestration, or deploy exists yet.
+
+`webhook_events` carries four new columns tracking downstream intake
+processing, distinct from the existing `processing_status` (which only
+tracks inbound persistence):
+
+- `intake_status text not null default 'pending'`, constrained to
+  `pending | processing | completed`.
+- `intake_claim_token uuid` — the current lease holder's token.
+- `intake_lease_until timestamptz` — the fixed 120-second lease expiry.
+- `intake_completed_at timestamptz`.
+
+A table check constraint enforces that these four columns are only ever
+coherent as a group: `pending` requires all three of token/lease/completed
+time to be null; `processing` requires token and lease non-null with
+completed time null; `completed` requires token/lease null with completed
+time non-null. No other combination can be stored.
+
+Two `SECURITY INVOKER`, `VOLATILE`, empty-`search_path` functions, granted to
+`service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`):
+
+- `public.claim_intake_queue_job(p_conversation_id, p_provider_message_id)` —
+  resolves the exact tenant-safe inbound message and its processed webhook
+  event (tenant safety comes from the message's own `clinic_id`, never a
+  caller-supplied one), locks the event row so concurrent claims serialize,
+  and returns one row of `(result, claim_token, message_text)`. A `pending`
+  job or one whose 120-second lease has expired is claimed with a fresh
+  UUID token and message text; an unexpired lease returns `busy`; an
+  already-`completed` job returns `completed`; anything that doesn't
+  resolve to an exact inbound/processed pair returns `not_found`. Every
+  non-`claimed` result returns a null token and null text.
+- `public.complete_intake_queue_job(p_conversation_id, p_provider_message_id,
+  p_claim_token)` — atomically marks the same tenant-safe job `completed`,
+  clearing the token/lease and setting the completion time, only when the
+  event is currently `processing` and its stored token equals the supplied
+  token. A missing job, an already-completed job, a still-pending job, or a
+  token that doesn't match the current lease holder (for example a stale
+  worker whose lease expired and was reclaimed by another worker) all
+  collapse to the same `stale` result, so a stale worker can never complete
+  a lease it no longer holds.
+
+Neither function stores phone numbers, owner/pet data, clinic identifiers
+beyond what tenant-safe resolution requires, payload hashes, or webhook
+error text in its return rows. `src/intakeJobLease.ts` exposes native-`fetch`
+Worker helpers for both, following the same HTTPS/loopback-only,
+fail-closed-on-blank-configuration transport rules as
+`src/conversationState.ts`; neither helper is wired into `src/index.ts` or
+any Queue handler yet.
