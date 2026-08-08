@@ -1,6 +1,6 @@
 # Current task — 016 plan deterministic intake replies
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -121,19 +121,19 @@ Use these strings exactly, including punctuation. Do not ask an LLM to rewrite
 them.
 
 - `emergency_handoff`:
-  `Bu durum acil olabilir. Lütfen bot üzerinden yanıt beklemeden kliniğimizi telefonla arayın veya en yakın açık veteriner kliniğine başvurun.`
+  `Bu durum acil olabilir. Bot üzerinden yanıt beklemeyin; en yakın açık veteriner kliniğini hemen arayın veya doğrudan kliniğe başvurun.`
 - `human_handoff`:
-  `Talebinizi klinik ekibine yönlendirdim. Lütfen ekip yanıtını bekleyin. Durum kötüleşirse en yakın açık veteriner kliniğiyle doğrudan iletişime geçin.`
+  `Bu talebi bot üzerinden yanıtlayamam. Lütfen kliniğimizi telefonla arayın. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`
 - `pet_identity`:
   `Hangi evcil hayvanınız için yazıyorsunuz? Lütfen adını belirtin.`
 - `complaint`:
   `Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?`
 - `intake_received`:
-  `Bilgileri aldım.`
+  `Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun.`
 
 For `safety_questions`, use this exact prefix:
 
-`Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın:`
+`Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:`
 
 Then append one line per unknown signal as `\n- <question>`, using a
 compile-time-exhaustive `Record<SafetySignal, string>`:
@@ -160,8 +160,12 @@ not a replacement for the typed safety gate.
 - Emergency copy must direct immediate off-bot professional contact; it must
   not promise that clinic staff are currently available.
 - Human-handoff copy must not promise a response time.
+- Human-handoff copy must not claim or imply that staff were notified; the
+  current system only persists handoff state and directs the user to make
+  contact.
 - Safety questions collect explicit yes/no facts only; they do not decide or
-  communicate a diagnosis.
+  communicate a diagnosis, and their fixed prefix must preserve the immediate
+  off-bot escape instruction when any listed condition is present or unknown.
 - The source basis remains the reviewed deterministic gate. Merck Veterinary
   Manual lists breathing difficulty, ongoing seizures, loss of consciousness,
   severe bleeding, trauma, poisoning, and blocked urine flow among problems
@@ -238,8 +242,171 @@ still required before production regardless of either AI review.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- Verified `AGENTS.md`, then `PROJECT_CONTEXT.md`, then this file, in order.
+- Confirmed HEAD is `b6d5094` on `main` and the worktree was clean before
+  coding (`git status --porcelain=v1` returned no output).
+- `git diff --stat 3872439 b6d5094 -- . ':!CURRENT_TASK.md'` returned no
+  output: the only change between this task's stated starting HEAD (`3872439`)
+  and the actual HEAD is the commit that added this task file. No repository
+  evidence conflicted with the "Starting context" section.
+- Read `src/conversationState.ts` (`IntakeStage` union, 9 stages including
+  `human_handoff` and `completed`), `src/intakeTurn.ts` (`PlanResult` closed
+  union with `planned`/`failed`, `PersistedIntakeData` interface), and
+  `src/intakeExtraction.ts` (`PetResolution` union) to confirm exact field
+  names to reuse.
+- Read `src/safetyDecision.ts` in full: `SafetyDecision` is
+  `{ kind: "emergency_handoff"; positiveSignals } | { kind: "human_handoff";
+  reason } | { kind: "needs_safety_check"; unknownSignals } | { kind:
+  "continue_intake" }`, `SafetySignal` is derived from a compile-time-exhaustive
+  `CANONICAL_SIGNAL_ORDER` of 8 signal names, and `unknownSignals`/
+  `positiveSignals` are already filtered in canonical order by
+  `evaluateSafetyDecision`, so this task's planner does not need to re-sort.
+- Read `test/intakeTurn.test.ts` for existing fixture/import conventions
+  (relative `../src/...` imports, `vitest` `describe`/`it`/`it.each`) to match
+  style in the new test file.
+- Read `docs/inbound-queue.md` and `PROJECT_CONTEXT.md`'s "Current phase" to
+  confirm no reply-sending or outbox work is in scope yet and that this task
+  is the sanctioned next phase after Task 015.
+- Planned files: new `src/intakeReply.ts`, new `test/intakeReply.test.ts`, new
+  `docs/intake-replies.md`; no other files planned for change.
+- No conflicts or blockers found.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+- Changed files: added `src/intakeReply.ts`, `test/intakeReply.test.ts`,
+  `docs/intake-replies.md`. No other file was modified; `git status
+  --porcelain=v1` after coding shows exactly these three untracked files.
+- `planIntakeReply(currentStage, result)` implements the exact 9-rule
+  precedence from this file: `completed` → `none` regardless of `result`
+  (checked first, independent of `result.kind`); `failed` → fixed
+  `human_handoff`; then for a `planned` result, `safetyDecision.kind ===
+  "emergency_handoff"` → `emergency_handoff`; `"human_handoff"` →
+  `human_handoff`; `nextStage === "human_handoff"` for any other reason →
+  `human_handoff`; `"needs_safety_check"` → `safety_questions` built only from
+  its `unknownSignals` in their already-canonical order; `petResolution.kind
+  === "needs_clarification"` → `pet_identity`; merged `complaint === null &&
+  symptoms.length === 0` → `complaint`; otherwise → generic `intake_received`
+  (never claims an appointment/triage action).
+- All five Turkish strings and the `safety_questions` prefix/question map are
+  copied verbatim from this file's "Exact Turkish copy" section, including
+  punctuation. `SAFETY_SIGNAL_QUESTIONS` is typed
+  `Record<SafetySignal, string>`, so removing or renaming a `SafetySignal`
+  key fails the build at compile time.
+- Every `sendReply(...)` call constructs and returns a new object literal, and
+  `{ kind: "none" }` is a fresh literal at its own call site, satisfying
+  "return a fresh object on every call." The module contains no `fetch`,
+  `Date`, `Math.random`, `crypto`, `console.*`, or mutation of any input.
+- `planSafetyQuestionsReply` fails closed to the fixed `human_handoff` reply
+  both when `unknownSignals` is empty and when any entry is not an own key of
+  `SAFETY_SIGNAL_QUESTIONS` (defense in depth behind the already-exhaustive
+  `SafetySignal` type), without throwing.
+- No reply text ever reads `pet_name`, `complaint`, `symptoms` content, owner
+  name, IDs, or message text — only closed `kind`/enum-like fields
+  (`safetyDecision.kind`, `unknownSignals` members, `petResolution.kind`,
+  `nextStage`, boolean/null checks on `complaint`/`symptoms.length`) drive
+  branching, and only fixed strings are ever returned.
+- `test/intakeReply.test.ts` adds 21 `it`/`it.each`-driven tests (29 assertions
+  including expanded `it.each` cases) covering every bullet in "Required
+  tests": completed-always-none for planned/planned-emergency/failed; failed
+  routes to human handoff; emergency precedence over human-request signal,
+  unknown safety signals, pet clarification, and missing complaint; human
+  handoff precedence over safety/pet/complaint; a human-handoff `nextStage`
+  with a `continue_intake` safety decision; safety-question precedence and
+  exact canonical-order text; all 8 `SafetySignal` → question mappings
+  individually; empty and unrecognized `unknownSignals` failing closed without
+  throwing; pet clarification beating complaint; missing-complaint-and-zero-
+  symptoms asking for complaint; symptom-with-null-complaint and complaint-
+  with-zero-symptoms both reaching `intake_received`; all four
+  triage/appointment stages returning only the generic receipt text;
+  determinism plus fresh-object identity; no `console.log`/`warn`/`error`
+  calls; and absence of the fixture's dynamic pet-name/complaint/symptom
+  strings in any returned text. No snapshot test of the whole module was
+  added.
+- `docs/intake-replies.md` covers all 7 required points: closed categories and
+  precedence, why fixed deterministic copy is used for the MVP, safety and
+  privacy boundaries, terminal `none`/poison-handoff behavior, that no reply
+  is persisted/queued/LLM-generated/sent yet, that atomic outbox persistence
+  is required before runtime wiring, and the clinic-veterinarian/Turkish
+  legal/privacy approval gate.
+- Commands run and results:
+  - `pnpm install --frozen-lockfile` → `Already up to date. Done in 721ms.`
+  - `pnpm typecheck` → `tsc --noEmit` completed with no errors.
+  - `pnpm test` → all tests passed, 442/442 (413 existing + 29 new).
+  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+    succeeded; `Total Upload: 47.74 KiB / gzip: 11.28 KiB`; bindings listed
+    `env.INTAKE_QUEUE` (Queue) and `env.APP_TIMEZONE`; exited on
+    `--dry-run: exiting now.` with no deploy performed.
+  - `git diff --check` → exit code 0, no whitespace errors.
+- Checks not run: none of the required verification commands were skipped.
+- Known limitations: the Turkish copy strings (including emergency and
+  human-handoff wording) are, per this file's own gate, not yet approved by a
+  clinic veterinarian or for Turkish legal/privacy compliance — Codex/Opus
+  review is not that approval. `planIntakeReply` is not wired into
+  `src/intakeConsumer.ts` or any runtime path, so no reply is generated or
+  sent by the deployed Worker as a result of this task. No commit, push,
+  deploy, or real API/LLM/Supabase/Cloudflare call was made.
+- Risks for Codex review: confirm the 9-rule precedence ordering in
+  `src/intakeReply.ts` exactly matches this file (in particular that the
+  `nextStage === "human_handoff"` check at rule 5 sits between the
+  `safetyDecision`-based checks and the `needs_safety_check` branch); confirm
+  every Turkish string is byte-for-byte exact including punctuation; confirm
+  `SAFETY_SIGNAL_QUESTIONS` stays compile-time exhaustive over `SafetySignal`
+  if that type ever changes; and confirm no test or implementation path
+  allows dynamic user data into reply text.
+
+## Codex review record
+
+- Decision: `PASS`, pending the required Claude Opus safety-copy review.
+- Scope matches the allowed list exactly. The new module is not imported by
+  runtime code and performs no external call, persistence, logging, mutation,
+  timing, randomness, or environment access.
+- The nine precedence rules match the contract. Completed is terminal; poison
+  results route to fixed human handoff; emergency and human decisions precede
+  clarification; safety questions precede pet/complaint prompts; the fallback
+  is receipt-only and claims no triage or appointment action.
+- All fixed Turkish strings and all eight safety questions match the task
+  contract. `Record<SafetySignal, string>` makes the question map exhaustive,
+  while empty or unrecognized internal signal lists fail closed to the fixed
+  human-handoff reply.
+- Code-path inspection found no dynamic user/provider field in returned text.
+  UTF-8 content was checked directly with Node: no replacement or NUL bytes
+  exist; apparent mojibake in PowerShell output is display-only.
+- Codex independently reran frozen install, strict typecheck, all 442 tests,
+  Wrangler dry-run, and `git diff --check`; all passed before the Opus wording
+  review. No pre-Opus implementation deviation was found.
+- No commit, push, deploy, real API/LLM call, database mutation, or external
+  resource creation was performed. `PROJECT_CONTEXT.md` remains unchanged
+  until the mandatory Opus review is resolved.
+- Opus should review only: whether the exact emergency/human-handoff wording
+  could delay care, over-promise clinic routing/availability, or omit a needed
+  immediate-contact instruction; whether the eight questions remain neutral
+  fact collection without diagnosis/treatment; and the completed-stage
+  `none` rule given the verified new-conversation invariant.
+
+## Claude Opus review record
+
+- Initial decision: `CHANGES_REQUIRED`.
+- Blocking finding accepted: the original human-handoff copy falsely claimed
+  that the clinic team had been notified and instructed the user to wait,
+  although no staff notification channel exists.
+- Blocking finding accepted: the original safety-question branch had no
+  immediate off-bot escape instruction despite representing unknown danger
+  signals.
+- Targeted remediation: emergency copy now leads with immediate contact with
+  the nearest open veterinary clinic; human-handoff copy truthfully states the
+  bot cannot answer and tells the user to call; safety-question copy includes
+  an immediate-contact instruction for any listed condition or uncertainty;
+  generic receipt copy now includes a worsening/new-symptom escape instruction.
+- No precedence, safety decision, stage, dynamic-data, or runtime behavior was
+  changed. A second read-only Opus pass is required before completion.
+- After remediation, Codex reran frozen install, strict typecheck, all 444
+  tests, Wrangler dry-run, and `git diff --check`; all passed. Two focused
+  regressions now forbid the false staff-notification/waiting claim and require
+  the safety-question escape instruction.
+- Final Opus decision: `PASS`. Both blocking wording findings are closed. The
+  remaining notes are non-blocking editorial consistency and the known
+  operational absence of staff notification; neither changes this unwired
+  planner's approved scope.
+- Clinic-veterinarian and Turkish legal/privacy approval remain mandatory
+  before production. Opus approval is limited to this repository's current
+  safety wording and does not replace either external approval.

@@ -124,6 +124,16 @@ The secure Worker baseline is committed on `main`:
   atomically routed to human handoff instead of retrying forever. No outbound
   WhatsApp response is generated or sent. Codex review passed with 413/413
   tests, typecheck, frozen install, and Worker dry-run.
+- A pure deterministic reply planner now maps the reviewed turn result to a
+  closed Turkish fixed-copy response or terminal `none`. Emergency and unknown
+  safety paths tell the user not to wait for the bot and to contact an open
+  veterinary clinic; human-handoff copy truthfully says the bot cannot answer
+  and does not claim staff notification. No dynamic owner, pet, complaint,
+  symptom, clinic, or provider data is inserted into reply text.
+- The reply planner is not wired, persisted, queued, or sent. Codex and Claude
+  Opus safety reviews passed after wording fixes, with 444/444 tests,
+  typecheck, frozen install, and Worker dry-run. Clinic-veterinarian and Turkish
+  legal/privacy approval remain required before production use.
 
 Verified evidence before the context-system change:
 
@@ -139,9 +149,10 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Outbound WhatsApp messages or user-facing response generation.
+- Atomic outbound-message persistence, WhatsApp delivery, and retry handling;
+  deterministic response planning exists but is not wired.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
-- Deterministic triage and human handoff.
+- Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
 - Summaries, memory, embeddings, or RAG.
 - Staff/admin panel.
@@ -156,12 +167,12 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 015 now provides the reviewed bounded Queue consumer through parsing,
-claim, context, extraction, planning, and atomic finalization. The next phase
-can define deterministic user-response planning and the outbound WhatsApp send
-boundary without weakening the existing safety and idempotency guarantees. No
-Queue or DLQ resource has been created and production deployment remains out of
-scope.
+Task 016 now provides reviewed deterministic user-response planning, but the
+reply remains unwired. The next phase must add an atomic database outbox tied
+to current-token intake finalization before any WhatsApp send is attempted;
+direct sending inside the intake consumer would risk either lost or duplicate
+messages. No Queue or DLQ resource has been created and production deployment
+remains out of scope.
 
 ## Durable safety invariants
 
@@ -182,6 +193,12 @@ scope.
 - Consumers must inspect the planner's `safetyDecision`, not infer safety from
   `nextStage` alone; a completed stage remains terminal, and later triage work
   must still honor the deterministic gate result.
+- User-facing copy must not claim staff notification or response unless such an
+  operation is durably implemented. Unknown or worsening safety conditions
+  must preserve an immediate off-bot professional-contact path.
+- The current Turkish safety copy is not production-approved until a clinic
+  veterinarian and Turkish legal/privacy reviewer approve it; AI review does
+  not replace those gates.
 
 ## Context maintenance
 
