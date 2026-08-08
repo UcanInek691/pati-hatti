@@ -8,3 +8,11 @@ APP_TIMEZONE = "Europe/Istanbul"
 [[queues.producers]]
 queue = "vetai-intake"
 binding = "INTAKE_QUEUE"
+
+[[queues.consumers]]
+queue = "vetai-intake"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 120
+dead_letter_queue = "vetai-intake-dlq"

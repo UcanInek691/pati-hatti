@@ -4,6 +4,7 @@ import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { MAX_BODY_BYTES } from "../src/webhookSignature";
 import { signHmacSha256 } from "./signHelper";
+import * as intakeConsumer from "../src/intakeConsumer";
 
 const APP_SECRET = "test-app-secret";
 const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
@@ -316,5 +317,51 @@ describe("worker whatsapp persistence", () => {
 
     expect(res.status).toBe(503);
     expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+function fakeMessage(body: unknown): Message<unknown> {
+  return {
+    id: "msg-1",
+    timestamp: new Date(),
+    body,
+    ack: vi.fn(),
+    retry: vi.fn(),
+  } as unknown as Message<unknown>;
+}
+
+function fakeBatch(messages: Message<unknown>[]): MessageBatch<unknown> {
+  return { queue: "vetai-intake", messages, ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>;
+}
+
+describe("worker queue handler", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("acks an invalid message body with zero network calls", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const message = fakeMessage({ bogus: true });
+
+    await worker.queue!(fakeBatch([message]), env);
+
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retries a message whose processor call rejects, without blocking other messages' own disposition", async () => {
+    vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce("ack");
+    const failing = fakeMessage({ irrelevant: true });
+    const succeeding = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([failing, succeeding]), env);
+
+    expect(failing.retry).toHaveBeenCalledTimes(1);
+    expect(failing.ack).not.toHaveBeenCalled();
+    expect(succeeding.ack).toHaveBeenCalledTimes(1);
+    expect(succeeding.retry).not.toHaveBeenCalled();
   });
 });

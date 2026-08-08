@@ -5,6 +5,7 @@ import { MAX_BODY_BYTES, readRawBodyWithLimit, verifyHmacSignature } from "./web
 import { extractTextMessages } from "./whatsappIngest";
 import { ingestWhatsAppTextMessage } from "./supabaseIngest";
 import { enqueueIntakeJob } from "./intakeQueue";
+import { processIntakeQueueMessage } from "./intakeConsumer";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -100,5 +101,22 @@ export default {
     }
 
     return new Response("Not Found", { status: 404 });
+  },
+
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      let disposition: "ack" | "retry";
+      try {
+        disposition = await processIntakeQueueMessage(message.body, env);
+      } catch {
+        disposition = "retry";
+      }
+
+      if (disposition === "ack") {
+        message.ack();
+      } else {
+        message.retry();
+      }
+    }
   },
 };

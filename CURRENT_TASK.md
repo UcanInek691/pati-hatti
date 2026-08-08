@@ -1,6 +1,6 @@
 # Current task — 015 wire a bounded intake Queue consumer
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -253,17 +253,118 @@ concurrency decision outside the reviewed contracts.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD:
-- Initial worktree state:
-- Relevant code/tests/config evidence:
-- Planned files:
-- Conflicts or blockers:
+- Starting HEAD: `7ebb5ab` on `main` (task states `a493c1a`; `git diff --stat
+  a493c1a 7ebb5ab -- . ':!CURRENT_TASK.md'` is empty, so the only difference
+  is this task-definition commit itself). Worktree was clean.
+- Initial worktree state: clean, matching the stated baseline.
+- Relevant code/tests/config evidence: `src/intakeQueue.ts`
+  (`parseIntakeQueueMessage`, `enqueueIntakeJob`), `src/intakeJobLease.ts`
+  (`claimIntakeQueueJob`, `finalizeIntakeQueueJob`, `FinalizeIntakeQueueJobInput`),
+  `src/conversationState.ts` (`getConversationIntakeContext`,
+  `ConversationIntakeContext`, `IntakeStage`), `src/openaiIntake.ts`
+  (`extractIntakeViaOpenAi`), `src/intakeTurn.ts` (`planIntakeTurn`,
+  `PersistedIntakeData`, `PlanResult`), `src/safetyDecision.ts`
+  (`SafetyDecision`), `src/intakeExtraction.ts` (`IntakeExtraction`),
+  `src/env.ts`, `src/index.ts`, `wrangler.toml`, `docs/inbound-queue.md`,
+  and existing test conventions in `test/intakeJobLease.test.ts` and
+  `test/index.test.ts` (mocked-fetch routing by RPC/endpoint URL, `stubQueue`
+  helper, `Env` fixture shape).
+- Planned files: new `src/intakeConsumer.ts` and `test/intakeConsumer.test.ts`;
+  additive edits to `src/index.ts` (Queue handler + import), `wrangler.toml`
+  (one consumer block), `test/index.test.ts` (Queue-handler tests + fixtures),
+  and `docs/inbound-queue.md` (consumer documentation).
+- Conflicts or blockers: none. All referenced primitives' exported signatures
+  matched the task's "Starting context" claims exactly.
 
 ## Delivery record — Sonnet fills after coding
 
-- Changed files:
-- Acceptance criteria satisfied:
+- Changed files: `src/intakeConsumer.ts` (new), `test/intakeConsumer.test.ts`
+  (new), `src/index.ts` (added `queue()` handler + import), `wrangler.toml`
+  (added `[[queues.consumers]]` block), `test/index.test.ts` (added Queue
+  handler tests + `fakeMessage`/`fakeBatch` helpers + import), `docs/inbound-queue.md`
+  (documented the consumer), `CURRENT_TASK.md` (this section).
+- Acceptance criteria satisfied: exact processing order (parse -> claim ->
+  context -> hashed safety identifier -> extract -> plan -> atomic finalize);
+  every disposition mapping in the contract; independent `safetyDecision`
+  consistency check (retries on mismatch) rather than inferring from
+  `nextStage`; terminal `completed` stage kept terminal with only a generic
+  `terminal_safety_signal` warning; poison-snapshot/missing-pet planner
+  failures replaced with a fresh `schema_version: 1` snapshot, `petId: null`,
+  `human_handoff` unless already `completed`, finalized (not retried forever)
+  with only a generic `poison_intake_state` warning; no separate
+  `completeIntakeQueueJob` call; at most one OpenAI call and one finalize
+  call per attempt; Queue handler acks/retries each message exactly once and
+  a rejected per-message processor call doesn't block sibling messages'
+  disposition; `wrangler.toml` consumer block matches the contract exactly
+  (`max_batch_size = 1`, `max_batch_timeout = 5`, `max_retries = 3`,
+  `retry_delay = 120`, `dead_letter_queue = "vetai-intake-dlq"`).
 - Commands and exact results:
-- Checks not run and why:
-- Known limitations:
-- Risks for Codex review:
+  - `pnpm install --frozen-lockfile` — `Already up to date. Done in 598ms
+    using pnpm v11.9.0`.
+  - `pnpm typecheck` (`tsc --noEmit`) — passed, zero errors.
+  - `pnpm test` — passed, 413/413 (386 prior + 27 new: 25 in
+    `intakeConsumer.test.ts`, 2 Queue-handler tests in `index.test.ts`).
+  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — exit
+    0. Bindings table lists `env.INTAKE_QUEUE (vetai-intake)` and
+    `env.APP_TIMEZONE`, unchanged from before. Wrangler's dry-run bindings
+    table only reflects `env`-accessible bindings; queue consumers have no
+    `env` binding and are not listed there, so the consumer block's presence
+    is confirmed by the dry-run succeeding (exit 0, no config error) with
+    the new `[[queues.consumers]]` block in `wrangler.toml`, not by a table
+    row. Flagging this for Codex to double-check independently.
+  - `git diff --check` — required `git -c safe.directory='*'` because the
+    repository's `.git` is owned by a different local Windows account than
+    the one running this shell (`dubious ownership` error otherwise); this
+    was a per-invocation flag, not a persisted global config change. Result:
+    only benign LF/CRLF autocrlf notices for `src/index.ts`,
+    `test/index.test.ts`, `wrangler.toml`; no conflict markers or
+    whitespace errors.
+- Checks not run and why: no real Supabase/OpenAI/Cloudflare Queue call was
+  made anywhere (all tests mock `fetch`/`Queue`), per the task's explicit
+  scope; no Queue/DLQ resource was created and nothing was deployed.
+- Known limitations: the inconsistent-handoff-safety-decision test and the
+  Queue-handler's own per-message-exception test both use `vi.spyOn` to
+  override `planIntakeTurn` / `processIntakeQueueMessage` respectively,
+  since the real deterministic planner and the real happy-path processor
+  cannot organically produce those specific defensive/failure conditions;
+  every other required test scenario drives the real exported functions
+  through mocked `fetch` only. The `intakeData` value is passed to
+  `finalizeIntakeQueueJob` via `as unknown as Record<string, unknown>` at
+  the call site in `src/intakeConsumer.ts`, matching the existing cast
+  pattern already used for the same interface-to-index-signature gap in
+  `test/intakeTurn.test.ts`; `PersistedIntakeData` itself was not modified
+  (out of this task's allowed-changes scope).
+- Risks for Codex review: (1) the `isHandoffConsistent` guard in
+  `src/intakeConsumer.ts` is currently unreachable via the real
+  `planIntakeTurn` (it is deterministic and already enforces this
+  invariant) — confirm this is acceptable as defense-in-depth against a
+  future planner regression rather than dead code to remove; (2) confirm
+  the wrangler dry-run's bindings-table omission of consumer config is
+  expected Wrangler behavior and not a sign the consumer block was
+  misconfigured or ignored; (3) confirm the `safe.directory` override used
+  only for local verification commands needs no repository-side action.
+
+## Codex review record
+
+- Decision: `PASS` on 2026-08-09. No implementation fix was required.
+- Scope matched the contract exactly. The Queue consumer reuses the reviewed
+  parser, lease, context, extraction, planner, and atomic-finalization
+  boundaries; it does not add a second completion call, in-process retries,
+  outbound messaging, database changes, or external-resource mutation.
+- The complete disposition map, per-message acknowledgement behavior, poison
+  snapshot handoff, privacy-preserving safety identifier, generic-only warning
+  paths, and rejection containment were reviewed against the call graph and
+  tests. The extra handoff-consistency check is accepted as a small fail-closed
+  regression guard around the deterministic planner.
+- Wrangler accepted the consumer configuration in a dry-run. Consumer triggers
+  are configuration, not `env` bindings, so their absence from the binding
+  table is expected; the bundled Worker contains the `queue` handler.
+- Codex independently reran the frozen install, strict typecheck, all 413 tests,
+  and Wrangler dry-run successfully. `git diff --check` passed with only local
+  LF/CRLF notices. Focused scans found no NUL bytes, embedded credentials,
+  sensitive consumer logging, `waitUntil`, or separate completion call.
+- No live OpenAI, Supabase, WhatsApp, or Cloudflare Queue request was made; no
+  Queue/DLQ was created and nothing was deployed or pushed.
+- Claude Opus review was not required: no new unresolved safety, privacy,
+  tenant-isolation, or concurrency decision was introduced beyond the already
+  reviewed contracts.

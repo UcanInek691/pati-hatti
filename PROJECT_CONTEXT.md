@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-08 by Codex.
+Last verified: 2026-08-09 by Codex.
 
 ## Product
 
@@ -111,6 +111,19 @@ The secure Worker baseline is committed on `main`:
   only a same-stage, one-step-forward, or human-handoff transition. Corrupt
   snapshots fail closed; no planner code is wired into runtime yet. Codex and
   Claude Opus reviews passed with 386/386 tests.
+- A bounded Cloudflare Queue consumer now connects the reviewed intake
+  pipeline in runtime order: strict job parsing, database lease claim,
+  tenant-scoped context fetch, privacy-preserving owner hash, structured
+  OpenAI extraction, deterministic planning, and atomic state/lease
+  finalization. Each message is explicitly acknowledged or retried; one
+  rejected message cannot prevent sibling disposition.
+- Invalid jobs and terminal/missing claims are acknowledged, transient or
+  stale-state failures are retried, and retry configuration is bounded to
+  three attempts with a 120-second delay and a declared dead-letter queue.
+  Corrupt snapshots are replaced with a fresh current-turn snapshot and
+  atomically routed to human handoff instead of retrying forever. No outbound
+  WhatsApp response is generated or sent. Codex review passed with 413/413
+  tests, typecheck, frozen install, and Worker dry-run.
 
 Verified evidence before the context-system change:
 
@@ -126,12 +139,11 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Queue consumer/idempotency processing or outbound WhatsApp messages.
-- Provider/webhook wiring for pet resolution, new-pet creation, and state
-  orchestration.
+- Outbound WhatsApp messages or user-facing response generation.
+- New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and human handoff.
 - Appointment operations.
-- Live/wired LLM orchestration, summaries, memory, embeddings, or RAG.
+- Summaries, memory, embeddings, or RAG.
 - Staff/admin panel.
 - Production deployment and real external-service configuration.
 
@@ -144,11 +156,12 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 014 now provides the reviewed deterministic turn-planning boundary. The
-next phase can wire a bounded Queue consumer through parsing, claim, context,
-extraction, planning, and atomic finalization, without adding outbound WhatsApp
-effects yet. No Queue resource has been created and production deployment
-remains out of scope.
+Task 015 now provides the reviewed bounded Queue consumer through parsing,
+claim, context, extraction, planning, and atomic finalization. The next phase
+can define deterministic user-response planning and the outbound WhatsApp send
+boundary without weakening the existing safety and idempotency guarantees. No
+Queue or DLQ resource has been created and production deployment remains out of
+scope.
 
 ## Durable safety invariants
 
