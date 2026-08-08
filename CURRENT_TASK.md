@@ -1,195 +1,229 @@
-# Current task — 014 deterministically plan one intake turn
+# Current task — 015 wire a bounded intake Queue consumer
 
-Status: `COMPLETE`
+Status: `READY`
 
 Primary implementer: Claude Sonnet
 
-Reviewers: Codex, then Claude Opus (read-only safety/architecture review)
+Reviewer: Codex
 
 ## Goal
 
-Add one pure, provider-neutral planner that combines an already-validated
-current-turn extraction with the conversation's persisted intake snapshot,
-resolves the pet only against the tenant-scoped context, evaluates the existing
-deterministic safety gate, and chooses a database-valid next intake stage.
+Wire the existing reviewed primitives into one bounded Cloudflare Queue
+consumer:
 
-This creates the missing deterministic boundary needed by a later Queue
-consumer. It does not add a Queue consumer, call an LLM, access Supabase,
-generate/send a WhatsApp response, create a Queue, deploy, or change any
-existing runtime wiring.
+`parse body -> claim lease -> fetch context -> extract current message -> plan
+turn -> atomically finalize state+lease -> explicit ack/retry`.
+
+This is the first runtime connection for structured extraction and deterministic
+safety planning. It must remain fail-closed, individually acknowledge each
+message, bound transient retries through Cloudflare configuration, and route a
+corrupt persisted intake snapshot to staff rather than retrying forever.
+
+This task does not generate or send a WhatsApp response, implement triage or
+appointments, add a staff panel, change database schema/RPCs, create external
+resources, deploy, or make a real OpenAI/Supabase/Queue call.
 
 ## Starting context
 
-- Starting HEAD: `390832a` on `main`; worktree is clean.
-- `ConversationIntakeContext` supplies the current stage/version, selected pet,
-  the owner's tenant-scoped pets, and an opaque `intakeData` JSON object.
-- `IntakeExtraction` is the strict, already-validated current-turn model output.
-- `resolvePet` performs exact normalized matching without trusting model IDs.
-- `evaluateSafetyDecision` owns the reviewed emergency/human/unknown/continue
-  priority and must be reused unchanged.
-- The database accepts the same stage or exactly one forward step in the fixed
-  intake graph; any non-terminal stage may jump to `human_handoff`.
-- Task 013 can later commit the planner's state update and lease completion
-  atomically, but it is not wired in this task.
+- Starting HEAD: `a493c1a` on `main`; worktree is clean.
+- Queue bodies already have a strict `parseIntakeQueueMessage` boundary.
+- `claimIntakeQueueJob` returns the exact persisted inbound message text under a
+  120-second database lease.
+- `getConversationIntakeContext` returns tenant-scoped owner/pet/state context.
+- `extractIntakeViaOpenAi` sends exactly one message with `store: false` and
+  returns only a runtime-validated `IntakeExtraction`.
+- `planIntakeTurn` owns multi-turn merge, pet identity, safety evaluation, and
+  database-valid stage selection.
+- `finalizeIntakeQueueJob` atomically advances state and completes the current
+  claim, returning a closed result.
+- Cloudflare supports per-message `ack()` / `retry()`, bounded `max_retries`, a
+  retry delay, and a dead-letter queue. Explicit acknowledgement prevents one
+  failed message from replaying already-completed siblings.
+- OpenAI recommends a stable, privacy-preserving per-user
+  `safety_identifier`, such as a hashed identifier; raw owner/conversation IDs
+  must not be sent in that field.
 
 Before editing, follow `AGENTS.md`, verify these facts from repository evidence,
 and fill Observed context. Stop if repository evidence conflicts.
 
 ## Allowed changes
 
-- New `src/intakeTurn.ts`.
-- New `test/intakeTurn.test.ts`.
-- New `docs/intake-turn-planning.md`.
+- New `src/intakeConsumer.ts`.
+- New `test/intakeConsumer.test.ts`.
+- `src/index.ts`, limited to adding the Queue handler and imports.
+- `test/index.test.ts`, limited to Queue-handler integration tests and fixtures.
+- `wrangler.toml`, limited to one consumer block.
+- `docs/inbound-queue.md`, limited to the consumer behavior/configuration.
 - Fill the Observed context and Delivery record sections of this file.
 
-Do not change dependencies, lockfiles, migrations, `Env`, Worker routing,
-`wrangler.toml`, Queue producer/lease/finalization behavior, conversation RPCs,
-the extraction parser/prompt/provider adapter, pet resolver, safety gate,
-existing tests, README, `AGENTS.md`, or `PROJECT_CONTEXT.md`.
+Do not change dependencies, lockfiles, `Env`, `.dev.vars.example`, migrations,
+database tests/RPCs, producer behavior, webhook behavior, extraction prompt or
+provider request contract, planner/safety/pet-resolution semantics, README,
+`AGENTS.md`, or `PROJECT_CONTEXT.md`.
 
-## Persisted snapshot contract
+## Consumer module contract
 
-Export a `PersistedIntakeData` type with exactly the validated extraction fields
-plus `schema_version: 1`. Keep the existing snake_case field names so the
-trusted extraction can be stored without a second parallel vocabulary:
+Add one exported orchestration function in `src/intakeConsumer.ts`:
 
-- `schema_version`;
-- `intent`;
-- `pet_name`;
-- `species`;
-- `complaint`;
-- `symptoms`;
-- `reported_safety_signals`;
-- `missing_information`;
-- `user_requested_human`.
+`processIntakeQueueMessage(body: unknown, env: Env): Promise<"ack" | "retry">`
 
-Treat `context.intakeData` as untrusted persisted JSON. Accept only:
+It must catch unexpected exceptions and return `"retry"`; it must never throw
+message content, identifiers, provider bodies, claim tokens, or secrets.
 
-1. an exact plain empty object, representing a conversation not planned yet; or
-2. an exact plain `PersistedIntakeData` object whose extraction portion passes
-   the existing `parseIntakeExtraction` boundary.
+Reuse the existing functions directly. Do not copy their parsers, HTTP clients,
+safety rules, stage graph, or database behavior. Do not introduce dependency
+injection containers, classes, factories, generic pipelines, custom retry
+frameworks, or a new dependency.
 
-Reject arrays, exotic prototypes, accessors/proxies that throw, symbol or extra
-keys, missing keys, unknown schema versions, and malformed nested data. Return a
-closed failure result; do not throw or repair corrupt persisted state.
+## Exact processing order and dispositions
 
-Never mutate or return a nested reference from the context, extraction, or pet
-list. The successful snapshot and every nested object/array must be fresh.
+For one untrusted Queue body:
 
-## Deterministic merge contract
+1. Run `parseIntakeQueueMessage` before any network call.
+   - Invalid body: `ack`. It contains no trusted locator and retry cannot repair
+     it. Do not log the body.
+2. Call `claimIntakeQueueJob` with the parsed IDs.
+   - `completed` or `not_found`: `ack`.
+   - `busy` or `failed`: `retry`.
+   - `claimed`: continue using only its claim token and message text.
+3. Call `getConversationIntakeContext` with the parsed conversation ID.
+   - `not_found` or `failed`: `retry`.
+4. Derive the OpenAI safety identifier from `context.ownerId` using native Web
+   Crypto SHA-256 over the UTF-8 bytes of the domain-separated string
+   `vetai-owner:<ownerId>`. Send the lowercase 64-character hex digest only.
+   Never send the raw owner ID, conversation ID, clinic ID, name, phone number,
+   or provider ID in `safety_identifier`.
+5. Call `extractIntakeViaOpenAi` exactly once with the claimed message text,
+   derived safety identifier, and `Env`.
+   - Failure/refusal/malformed provider result: `retry`; do not finalize.
+6. Call `planIntakeTurn` with the fetched context and validated extraction.
+   - `planned`: use its exact `nextStage`, `petId`, and `intakeData` for
+     finalization. Do not infer safety from `nextStage`; retain/read the returned
+     `safetyDecision` as described below.
+   - `failed`: treat the persisted state as poison. Build a fresh valid
+     `PersistedIntakeData` containing `schema_version: 1` and a deep-enough copy
+     of the validated current extraction, use `petId: null` so the database
+     preserves any selected pet, and choose `human_handoff` unless the current
+     stage is already `completed` (then keep `completed`). This deliberately
+     replaces the corrupt working snapshot; persisted messages remain the
+     conversation record. Attempt atomic finalization instead of retrying the
+     same poison state forever.
+7. Call `finalizeIntakeQueueJob` exactly once with the parsed IDs, current claim
+   token, fetched `stateVersion`, selected/fallback stage and pet, and selected/
+   fallback snapshot.
+   - `applied`, `already_completed`, or `stale_claim`: `ack`.
+   - `stale_state` or `failed`: `retry`.
 
-Merge a validated current extraction into the accepted snapshot as follows:
+Do not call `completeIntakeQueueJob` separately. Do not implement an in-process
+retry loop: a later Queue attempt must reclaim/refetch/re-extract/replan from
+current persisted state.
 
-- Start an empty snapshot with `intent: "unknown"`, nullable text as `null`,
-  empty arrays, all eight safety signals as `null`, and
-  `user_requested_human: false`.
-- A non-`unknown` current intent replaces the stored intent; current `unknown`
-  preserves a previous non-`unknown` intent.
-- Non-null current `pet_name`, `species`, and `complaint` replace stored values;
-  null never erases a previously explicit value.
-- Symptoms are an exact-string ordered union. Existing order is retained, new
-  unique values are appended, and only the newest 20 unique values are kept.
-  This is a bounded working snapshot, not deletion from message history.
-- For each safety signal: stored `true` is sticky; otherwise a current boolean
-  replaces stored `false`/`null`, while current `null` preserves the stored
-  value. Thus missing current-turn facts never turn known danger into safety.
-- `missing_information` is replaced by a fresh copy of the current turn's list;
-  it is advisory and must not decide safety or stage progression.
-- `user_requested_human` is sticky with logical OR.
+## Safety-result handling
 
-Do not invent fields, normalize or fuzzy-match clinical text, infer missing
-facts, diagnose, or calculate medical priority.
+The consumer must explicitly inspect a successful plan's `safetyDecision`:
 
-## Pet-selection contract
+- `emergency_handoff` and `human_handoff` must be consistent with a
+  `human_handoff` next stage unless the current stage is `completed`.
+- An inconsistent plan fails closed to `retry` without finalization.
+- A `completed` stage remains terminal. If its decision is
+  `emergency_handoff` or `human_handoff`, finalization may keep `completed`, but
+  emit only a generic operational warning reason such as
+  `terminal_safety_signal`; never include IDs, message text, clinical facts,
+  names, tokens, or provider output.
+- `needs_safety_check` at `ready_for_triage` or an appointment stage may persist
+  the same stage in this task because no triage/appointment action is executed.
+  Later triage code must consume the safety decision again before acting.
 
-- Never accept an ID from extraction or persisted intake data.
-- If `context.petId` is non-null, it must identify exactly one entry in
-  `context.pets`; otherwise fail closed.
-- An already-selected context pet remains authoritative. No current or stored
-  name may silently switch it. If the current extraction explicitly names a
-  pet and exact resolution does not select that same pet, report
-  `needs_clarification` while retaining the selected ID.
-- If no pet is selected, reuse `resolvePet` over the merged extraction and the
-  context pets. Preserve its exact-match/single-pet behavior.
+When the planner fails and the poison fallback is used, emit at most one generic
+warning reason such as `poison_intake_state`, with no sensitive values. The
+database `human_handoff` state is the durable staff-facing signal for every
+non-completed conversation.
 
-## Planner API and closed result
+## Queue handler and Cloudflare configuration
 
-Export one pure function:
+Extend the Worker's default export with:
 
-`planIntakeTurn(context: ConversationIntakeContext, extraction: IntakeExtraction)`
+`queue(batch: MessageBatch<unknown>, env: Env): Promise<void>`
 
-Return only:
+Process messages without `waitUntil`. For every message, await
+`processIntakeQueueMessage(message.body, env)` and then call exactly one of:
 
-- `{ kind: "planned", nextStage, petId, intakeData, petResolution,
-     safetyDecision }`; or
-- `{ kind: "failed" }`.
+- `message.ack()` for `ack`;
+- `message.retry()` for `retry`.
 
-Use the existing `IntakeStage`, `PetResolution`, and `SafetyDecision` types
-rather than copying their unions. `intakeData` is the fresh merged
-`PersistedIntakeData`. `petResolution` is `matched` or `needs_clarification`;
-when an existing pet is retained, a matched result must contain that ID.
+Catch a rejected processor call per message and retry that message; one message
+must not prevent later batch messages from receiving their own explicit
+disposition. Do not call `ackAll`, `retryAll`, or throw the whole batch.
 
-Evaluate safety by passing the merged extraction fields through the existing
-`evaluateSafetyDecision`. Do not reimplement or reorder the gate.
+Add exactly one consumer block to `wrangler.toml`:
 
-Choose `nextStage` with this exact precedence:
+```toml
+[[queues.consumers]]
+queue = "vetai-intake"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 120
+dead_letter_queue = "vetai-intake-dlq"
+```
 
-1. If the current stage is `completed`, keep `completed`.
-2. If the safety decision is `emergency_handoff` or `human_handoff`, choose
-   `human_handoff` (or keep it when already there).
-3. If the current stage is `human_handoff`, keep `human_handoff`.
-4. At `pet_identification`, advance to `complaint_collection` only when pet
-   resolution is `matched`; otherwise keep `pet_identification`.
-5. At `complaint_collection`, advance to `safety_check` only when the merged
-   complaint is non-null or merged symptoms are non-empty; otherwise keep
-   `complaint_collection`.
-6. At `safety_check`, advance to `ready_for_triage` only for
-   `continue_intake`; `needs_safety_check` keeps `safety_check`.
-7. At `ready_for_triage` and all three appointment stages, keep the current
-   stage. Later tasks own triage and appointment progression.
-
-The planner must never skip a normal stage, move backward, or progress an
-appointment. The same-stage result is intentional: it lets a later atomic
-finalizer persist newly gathered data while completing that message's lease.
+The explicit 120-second delay lets an abandoned database lease expire before a
+new attempt. After three retryable failures, Cloudflare must route the message
+to the DLQ instead of silently deleting it. This task only declares the
+configuration; Sonnet must not create either Queue or deploy the Worker.
 
 ## Required tests
 
-Use table-driven tests where it keeps the suite small. Cover at least:
+Mock every external `fetch`; no test may call OpenAI, Supabase, or Cloudflare.
+Use compact/table-driven cases where practical. Cover at least:
 
-- exact empty/snapshot acceptance and rejection of every trust-boundary class
-  above, including thrown proxy input and symbol-keyed extras;
-- every merge rule, the 20-symptom newest-value bound, fresh nested references,
-  frozen-input non-mutation, and deterministic repeat output;
-- no selected pet, single-pet fallback, exact-name match, ambiguous/fuzzy/no
-  match, valid retained pet, missing retained ID, and an explicit conflicting
-  pet name that cannot switch the selected pet;
-- emergency and human-handoff precedence from every representative stage;
-- completed/handoff terminal retention;
-- same-stage and one-step behavior for pet identification, complaint
-  collection, safety check, ready-for-triage, and appointment stages;
-- unknown safety signals never reaching `ready_for_triage`, explicit false
-  signals reaching it, and a stored true signal remaining an emergency when
-  the current extraction reports null or false;
-- no diagnosis, medication, response text, database access, logging, network
-  call, or input mutation.
+- invalid body -> ack with zero network calls;
+- claim `completed`/`not_found` -> ack and `busy`/network/shape failure -> retry;
+- context missing/failure -> retry without OpenAI/finalization;
+- the SHA-256 safety identifier is stable, 64 lowercase hex characters,
+  differs for different owners, and contains none of the raw owner,
+  conversation, clinic, provider identifiers or owner name;
+- only the claimed message text reaches OpenAI; recent history and snapshot
+  text are not added to the provider input;
+- extraction failure/refusal -> retry without finalization;
+- normal, emergency, human-request, needs-safety-check, and terminal plans pass
+  the exact planner output into atomic finalization;
+- an inconsistent handoff safety decision is retried without finalization;
+- corrupt snapshot and missing-selected-pet planner failures use the fresh
+  poison fallback, set non-completed state to `human_handoff`, preserve pet by
+  passing null, and finalize rather than retry forever;
+- every finalization result maps to the exact disposition above;
+- no separate completion RPC, no in-process retry loop, and at most one OpenAI
+  call/finalization call per processing attempt;
+- Queue handler explicitly acks/retries each message exactly once and continues
+  after a per-message failure;
+- no log or returned/thrown value contains message text, IDs, clinical facts,
+  claim tokens, API/service-role secrets, or provider response bodies;
+- existing fetch/webhook producer behavior remains unchanged.
 
-Do not duplicate tests already proving the internals of
-`parseIntakeExtraction`, `resolvePet`, or `evaluateSafetyDecision`; prove only
-their composition and the new planner behavior.
+Tests may verify call order through mocked endpoint URLs and request bodies;
+do not refactor the existing clients solely to make them injectable.
 
 ## Documentation requirements
 
-Document:
+Update `docs/inbound-queue.md` with:
 
-- the snapshot schema and deterministic merge rules;
-- that it is a bounded working intake snapshot, while persisted messages remain
-  the conversation record;
-- stage-decision precedence and why appointment progression is intentionally
-  absent;
-- pet-ID trust and conflict behavior;
-- that the planner produces data for Task 013 but performs no persistence,
-  lease action, LLM call, triage, response generation, or external effect;
-- that the module is not wired into runtime and is not production approval.
+- the end-to-end consumer order and closed ack/retry table;
+- the hashed owner safety identifier and data-minimization boundary;
+- poison snapshot -> atomic handoff behavior;
+- explicit per-message acknowledgement and the 120-second/3-retry/DLQ policy;
+- the fact that LLM work may repeat but state finalization remains atomic;
+- explicit limits: no outbound response, triage, appointment mutation, Queue
+  creation, deployment, production credentials, or production approval.
+
+Reference the official behavior used by this contract:
+
+- Cloudflare explicit acknowledgements/retries:
+  https://developers.cloudflare.com/queues/configuration/batching-retries/
+- Cloudflare dead-letter queues:
+  https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
+- OpenAI safety identifiers:
+  https://platform.openai.com/docs/api-reference/responses
 
 ## Verification
 
@@ -203,148 +237,33 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-Do not commit, push, deploy, call an LLM, create a Queue, mutate Supabase, or
-touch another external service.
+The dry-run must show both the existing producer binding and the new consumer
+configuration without creating resources.
 
-## Mandatory review gate
+Do not commit, push, deploy, create a Queue/DLQ, call a real LLM, mutate
+Supabase, install a plugin/MCP integration, or touch another external service.
 
-After Sonnet delivers, Codex reviews the diff/call paths and reruns all checks.
-If Codex passes it, Claude Opus performs a read-only review focused on merge
-safety, sticky emergency facts, pet identity, stage precedence, and fail-closed
-persisted-state parsing before this task becomes complete.
+## Review gate
+
+After Sonnet delivers, Codex reviews the full orchestration, ack/retry map,
+privacy boundary, poison handoff, tests, and dry-run output, then applies only
+targeted fixes and commits if all checks pass. Claude Opus is not mandatory for
+this task unless Codex finds a new unresolved safety, privacy, tenant, or
+concurrency decision outside the reviewed contracts.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD: `390832a`, matching the task's stated starting HEAD; worktree
-  clean at start (repo ownership metadata mismatch under Windows required
-  `git config --global --add safe.directory`-style workarounds for `git`
-  commands, so verification below uses non-git evidence only where noted).
-- Initial worktree state: no local modifications; `src/intakeTurn.ts`,
-  `test/intakeTurn.test.ts`, and `docs/intake-turn-planning.md` did not exist.
-- Relevant code/tests/migration evidence: `src/conversationState.ts` defines
-  `ConversationIntakeContext`, `IntakePet`, and the 9-value `IntakeStage`
-  union; `src/intakeExtraction.ts` defines `IntakeExtraction`,
-  `ReportedSafetySignals`, `PetResolution`, `parseIntakeExtraction`, and
-  `resolvePet` (exact-normalized match, single-pet fallback, never trusts a
-  model ID); `src/safetyDecision.ts` defines `SafetyDecision` and
-  `evaluateSafetyDecision` with fixed emergency > human/medical-advice >
-  unknown-signal > continue precedence. `PersistedIntakeData`'s 8
-  non-schema-version fields are structurally identical to `IntakeExtraction`,
-  so `resolvePet`/`evaluateSafetyDecision` can be called directly on a merged
-  snapshot value.
-- Planned files: `src/intakeTurn.ts`, `test/intakeTurn.test.ts`,
-  `docs/intake-turn-planning.md`, plus this file's Observed context/Delivery
-  record sections — matching the Allowed changes list exactly.
-- Conflicts or blockers: none found; repository evidence matched the task's
-  starting-context claims.
+- Starting HEAD:
+- Initial worktree state:
+- Relevant code/tests/config evidence:
+- Planned files:
+- Conflicts or blockers:
 
 ## Delivery record — Sonnet fills after coding
 
-- Changed files: new `src/intakeTurn.ts` (`PersistedIntakeData` type,
-  `planIntakeTurn`), new `test/intakeTurn.test.ts` (52 tests), new
-  `docs/intake-turn-planning.md`; this file's Observed context/Delivery
-  record sections. No other file was touched.
-- Acceptance criteria satisfied: exact-empty/exact-`PersistedIntakeData`
-  snapshot trust boundary with fail-closed rejection of arrays, exotic
-  prototypes, thrown proxies, symbol/extra/missing keys, and unknown schema
-  versions; every merge rule (sticky intent/pet_name/species/complaint,
-  20-newest symptom union, per-signal stickiness, fresh
-  `missing_information`, sticky OR `user_requested_human`) with fresh
-  non-shared nested references and no mutation of frozen inputs; pet
-  selection that never trusts an ID, fails closed on a stale retained
-  `petId`, retains an existing pet against a same-turn conflicting name
-  (`needs_clarification` while keeping the ID), and otherwise reuses
-  `resolvePet` unchanged; the exact 7-step stage precedence including
-  `completed`/`human_handoff` terminal retention, emergency/human priority
-  over normal advancement, and same-stage holds at `ready_for_triage` and
-  all three appointment stages; `evaluateSafetyDecision` reused unchanged
-  over the merged snapshot, so a sticky stored `true` signal still forces
-  `human_handoff` even when the current turn reports `null`/`false`. No
-  Queue, database, LLM, or wiring change was made.
-- Commands and exact results: `pnpm install --frozen-lockfile` → up to date;
-  `pnpm typecheck` → clean, no errors; `pnpm test` → 14 files, 385/385 passed
-  (52 new in `intakeTurn.test.ts`); `pnpm exec wrangler deploy --dry-run
-  --outdir .wrangler/dry-run` → succeeded, only the pre-existing
-  `INTAKE_QUEUE`/`APP_TIMEZONE` bindings listed, no new bindings; `git diff
-  --check` → exit 0 (one harmless LF/CRLF autocrlf notice, no whitespace
-  errors). `git` required a per-invocation `-c safe.directory=*` override to
-  run at all under this checkout's Windows ownership metadata; no git config
-  file was modified.
-- Checks not run and why: none of the required checks were skipped.
-- Known limitations: the planner is pure and intentionally not wired into
-  any runtime path (Worker, Queue consumer, or Task 013's finalizer); it
-  performs no persistence, so Task 013's atomic finalize call is still the
-  only place a plan can take effect. `missing_information` is carried only
-  as advisory data and never influences `nextStage`, by design.
-- Risks for Codex/Opus review: verify the pet-conflict rule specifically —
-  the conflict check in `resolvePetForContext` intentionally uses the raw
-  current-turn `extraction.pet_name`, not the merged snapshot's `pet_name`,
-  because using the merged value would let a turn that mentions no pet
-  spuriously re-trigger single-pet-fallback logic against an already-settled
-  `petId`; confirm this matches the intended "current extraction" wording in
-  the contract. Also verify `resolvePet(merged, context.pets)` and
-  `evaluateSafetyDecision(merged)` being called with a `PersistedIntakeData`
-  value (structurally compatible with `IntakeExtraction`, with an extra
-  `schema_version` field) is the intended reuse rather than a type
-  workaround to revisit.
-
-## Codex review record
-
-- Decision: `PASS_TO_OPUS` on 2026-08-08. The planner remains pure and
-  unwired; its merge, pet-selection, safety, and stage-decision paths match the
-  active contract.
-- Reviewed the complete new source/test/documentation files, the existing
-  extraction parser and pet resolver, the deterministic safety gate, the
-  conversation-stage RPC contract, runtime imports, and the Sonnet delivery
-  record.
-- Accepted the two implementation choices flagged by Sonnet:
-  - pet conflict detection correctly uses only the current turn's explicit
-    `pet_name`; a stored name must not manufacture a new conflict when this
-    turn names no pet;
-  - `PersistedIntakeData` deliberately has the complete `IntakeExtraction`
-    structure plus `schema_version`, so passing the merged value directly to
-    `resolvePet` and `evaluateSafetyDecision` is ordinary structural typing,
-    not a bypass of either boundary.
-- Targeted fixes made during review:
-  - replaced enumerable-only snapshot key inspection with one
-    `Reflect.ownKeys` check, so non-enumerable string extras are rejected along
-    with symbol extras;
-  - removed the new fixed safety-signal iteration list and derives merge keys
-    from the already-validated stored signal object, preventing a future signal
-    addition from being silently omitted;
-  - added a regression test for a hidden non-enumerable extra field.
-- Verification after fixes: frozen install passed; typecheck passed; all 386
-  tests in 14 files passed (53 planner tests); Wrangler dry-run passed with
-  only the existing producer/environment bindings; `git diff --check` passed;
-  runtime-wiring, forbidden-API, and NUL-byte scans were clean.
-- Database validation was not applicable: this task adds no migration, RPC, or
-  database access. No LLM, Queue, Supabase mutation, deploy, commit, or push
-  was performed during implementation/review.
-- Mandatory remaining gate: Claude Opus must perform the contracted read-only
-  review of fail-closed snapshot parsing, merge safety, sticky emergency facts,
-  pet identity/conflict behavior, and stage precedence before Codex can mark
-  the task complete and commit it.
-
-## Claude Opus review record
-
-- Decision: `PASS` on 2026-08-08 after reading the context files and actual
-  Task 014 diff, including Codex's delivery-time fixes.
-- Independently reran typecheck and all 386 tests, confirmed the allowed-file
-  scope, no runtime wiring, and no network/logging/random/time side effects.
-- Confirmed the snapshot trust boundary, tenant-scoped pet identity, current-
-  turn pet conflict rule, sticky emergency behavior, database-valid same-stage
-  terminal updates, and forward-only stage progression.
-- No current correctness or security defect was found. Follow-up requirements
-  accepted for the Queue consumer: corrupt snapshot failures are poison and
-  must not retry forever; safety must not be inferred from `nextStage` alone;
-  later triage must honor the deterministic gate even when the persisted stage
-  is already `ready_for_triage`.
-- Final cleanup after Opus:
-  - initialized merged safety signals from a complete spread of the validated
-    stored object before applying per-key updates, removing the remaining
-    empty-object assertion and preserving future validated keys by default;
-  - simplified the documentation's completed-versus-handoff precedence text;
-  - recorded the Queue-consumer safety requirements in `PROJECT_CONTEXT.md`.
-- Final verification after that cleanup: frozen install, typecheck, all 386
-  tests, Wrangler dry-run, and `git diff --check` passed. The Worker binding
-  list remained unchanged and the planner remained unwired.
+- Changed files:
+- Acceptance criteria satisfied:
+- Commands and exact results:
+- Checks not run and why:
+- Known limitations:
+- Risks for Codex review:
