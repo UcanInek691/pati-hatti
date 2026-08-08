@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ingestWhatsAppTextMessage } from "../src/supabaseIngest";
 import type { Env } from "../src/env";
 import type { WhatsAppIngestItem } from "../src/whatsappIngest";
+import type { IntakeQueueMessage } from "../src/intakeQueue";
 
 const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
 
@@ -22,6 +23,7 @@ const env: Env = {
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
   OPENAI_API_KEY: "unused",
+  INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

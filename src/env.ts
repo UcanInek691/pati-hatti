@@ -1,3 +1,5 @@
+import type { IntakeQueueMessage } from "./intakeQueue";
+
 export interface Env {
   APP_TIMEZONE: string;
   WHATSAPP_VERIFY_TOKEN: string;
@@ -5,4 +7,5 @@ export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENAI_API_KEY: string;
+  INTAKE_QUEUE: Queue<IntakeQueueMessage>;
 }

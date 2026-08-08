@@ -4,6 +4,7 @@ import { verifyWhatsAppChallenge } from "./webhookVerify";
 import { MAX_BODY_BYTES, readRawBodyWithLimit, verifyHmacSignature } from "./webhookSignature";
 import { extractTextMessages } from "./whatsappIngest";
 import { ingestWhatsAppTextMessage } from "./supabaseIngest";
+import { enqueueIntakeJob } from "./intakeQueue";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -57,9 +58,19 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   let failed = 0;
   for (const item of extraction.items) {
     const outcome = await ingestWhatsAppTextMessage(item, env);
+    if (outcome.kind !== "processed" && outcome.kind !== "duplicate") {
+      failed++;
+      continue;
+    }
+
+    const enqueued = await enqueueIntakeJob(env.INTAKE_QUEUE, outcome.conversationId, item.providerMessageId);
+    if (!enqueued) {
+      failed++;
+      continue;
+    }
+
     if (outcome.kind === "processed") processed++;
-    else if (outcome.kind === "duplicate") duplicate++;
-    else failed++;
+    else duplicate++;
   }
   console.log("whatsapp webhook event persisted", { processed, duplicate, failed });
 

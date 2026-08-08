@@ -75,6 +75,11 @@ The secure Worker baseline is committed on `main`:
   events fail closed. The forward migration and rollback SQL test passed on
   `vetai-test`, including cross-tenant same-provider-ID isolation and
   service-role-only execution, with zero surviving fixtures.
+- After successful inbound persistence, the webhook now awaits a Cloudflare
+  Queue producer send before returning HTTP 200. Both processed and exact-
+  duplicate outcomes enqueue a versioned job containing only conversation and
+  provider-message IDs; missing bindings and send failures return 503. No real
+  Queue resource, consumer, or deployment exists yet.
 
 Verified evidence before the context-system change:
 
@@ -90,7 +95,7 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Queue/retry orchestration or outbound WhatsApp messages.
+- Queue consumer/idempotency processing or outbound WhatsApp messages.
 - Provider/webhook wiring for pet resolution, new-pet creation, and state
   orchestration.
 - Deterministic triage and human handoff.
@@ -108,11 +113,10 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 010 now exposes the conversation locator needed for downstream work.
-The next phase is a minimal asynchronous queue handoff so the signed webhook
-can acknowledge persistence without running LLM/state orchestration inline.
-The reviewed extraction and safety modules remain unwired; production
-deployment remains out of scope.
+Task 011 now provides a reviewed producer-only Queue handoff after persistence.
+The next phase is a fail-closed, idempotent Queue consumer boundary before any
+LLM or state orchestration is wired. No Queue resource has been created and
+production deployment remains out of scope.
 
 ## Durable safety invariants
 

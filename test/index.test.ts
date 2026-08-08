@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
+import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { MAX_BODY_BYTES } from "../src/webhookSignature";
 import { signHmacSha256 } from "./signHelper";
 
 const APP_SECRET = "test-app-secret";
 const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
+
+function stubQueue(send = vi.fn().mockResolvedValue(undefined)): Queue<IntakeQueueMessage> {
+  return { send } as unknown as Queue<IntakeQueueMessage>;
+}
 
 const env: Env = {
   APP_TIMEZONE: "Europe/Istanbul",
@@ -14,6 +19,7 @@ const env: Env = {
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "unused",
   OPENAI_API_KEY: "unused",
+  INTAKE_QUEUE: stubQueue(),
 };
 
 async function signedPost(body: string, extraHeaders: Record<string, string> = {}): Promise<Request> {
@@ -171,7 +177,8 @@ describe("worker whatsapp persistence", () => {
   it("returns 200 for a status-only webhook without requiring Supabase configuration", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_SERVICE_ROLE_KEY: "" };
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_SERVICE_ROLE_KEY: "", INTAKE_QUEUE: stubQueue(queueSend) };
     const body = JSON.stringify({
       object: "whatsapp_business_account",
       entry: [{ id: "WABA_ID", changes: [{ value: { messaging_product: "whatsapp", metadata: { phone_number_id: "123456123" }, statuses: [] }, field: "messages" }] }],
@@ -181,47 +188,72 @@ describe("worker whatsapp persistence", () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for a webhook with a malformed declared text message and performs no persistence calls", async () => {
+  it("returns 400 for a webhook with a malformed declared text message and performs no persistence or queue calls", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
     const body = JSON.stringify({
       object: "whatsapp_business_account",
       entry: [{ id: "WABA_ID", changes: [{ value: { messaging_product: "whatsapp", metadata: { phone_number_id: "123456123" }, messages: [{ from: "bad-sender", id: "wamid.ID1", timestamp: "1603059201", type: "text", text: { body: "Hello!" } }] }, field: "messages" }] }],
     });
 
-    const res = await worker.fetch(await signedPost(body), env);
+    const res = await worker.fetch(await signedPost(body), testEnv);
 
     expect(res.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it("returns 200 for a processed text message", async () => {
+  it("returns 200 for a processed text message and enqueues one intake job with only the contract fields", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }])));
-    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
     expect(res.status).toBe(200);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    expect(queueSend).toHaveBeenCalledWith(
+      { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
+      { contentType: "json" },
+    );
   });
 
-  it("returns 200 for a duplicate text message", async () => {
+  it("returns 200 for a duplicate text message and enqueues one intake job", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "duplicate", conversation_id: CONVERSATION_ID }])));
-    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
     expect(res.status).toBe(200);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    expect(queueSend).toHaveBeenCalledWith(
+      { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
+      { contentType: "json" },
+    );
   });
 
-  it("calls the RPC once for an identical in-payload duplicate", async () => {
+  it("calls the RPC once and enqueues once for an identical in-payload duplicate", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
     vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
     const payload = textMessageWebhookBody() as {
       entry: Array<{ changes: Array<{ value: { messages: unknown[] } }> }>;
     };
     const messages = payload.entry[0]?.changes[0]?.value.messages;
     messages?.push(structuredClone(messages[0]));
 
-    const res = await worker.fetch(await signedPost(JSON.stringify(payload)), env);
+    const res = await worker.fetch(await signedPost(JSON.stringify(payload)), testEnv);
 
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
   it("returns 503 when Supabase configuration is missing", async () => {
@@ -231,21 +263,58 @@ describe("worker whatsapp persistence", () => {
     expect(res.status).toBe(503);
   });
 
-  it("returns 503 when the RPC reports an unknown account", async () => {
+  it("returns 503 when the RPC reports an unknown account and never calls Queue", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account", conversation_id: null }])));
-    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
     expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it("returns 503 when a processed result omits the conversation locator", async () => {
+  it("returns 503 when a processed result omits the conversation locator and never calls Queue", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed" }])));
-    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
     expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it("returns 503 on a Supabase network failure", async () => {
+  it("returns 503 on a Supabase network failure and never calls Queue", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
-    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), env);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
     expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when Queue rejects after a processed persistence outcome", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }])));
+    const queueSend = vi.fn().mockRejectedValue(new Error("queue unavailable"));
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 503 when Queue rejects after a duplicate persistence outcome", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "duplicate", conversation_id: CONVERSATION_ID }])));
+    const queueSend = vi.fn().mockRejectedValue(new Error("queue unavailable"));
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).toHaveBeenCalledTimes(1);
   });
 });

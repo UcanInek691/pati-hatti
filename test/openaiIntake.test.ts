@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractIntakeViaOpenAi, OPENAI_INTAKE_MODEL } from "../src/openaiIntake";
 import { INTAKE_EXTRACTION_SYSTEM_PROMPT } from "../prompts/intake-extraction-prompt";
 import type { Env } from "../src/env";
+import type { IntakeQueueMessage } from "../src/intakeQueue";
 
 const ENV: Env = {
   APP_TIMEZONE: "Europe/Istanbul",
@@ -10,6 +11,7 @@ const ENV: Env = {
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
   OPENAI_API_KEY: "test-openai-key",
+  INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
 };
 
 const VALID_EXTRACTION = {

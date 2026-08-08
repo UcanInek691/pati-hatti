@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { advanceConversationIntake, getConversationIntakeContext } from "../src/conversationState";
 import type { AdvanceConversationIntakeInput } from "../src/conversationState";
 import type { Env } from "../src/env";
+import type { IntakeQueueMessage } from "../src/intakeQueue";
 
 const env: Env = {
   APP_TIMEZONE: "Europe/Istanbul",
@@ -10,6 +11,7 @@ const env: Env = {
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
   OPENAI_API_KEY: "unused",
+  INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
 };
 
 const conversationId = "11111111-1111-1111-1111-111111111111";

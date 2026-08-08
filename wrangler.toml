@@ -4,3 +4,7 @@ compatibility_date = "2025-01-01"
 
 [vars]
 APP_TIMEZONE = "Europe/Istanbul"
+
+[[queues.producers]]
+queue = "vetai-intake"
+binding = "INTAKE_QUEUE"
