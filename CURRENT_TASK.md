@@ -1,150 +1,194 @@
-# Current task — 011 enqueue persisted inbound work
+# Current task — 012 validate and lease queued intake jobs
 
-Status: `COMPLETE`
+Status: `READY`
 
 Primary implementer: Claude Sonnet
 
-Reviewer: Codex
+Reviewers: Codex, then Claude Opus (read-only architecture/security review)
 
 ## Goal
 
-After an inbound WhatsApp text message is durably persisted, publish one small
-versioned job to a Cloudflare Queue and await confirmation before returning
-HTTP 200. This separates the signed webhook acknowledgement path from future
-LLM/state orchestration without implementing the consumer yet.
+Create the fail-closed idempotency boundary needed by the future Cloudflare
+Queue consumer: strictly revalidate each untrusted Queue body, atomically lease
+the exact persisted inbound message, and complete work only with the current
+lease token.
 
-This task does not consume queue messages, call an LLM, evaluate safety, fetch
-conversation context, advance state, generate replies, send WhatsApp messages,
-create Cloudflare resources, deploy, or change Supabase.
+This task provides parser and database/client primitives only. It does not add
+a `queue()` handler, configure a Queue consumer, call an LLM, evaluate safety,
+advance conversation state, generate/send replies, create a Queue, or deploy.
 
 ## Starting context
 
-- Starting HEAD: `4e3102c` on `main`; worktree is clean.
-- Task 010 returns a validated conversation ID for both `processed` and exact
-  `duplicate` ingestion outcomes. It passed 226 tests and real `vetai-test`
-  migration/rollback verification.
-- `src/index.ts` currently discards that locator and acknowledges the webhook
-  after persistence.
-- No Queue binding, producer helper, consumer handler, or queue resource exists.
-- Cloudflare's current Queue API confirms a message is written to disk when
-  `Queue.send()` resolves. Queue delivery is at least once, so downstream
-  consumers must later be idempotent.
-
-Official references reviewed by Codex on 2026-08-08:
-
-- https://developers.cloudflare.com/queues/configuration/configure-queues/
-- https://developers.cloudflare.com/queues/configuration/javascript-apis/
-- https://developers.cloudflare.com/queues/reference/how-queues-works/
+- Starting HEAD: `2f2beff` on `main`; worktree is clean.
+- Task 011's producer publishes exactly `{ version: 1, conversationId,
+  providerMessageId }` after persistence, but Queue and webhook delivery are
+  both at least once.
+- `messages` uniquely identifies WhatsApp messages by
+  `(clinic_id, whatsapp_message_id)` and links them to conversations.
+- `webhook_events` uniquely identifies provider events by
+  `(clinic_id, provider_event_id)` but currently tracks only inbound
+  persistence, not downstream intake processing.
+- The Queue consumer must never rely on TypeScript types, Queue ordering, RLS
+  under `service_role`, or an in-memory duplicate set for correctness.
 
 Before editing, follow `AGENTS.md`, verify these facts from repository evidence,
 and fill Observed context. Stop if repository evidence conflicts.
 
 ## Allowed changes
 
-- New `src/intakeQueue.ts`.
-- New `test/intakeQueue.test.ts`.
-- `src/env.ts`.
-- `src/index.ts`, limited to producer wiring and existing result counts/status.
-- `wrangler.toml`, limited to one producer binding.
-- `test/index.test.ts`.
-- `test/supabaseIngest.test.ts`, `test/conversationState.test.ts`, and
-  `test/openaiIntake.test.ts` only for the new required Env fixture binding.
-- New `docs/inbound-queue.md` limited to this producer-only step.
+- New migration:
+  `supabase/migrations/20260808000100_intake_job_lease.sql`.
+- New rollback SQL test:
+  `supabase/tests/012_intake_job_lease.sql`.
+- `src/intakeQueue.ts` and `test/intakeQueue.test.ts`.
+- New `src/intakeJobLease.ts` and `test/intakeJobLease.test.ts`.
+- `docs/database-schema.md` and `docs/inbound-queue.md`, limited to this
+  lease/idempotency boundary and its unapplied status.
 - Fill the Observed context and Delivery record sections of this file.
 
-Do not change dependencies, lockfiles, migrations, SQL tests, Supabase clients,
-WhatsApp parsing/signatures, prompts, extraction/safety/conversation-state
-logic, README, `AGENTS.md`, or `PROJECT_CONTEXT.md`.
+Do not change previous migrations, dependencies, lockfiles, `Env`, Worker
+routing, `wrangler.toml`, Queue producer behavior, Supabase ingestion or
+conversation-state clients, prompts, OpenAI/extraction/safety modules, README,
+`AGENTS.md`, or `PROJECT_CONTEXT.md`.
 
-## Queue contract
+## Queue-body validation contract
 
-Use the existing Cloudflare Workers types and native Queue binding. Do not add
-a wrapper class, provider abstraction, schema library, or dependency.
+Add a strict runtime parser for untrusted `unknown` Queue bodies. Accept only a
+plain object with exactly these keys:
 
-Configure exactly one producer in `wrangler.toml`:
+- `version`, exactly numeric literal `1`;
+- `conversationId`, a syntactically valid UUID string;
+- `providerMessageId`, a non-empty, already-trimmed string of at most 512
+  Unicode code points.
 
-```toml
-[[queues.producers]]
-queue = "vetai-intake"
-binding = "INTAKE_QUEUE"
-```
+Reject missing/extra keys, arrays, exotic prototypes, wrong types, other
+versions, malformed UUIDs, empty/whitespace-only or leading/trailing-whitespace
+provider IDs, overlength IDs, and any thrown/proxy input. Do not normalize or
+silently change the persisted identifier. Return a fresh validated object or
+`{ ok: false }`; never mutate or log the input.
 
-Add a required, strongly typed `INTAKE_QUEUE` binding to `Env`.
+Do not accept message text, phone/clinic/owner/pet data, claim tokens, actions,
+or arbitrary metadata in the Queue body.
 
-Export a closed versioned message type with exactly these serialized fields:
+## Database lease contract
 
-```text
-version: 1
-conversationId: string
-providerMessageId: string
-```
+Add forward-only intake-processing fields to `public.webhook_events`:
 
-Do not include message text, phone number, owner/pet name, clinic ID, payload
-hash, extraction, prompt, secret, or provider response.
+- `intake_status text not null default 'pending'`, constrained to
+  `pending | processing | completed`;
+- `intake_claim_token uuid`;
+- `intake_lease_until timestamptz`;
+- `intake_completed_at timestamptz`.
 
-Add one small producer helper that:
+Add a table check constraint enforcing coherent states:
 
-- accepts the Queue binding plus the already-validated conversation and
-  provider-message IDs;
-- calls and awaits `queue.send(message, { contentType: "json" })`;
-- returns success only after that promise resolves;
-- catches a missing binding or send rejection and fails closed;
-- never logs the message or identifiers.
+- pending: token/lease/completed time are all null;
+- processing: token and lease are non-null, completed time is null;
+- completed: token/lease are null, completed time is non-null.
 
-## Webhook wiring contract
+Add exactly two `SECURITY INVOKER`, `VOLATILE`, empty-search-path RPCs. Revoke
+them from `PUBLIC`, `anon`, and `authenticated`; grant only to `service_role`.
+Use no dynamic SQL.
 
-- For both `processed` and `duplicate` persistence outcomes, enqueue the same
-  minimal job using the returned conversation ID and the normalized item's
-  provider message ID.
-- Enqueue exact duplicates too: this repairs the case where database
-  persistence committed but the first Queue send or webhook response failed.
-- Do not enqueue `unknown_account` or `failed` outcomes.
-- If any required enqueue fails, count that item as failed and return the
-  existing HTTP 503 response. Return 200 only after every processed/duplicate
-  item has been confirmed by Queue.
-- Preserve all signature, envelope, normalization, deduplication, persistence,
-  status-only event, 400/401/413/415, and logging behavior. Never log the queue
-  body or identifiers.
-- Do not use `waitUntil`; the webhook must await durable Queue confirmation.
-- Do not add a `queue()` consumer handler or `[[queues.consumers]]` config in
-  this task. The producer-only configuration must not be deployed until a
-  reviewed consumer exists.
+### `claim_intake_queue_job`
 
-Cloudflare Queue delivery and webhook retries can both create duplicate jobs.
-This is expected. Task 012 must validate the message again and provide
-idempotent consumer behavior before deployment.
+Inputs: conversation UUID and provider-message ID. Validate both. Resolve one
+exact inbound message and its webhook event using all of:
+
+- message conversation ID;
+- message clinic ID = event clinic ID;
+- message WhatsApp ID = requested provider ID = event provider ID;
+- message direction is `inbound`;
+- event persistence status is `processed`.
+
+Lock the event row so concurrent claims serialize. Return exactly one row:
+
+- `claimed`: create a fresh UUID claim token, set status `processing`, set a
+  fixed 120-second lease, and return token plus exact persisted message text;
+- `completed`: already completed, with null token/text;
+- `busy`: an unexpired processing lease exists, with null token/text;
+- `not_found`: no exact tenant-safe message/event pair, with null token/text.
+
+A pending job and an expired processing lease are claimable. Never accept a
+clinic ID from the caller. Never return phone, owner/pet, clinic, payload hash,
+or webhook error data.
+
+### `complete_intake_queue_job`
+
+Inputs: conversation UUID, provider-message ID, claim-token UUID. Validate all.
+Atomically mark the exact job `completed` only when the event is currently
+`processing` and its stored token equals the supplied token. Clear token and
+lease and set completion time. Return exactly one row:
+
+- `completed` when the current token won;
+- `stale` when the job is missing, already completed, pending, or owned by a
+  different/newer token.
+
+Completion must use the same tenant-safe message/event relationship as claim.
+A stale worker must never complete a lease reclaimed by a newer worker.
+
+Do not add a table, trigger, configurable lease duration, retry counter,
+cleanup job, dead-letter behavior, or generic job framework.
+
+## TypeScript client contract
+
+Add native-fetch service-role helpers following the existing
+`src/conversationState.ts` transport rules: HTTPS or loopback HTTP only, blank
+configuration fails closed, no dependency, no body/ID/secret logging.
+
+Closed claim result:
+
+- `{ kind: "claimed", claimToken: string, messageText: string }`
+- `{ kind: "completed" }`
+- `{ kind: "busy" }`
+- `{ kind: "not_found" }`
+- `{ kind: "failed" }`
+
+Closed completion result:
+
+- `{ kind: "completed" }`
+- `{ kind: "stale" }`
+- `{ kind: "failed" }`
+
+Treat every Data API response as untrusted: exactly one plain row with exactly
+the documented columns, an exact known result, UUID token and
+1..65536-code-point text only for `claimed`, null token/text for every other
+claim result, and no unexpected success shape. Network/HTTP/JSON/configuration/
+shape failures return `failed`.
+
+Do not wire these helpers into `src/index.ts` or any Queue handler yet.
 
 ## Required tests
 
-- Producer helper sends exactly the three-field versioned JSON message and
-  uses `contentType: "json"`.
-- Producer helper resolves success only when `send()` resolves; missing binding
-  and thrown/rejected send fail closed without logging.
-- A processed persistence outcome enqueues once and returns 200.
-- An exact duplicate persistence outcome also enqueues once and returns 200.
-- Queue rejection after either successful persistence outcome returns 503.
-- Unknown-account and failed persistence outcomes never call Queue and return
-  503.
-- Status-only and unsupported webhook events never call Queue.
-- In-payload duplicate normalization still produces one persistence call and
-  one Queue send.
-- The Queue body never contains message text, sender, owner name, clinic ID,
-  payload hash, or secrets.
-- Keep every existing test green.
+TypeScript tests must cover strict Queue parser acceptance, every rejection
+class above, immutability/fresh output, valid claim/completion responses, exact
+RPC request shapes, HTTPS/loopback rules, missing config, and all network/HTTP/
+JSON/row/result/token/text failure paths.
 
-Use small inert Queue stubs in unrelated Env fixtures; do not create a shared
-test framework solely for this binding.
+The rollback SQL test must prove:
+
+- pending claim returns exact message text and a token;
+- concurrent/second claim before expiry returns busy;
+- expired lease is reclaimed with a different token;
+- stale old token cannot complete; current token completes;
+- completed job remains completed and cannot be reclaimed;
+- two clinics may reuse the same provider ID without cross-tenant leakage;
+- wrong conversation/provider pair and non-inbound/non-processed fixtures
+  return not_found;
+- state check constraint rejects incoherent rows;
+- only service_role can execute both RPCs;
+- rollback leaves zero fixture rows.
+
+Do not claim database validation passed unless Codex applies the migration and
+runs the SQL test against the disposable `vetai-test` project. Sonnet must not
+mutate any database.
 
 ## Documentation requirements
 
-`docs/inbound-queue.md` must explain:
-
-- persistence completes before enqueue and HTTP 200 waits for Queue send;
-- processed and exact-duplicate outcomes are both enqueued for retry repair;
-- the message contains only the three contract fields;
-- duplicate delivery is expected and the future consumer must be idempotent;
-- no consumer, LLM/state orchestration, outbound message, real Queue resource,
-  deploy, or production approval exists yet.
+Document the lease states, 120-second expiry/reclaim behavior, token-protected
+completion, exact message binding, service-role-only access, untrusted Queue
+revalidation, and the fact that no consumer/orchestration/deploy exists yet.
+Mark the migration and SQL test `NOT APPLIED` until Codex verifies them.
 
 ## Verification
 
@@ -158,116 +202,29 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-The Wrangler dry-run must show the `INTAKE_QUEUE` producer binding. Do not
-create a Queue, deploy, commit, push, call an LLM, mutate Supabase, or touch
-another external service.
+Do not commit, push, deploy, create a Queue, call an LLM, mutate Supabase, or
+touch another external service.
+
+## Mandatory review gate
+
+After Sonnet delivers, Codex must review all code and run the real `vetai-test`
+migration/rollback test. If Codex passes it, Claude Opus must perform a
+read-only review of tenant binding, claim concurrency, lease expiry, stale-token
+completion, privileges, and fail-closed parsing before the task can complete.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD: `ff28120` (`docs: define inbound queue producer task`), one
-  commit ahead of the documented starting HEAD `4e3102c` — the extra commit
-  is exactly the CURRENT_TASK.md update for this task, no conflicting code
-  changes. Worktree was clean.
-- Initial worktree state: clean, nothing to commit.
-- Relevant code/tests/config evidence: `src/index.ts` awaited
-  `ingestWhatsAppTextMessage` and only tallied `processed`/`duplicate`/`failed`
-  counts, discarding the returned `conversationId`. `src/supabaseIngest.ts`
-  exports `IngestOutcome` as `{ kind: "processed" | "duplicate";
-  conversationId: string } | { kind: "unknown_account" } | { kind: "failed"
-  }`. `src/whatsappIngest.ts` exposes `providerMessageId` on each
-  `WhatsAppIngestItem`. `src/env.ts` had no Queue binding. `wrangler.toml` had
-  no `[[queues.producers]]` block. `@cloudflare/workers-types` (already a
-  devDependency, referenced in `tsconfig.json`) declares the global
-  `Queue<Body>` interface with `send(message, { contentType, delaySeconds
-  })`. `test/index.test.ts`, `test/supabaseIngest.test.ts`,
-  `test/conversationState.test.ts`, and `test/openaiIntake.test.ts` each
-  construct an `Env` object that needed the new required binding.
-- Planned files: `src/intakeQueue.ts` (new), `src/env.ts`, `src/index.ts`,
-  `wrangler.toml`, `test/intakeQueue.test.ts` (new), `test/index.test.ts`,
-  `test/supabaseIngest.test.ts`, `test/conversationState.test.ts`,
-  `test/openaiIntake.test.ts`, `docs/inbound-queue.md` (new).
-- Conflicts or blockers: none. Repository evidence matched the task contract.
+- Starting HEAD:
+- Initial worktree state:
+- Relevant code/tests/migration evidence:
+- Planned files:
+- Conflicts or blockers:
 
 ## Delivery record — Sonnet fills after coding
 
 - Changed files:
-  - New: `src/intakeQueue.ts`, `test/intakeQueue.test.ts`,
-    `docs/inbound-queue.md`.
-  - Modified: `src/env.ts` (added required `INTAKE_QUEUE: Queue<IntakeQueueMessage>`),
-    `src/index.ts` (producer wiring only, same result counts/status logic),
-    `wrangler.toml` (one `[[queues.producers]]` block), `test/index.test.ts`
-    (queue stub/assertions plus new rejection tests), `test/supabaseIngest.test.ts`,
-    `test/conversationState.test.ts`, `test/openaiIntake.test.ts` (each only
-    gained an inert `INTAKE_QUEUE` fixture binding and its type import).
-  - `CURRENT_TASK.md`: filled Observed context and this Delivery record.
 - Acceptance criteria satisfied:
-  - Closed 3-field versioned message (`version: 1`, `conversationId`,
-    `providerMessageId`) exported from `src/intakeQueue.ts`; no wrapper class,
-    provider abstraction, schema library, or new dependency was added.
-  - `enqueueIntakeJob` awaits `queue.send(message, { contentType: "json" })`,
-    resolves `true` only after that promise resolves, and returns `false`
-    (fails closed, no logging) on a missing/undefined binding or a
-    thrown/rejected send.
-  - `src/index.ts` enqueues once for both `processed` and `duplicate`
-    outcomes using the returned `conversationId` and the item's
-    `providerMessageId`; `unknown_account`/`failed` outcomes are never
-    enqueued; a failed enqueue is counted as `failed` and yields the existing
-    503 response; 200 is returned only once every item's Queue send
-    resolved. No `waitUntil`, no `queue()` consumer, no
-    `[[queues.consumers]]` config was added.
-  - All required tests from the task list are present and passing (producer
-    field/contentType shape, missing-binding and rejected/thrown-send
-    failure without logging, processed/duplicate enqueue-once, Queue
-    rejection after either outcome returning 503, unknown_account/failed
-    never calling Queue, status-only/malformed-400 never calling Queue,
-    in-payload duplicate producing one persistence call and one Queue send,
-    and an explicit payload-shape assertion proving no extra fields).
-  - `docs/inbound-queue.md` covers all five required points.
 - Commands and exact results:
-  - `pnpm install --frozen-lockfile` → `Already up to date. Done in 491ms`.
-  - `pnpm typecheck` → `tsc --noEmit` completed with no output/errors.
-  - `pnpm test` → `Test Files 12 passed (12)`, `Tests 232 passed (232)`
-    (226 previous + 6 net new/expanded assertions in `test/index.test.ts` +
-    4 new in `test/intakeQueue.test.ts`, no regressions).
-  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
-    printed binding table including
-    `env.INTAKE_QUEUE (vetai-intake)  Queue`, exited on `--dry-run: exiting
-    now.` with no resource created.
-  - `git diff --check` → exit code 0, no whitespace errors.
-- Checks not run and why: none of the required commands were skipped; no
-  database/RLS checks apply since this task does not touch Supabase or
-  migrations.
+- Checks not run and why:
 - Known limitations:
-  - No Queue resource has been created and nothing was deployed; the
-    producer binding only exists in `wrangler.toml` and the dry-run output.
-  - No consumer, idempotency handling, or downstream orchestration exists —
-    intentionally out of scope for this task per the contract.
-  - Duplicate WhatsApp webhook retries plus at-least-once Queue delivery can
-    both still produce duplicate jobs; this is explicitly accepted and
-    documented as Task 012's responsibility.
-- Risks for Codex review:
-  - `src/env.ts` and `src/intakeQueue.ts` have a type-only circular
-    reference (`env.ts` imports `IntakeQueueMessage` from `intakeQueue.ts`;
-    `intakeQueue.ts` uses the ambient global `Queue<Body>` type and does not
-    import `Env`), so there is no runtime cycle, but worth a second look.
-  - The three unrelated test files were only given an inert `INTAKE_QUEUE`
-    stub (`{ send: async () => {} } as unknown as Queue<IntakeQueueMessage>`)
-    cast to satisfy the type — confirm that's acceptable rather than a
-    shared test helper, per the task's "small inert Queue stubs" instruction.
-
-## Codex review and verification
-
-- Decision: `PASS`.
-- Reviewed the Queue message contract, all producer callers, webhook ordering,
-  retry-repair behavior, binding/config, Env fixtures, logging, tests, and
-  documentation. The type-only import creates no runtime cycle, and the small
-  inert test stubs are appropriate at this scope.
-- Corrected one documentation claim: the future service-role consumer must use
-  the existing restricted tenant-scoped RPC and cannot rely on RLS, because
-  `service_role` bypasses RLS.
-- Codex reran the frozen install, typecheck, all 232 tests, Wrangler dry-run
-  (12.32 KiB / gzip 3.83 KiB), `git diff --check`, focused secret scan, and
-  NUL-byte scan; all passed.
-- Wrangler dry-run confirmed `env.INTAKE_QUEUE (vetai-intake)` as the only
-  Queue binding. No Queue resource, consumer, deploy, external call, or
-  Supabase mutation occurred.
+- Risks for Codex/Opus review:
