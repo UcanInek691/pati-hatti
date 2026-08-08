@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import type { IntakeStage } from "./conversationState";
 
 export type ClaimIntakeQueueJobResult =
   | { kind: "claimed"; claimToken: string; messageText: string }
@@ -9,9 +10,45 @@ export type ClaimIntakeQueueJobResult =
 
 export type CompleteIntakeQueueJobResult = { kind: "completed" } | { kind: "stale" } | { kind: "failed" };
 
+export type FinalizeIntakeQueueJobResult =
+  | { kind: "applied"; intakeStage: IntakeStage; stateVersion: number }
+  | { kind: "already_completed" }
+  | { kind: "stale_claim" }
+  | { kind: "stale_state" }
+  | { kind: "failed" };
+
+export interface FinalizeIntakeQueueJobInput {
+  conversationId: string;
+  providerMessageId: string;
+  claimToken: string;
+  expectedVersion: number;
+  nextStage: IntakeStage;
+  petId: string | null;
+  intakeData: Record<string, unknown>;
+}
+
 const FAILED_CLAIM: ClaimIntakeQueueJobResult = { kind: "failed" };
 const FAILED_COMPLETE: CompleteIntakeQueueJobResult = { kind: "failed" };
+const FAILED_FINALIZE: FinalizeIntakeQueueJobResult = { kind: "failed" };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ponytail: duplicates conversationState.ts's private stage set rather than
+// exporting it, matching Task 013's file-scoped allowed-changes boundary.
+const INTAKE_STAGES = new Set<IntakeStage>([
+  "pet_identification",
+  "complaint_collection",
+  "safety_check",
+  "ready_for_triage",
+  "appointment_offer",
+  "appointment_selection",
+  "appointment_confirmation",
+  "human_handoff",
+  "completed",
+]);
+
+function isIntakeStage(value: unknown): value is IntakeStage {
+  return typeof value === "string" && INTAKE_STAGES.has(value as IntakeStage);
+}
 
 function isLoopbackHttpUrl(url: URL): boolean {
   return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
@@ -134,5 +171,41 @@ export async function completeIntakeQueueJob(
     return result === "completed" || result === "stale" ? { kind: result } : FAILED_COMPLETE;
   } catch {
     return FAILED_COMPLETE;
+  }
+}
+
+/** Calls the `finalize_intake_queue_job` Data API RPC over native fetch. Never logs the request/response body. */
+export async function finalizeIntakeQueueJob(input: FinalizeIntakeQueueJobInput, env: Env): Promise<FinalizeIntakeQueueJobResult> {
+  const endpoint = buildEndpoint(env, "finalize_intake_queue_job");
+  if (!endpoint) return FAILED_FINALIZE;
+
+  const rows = await callRpc(endpoint, env, {
+    p_conversation_id: input.conversationId,
+    p_provider_message_id: input.providerMessageId,
+    p_claim_token: input.claimToken,
+    p_expected_version: input.expectedVersion,
+    p_next_stage: input.nextStage,
+    p_pet_id: input.petId,
+    p_intake_data: input.intakeData,
+  });
+  if (rows === null || rows.length !== 1) return FAILED_FINALIZE;
+
+  const row = asPlainRecord(rows[0]);
+  try {
+    if (!row || Reflect.ownKeys(row).length !== 3) return FAILED_FINALIZE;
+
+    const { result, intake_stage: intakeStage, state_version: stateVersion } = row;
+
+    if (result === "already_completed" || result === "stale_claim" || result === "stale_state") {
+      return intakeStage === null && stateVersion === null ? { kind: result } : FAILED_FINALIZE;
+    }
+
+    if (result !== "applied") return FAILED_FINALIZE;
+    if (!isIntakeStage(intakeStage)) return FAILED_FINALIZE;
+    if (typeof stateVersion !== "number" || !Number.isInteger(stateVersion) || stateVersion < 1) return FAILED_FINALIZE;
+
+    return { kind: "applied", intakeStage, stateVersion };
+  } catch {
+    return FAILED_FINALIZE;
   }
 }

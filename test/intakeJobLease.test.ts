@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { claimIntakeQueueJob, completeIntakeQueueJob } from "../src/intakeJobLease";
+import { claimIntakeQueueJob, completeIntakeQueueJob, finalizeIntakeQueueJob } from "../src/intakeJobLease";
+import type { FinalizeIntakeQueueJobInput } from "../src/intakeJobLease";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 
@@ -215,6 +216,138 @@ describe("completeIntakeQueueJob", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "completed" }])));
 
     await completeIntakeQueueJob(conversationId, providerMessageId, claimToken, env);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});
+
+describe("finalizeIntakeQueueJob", () => {
+  const baseInput: FinalizeIntakeQueueJobInput = {
+    conversationId,
+    providerMessageId,
+    claimToken,
+    expectedVersion: 1,
+    nextStage: "complaint_collection",
+    petId: null,
+    intakeData: { note: "hello" },
+  };
+
+  it("calls the RPC with the documented URL, method, headers, and body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await finalizeIntakeQueueJob(baseInput, env);
+
+    expect(result).toEqual({ kind: "applied", intakeStage: "complaint_collection", stateVersion: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/finalize_intake_queue_job");
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.apikey).toBe("test-service-role-key");
+    expect(headers.authorization).toBe("Bearer test-service-role-key");
+    expect(headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({
+      p_conversation_id: conversationId,
+      p_provider_message_id: providerMessageId,
+      p_claim_token: claimToken,
+      p_expected_version: 1,
+      p_next_stage: "complaint_collection",
+      p_pet_id: null,
+      p_intake_data: { note: "hello" },
+    });
+  });
+
+  it.each(["already_completed", "stale_claim", "stale_state"] as const)("parses a %s result with a null stage and version", async (result) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: result });
+  });
+
+  it("parses an applied result with a pet id supplied", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "safety_check", state_version: 5 }])));
+    const result = await finalizeIntakeQueueJob({ ...baseInput, petId: "33333333-3333-3333-3333-333333333333" }, env);
+    expect(result).toEqual({ kind: "applied", intakeStage: "safety_check", stateVersion: 5 });
+  });
+
+  it("fails closed when Supabase configuration is missing, without calling fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await finalizeIntakeQueueJob(baseInput, { ...env, SUPABASE_URL: "" });
+    expect(result).toEqual({ kind: "failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for plain HTTP against a non-loopback host", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await finalizeIntakeQueueJob(baseInput, { ...env, SUPABASE_URL: "http://example.supabase.co" });
+    expect(result).toEqual({ kind: "failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows plain HTTP for loopback localhost testing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }])));
+    const result = await finalizeIntakeQueueJob(baseInput, { ...env, SUPABASE_URL: "http://localhost:54321" });
+    expect(result).toEqual({ kind: "applied", intakeStage: "complaint_collection", stateVersion: 2 });
+  });
+
+  it("treats a network failure as failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
+  });
+
+  it("treats a non-2xx response as failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ message: "error" }, 500)));
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
+  });
+
+  it.each([
+    ["a non-array body", { result: "applied", intake_stage: "complaint_collection", state_version: 2 }],
+    ["zero rows", []],
+    [
+      "more than one row",
+      [
+        { result: "stale_claim", intake_stage: null, state_version: null },
+        { result: "stale_claim", intake_stage: null, state_version: null },
+      ],
+    ],
+    ["a row with an extra column", [{ result: "stale_claim", intake_stage: null, state_version: null, extra: "x" }]],
+    ["a row with an unknown result", [{ result: "invented", intake_stage: null, state_version: null }]],
+    ["an applied row with a non-string stage", [{ result: "applied", intake_stage: 1, state_version: 2 }]],
+    ["an applied row with an unknown stage", [{ result: "applied", intake_stage: "not_a_stage", state_version: 2 }]],
+    ["an applied row with a null stage", [{ result: "applied", intake_stage: null, state_version: 2 }]],
+    ["an applied row with a non-integer version", [{ result: "applied", intake_stage: "complaint_collection", state_version: 1.5 }]],
+    ["an applied row with a zero version", [{ result: "applied", intake_stage: "complaint_collection", state_version: 0 }]],
+    ["an applied row with a null version", [{ result: "applied", intake_stage: "complaint_collection", state_version: null }]],
+    ["a stale_claim row with a non-null stage", [{ result: "stale_claim", intake_stage: "complaint_collection", state_version: null }]],
+    ["a stale_state row with a non-null version", [{ result: "stale_state", intake_stage: null, state_version: 2 }]],
+    ["an already_completed row with a non-null stage", [{ result: "already_completed", intake_stage: "completed", state_version: null }]],
+  ])("treats %s as a malformed response and fails", async (_label, body) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
+  });
+
+  it("rejects a non-plain row and symbol extra columns", async () => {
+    const nonPlain = Object.assign(Object.create(null), { result: "stale_claim", intake_stage: null, state_version: null });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rawJsonResponse([nonPlain])));
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(rawJsonResponse([{ result: "stale_claim", intake_stage: null, state_version: null, [Symbol("extra")]: "x" }])),
+    );
+    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
+  });
+
+  it("does not log the request or response", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }])));
+
+    await finalizeIntakeQueueJob(baseInput, env);
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();

@@ -78,6 +78,32 @@ neither is wired into a `queue()` handler yet:
 > SQL Editor integration test rather than a Supabase CLI migration-history
 > entry, so production still needs the managed migration workflow.
 
+A lease guarantees one successful completer, not one executing worker after
+expiry/reclaim: calling state advance and lease completion as two separate
+HTTP RPCs would leave a crash window where the same persisted message could
+advance conversation state twice. `finalizeIntakeQueueJob` in
+`src/intakeJobLease.ts` closes that window by calling the new
+`finalize_intake_queue_job` database function (see
+`docs/database-schema.md`), which atomically re-checks the current lease
+token, advances conversation intake state, and completes the same lease in
+one transaction, returning a closed `applied` / `already_completed` /
+`stale_claim` / `stale_state` / `failed` result. This still does not cover
+LLM work repeating after a lease expiry/reclaim, any WhatsApp send or other
+irreversible external effect, or a Queue consumer/orchestration boundary —
+those still need an idempotent/outbox-style boundary of their own.
+
+A `stale_state` result preserves the current token but does not extend its
+original 120-second lease. A corrected retry is valid only before expiry and
+before another worker reclaims the job; after reclaim it correctly becomes
+`stale_claim`. The future consumer must bound or drop retries accordingly,
+rather than retrying `failed`/invalid payloads forever.
+
+> **Disposable validation passed (2026-08-08).** Codex applied
+> `supabase/migrations/20260808000200_finalize_intake_queue_job.sql` to
+> `vetai-test`; its rollback test returned `PASS` with zero fixture rows. This
+> was an SQL Editor integration test, not a Supabase CLI migration-history
+> entry; production still needs the managed migration workflow.
+
 ## Not implemented in this step
 
 - No `queue()` consumer handler and no `[[queues.consumers]]` binding exist

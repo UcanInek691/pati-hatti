@@ -92,6 +92,18 @@ The secure Worker baseline is committed on `main`:
   install, and Worker dry-run passed. Codex and Claude Opus reviews passed.
   The SQL test proves a sequential second claim; true two-session blocking was
   reviewed from PostgreSQL locking semantics rather than exercised directly.
+- A service-role-only atomic finalization RPC now locks the current intake job,
+  delegates the existing optimistic conversation-state transition, and
+  completes the matching lease in one PostgreSQL transaction. It returns a
+  closed `applied | already_completed | stale_claim | stale_state` result and
+  rolls back state if completion cannot succeed. Its native-fetch client
+  validates the exact Data API row shape and is not wired into a consumer yet.
+- The finalization migration and rollback test passed on disposable
+  `vetai-test`, including a real service-role claim/write/finalize path,
+  cross-tenant same-provider isolation, stale token/state behavior, invalid
+  transition rollback, privileges, and zero fixture residue. 333/333 tests,
+  typecheck, frozen install, Worker dry-run, Codex review, and Claude Opus
+  review passed.
 
 Verified evidence before the context-system change:
 
@@ -125,11 +137,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 012 now provides the reviewed Queue parser and database lease boundary.
-The next phase must make consumer state changes atomically idempotent with the
-current lease token before wiring the Queue consumer, LLM, or outbound effects.
-No Queue resource has been created and production deployment remains out of
-scope.
+Task 013 now provides the reviewed atomic state+lease finalization boundary.
+The next phase can wire a bounded Queue consumer through parsing, claim,
+context, extraction, deterministic safety, and atomic finalization, without
+adding outbound WhatsApp effects yet. No Queue resource has been created and
+production deployment remains out of scope.
 
 ## Durable safety invariants
 
@@ -142,6 +154,8 @@ scope.
 - A lease guarantees one successful completer, not one executing worker after
   expiry/reclaim; irreversible effects must be independently idempotent or
   committed atomically with current-token completion.
+- `stale_state` does not renew a lease; consumer retries must fit within the
+  original expiry and poison/invalid payload failures must not retry forever.
 
 ## Context maintenance
 

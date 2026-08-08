@@ -256,3 +256,59 @@ Worker helpers for both, following the same HTTPS/loopback-only,
 fail-closed-on-blank-configuration transport rules as
 `src/conversationState.ts`; neither helper is wired into `src/index.ts` or
 any Queue handler yet.
+
+## Atomic intake finalization
+
+Defined in `supabase/migrations/20260808000200_finalize_intake_queue_job.sql`.
+
+> **Disposable validation passed (2026-08-08).** Codex applied this migration
+> to `vetai-test`; `supabase/tests/013_finalize_intake_queue_job.sql` returned
+> `PASS` with zero fixture rows. This SQL Editor integration test did not add a
+> Supabase CLI migration-history entry; production still requires the managed
+> migration workflow.
+
+A lease guarantees one successful completer, not one executing worker after
+expiry/reclaim (see [`docs/inbound-queue.md`](inbound-queue.md)). Calling
+`advance_conversation_intake` and `complete_intake_queue_job` as two separate
+HTTP RPCs would leave a crash window where the same persisted message could
+advance conversation state twice. `public.finalize_intake_queue_job(
+p_conversation_id, p_provider_message_id, p_claim_token, p_expected_version,
+p_next_stage, p_pet_id, p_intake_data)` closes that window by composing both
+existing, already-validated operations inside one transaction instead of
+duplicating their transition/pet-ownership/completion logic. It is
+`SECURITY INVOKER`, `VOLATILE`, empty-`search_path`, and granted to
+`service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`).
+
+It resolves and locks the exact tenant-safe inbound processed message/event
+pair using the same relationship as `claim_intake_queue_job`, re-checks the
+current lease token under that lock, and returns one row of `(result,
+intake_stage, state_version)` with a closed outcome set:
+
+- `applied` — the event was `processing` with a matching token and
+  `advance_conversation_intake` succeeded for the supplied expected version;
+  the same lease is completed in the same transaction and the resulting
+  non-null stage/version is returned.
+- `already_completed` — the exact event was already completed; no
+  conversation change, null stage/version.
+- `stale_claim` — the exact pair is missing, not processing, or held by a
+  different/newer token; no conversation change, null stage/version.
+- `stale_state` — the token is valid but the optimistic state version no
+  longer matches; the lease stays `processing` (available for a corrected
+  retry only until its original 120-second expiry), no conversation change,
+  null stage/version. A reclaim before that retry changes the outcome to
+  `stale_claim`.
+
+If the reused state transition raises (invalid stage, invalid/empty intake
+data, or pet ownership outside the conversation's own owner/clinic), or if
+current-token completion unexpectedly fails after a successful state
+advance, the whole call raises and neither the conversation row nor the
+lease row is left partially changed.
+
+This closes the double-advance window for one persisted message; it does not
+cover LLM work repeating after a lease expiry/reclaim, any WhatsApp send or
+other irreversible external effect, or a Queue consumer/orchestration — those
+still need an idempotent/outbox-style boundary and remain unimplemented.
+`src/intakeJobLease.ts` exposes a native-`fetch` `finalizeIntakeQueueJob`
+Worker helper following the same transport and untrusted-response rules as
+the other functions on this page; it is not wired into `src/index.ts` or any
+Queue handler yet.
