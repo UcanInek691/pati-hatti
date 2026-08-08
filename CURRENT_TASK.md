@@ -1,229 +1,216 @@
-# Current task — 015 wire a bounded intake Queue consumer
+# Current task — 016 plan deterministic intake replies
 
-Status: `COMPLETE`
+Status: `READY`
 
 Primary implementer: Claude Sonnet
 
-Reviewer: Codex
+Reviewer: Codex, then Claude Opus for the user-facing safety wording only
 
 ## Goal
 
-Wire the existing reviewed primitives into one bounded Cloudflare Queue
-consumer:
+Add one pure, provider-neutral reply planner that converts the already
+reviewed intake-turn result into a closed Turkish reply or an explicit
+`none` result.
 
-`parse body -> claim lease -> fetch context -> extract current message -> plan
-turn -> atomically finalize state+lease -> explicit ack/retry`.
+This task defines and tests the exact user-facing text before any database
+outbox or WhatsApp sending is added. It must not call an LLM, Supabase,
+Cloudflare, Meta, or any other external service. It must not be wired into the
+Queue consumer yet.
 
-This is the first runtime connection for structured extraction and deterministic
-safety planning. It must remain fail-closed, individually acknowledge each
-message, bound transient retries through Cloudflare configuration, and route a
-corrupt persisted intake snapshot to staff rather than retrying forever.
-
-This task does not generate or send a WhatsApp response, implement triage or
-appointments, add a staff panel, change database schema/RPCs, create external
-resources, deploy, or make a real OpenAI/Supabase/Queue call.
+The MVP deliberately uses fixed deterministic text instead of a second LLM
+call. This is cheaper, easier to audit, and prevents diagnosis, treatment,
+medication, invented facts, or prompt-controlled reply text.
 
 ## Starting context
 
-- Starting HEAD: `a493c1a` on `main`; worktree is clean.
-- Queue bodies already have a strict `parseIntakeQueueMessage` boundary.
-- `claimIntakeQueueJob` returns the exact persisted inbound message text under a
-  120-second database lease.
-- `getConversationIntakeContext` returns tenant-scoped owner/pet/state context.
-- `extractIntakeViaOpenAi` sends exactly one message with `store: false` and
-  returns only a runtime-validated `IntakeExtraction`.
-- `planIntakeTurn` owns multi-turn merge, pet identity, safety evaluation, and
-  database-valid stage selection.
-- `finalizeIntakeQueueJob` atomically advances state and completes the current
-  claim, returning a closed result.
-- Cloudflare supports per-message `ack()` / `retry()`, bounded `max_retries`, a
-  retry delay, and a dead-letter queue. Explicit acknowledgement prevents one
-  failed message from replaying already-completed siblings.
-- OpenAI recommends a stable, privacy-preserving per-user
-  `safety_identifier`, such as a hashed identifier; raw owner/conversation IDs
-  must not be sent in that field.
+- Starting HEAD: `3872439` on `main`; worktree is clean.
+- `planIntakeTurn` returns a closed `PlanResult`. A successful plan contains
+  the exact next stage, tenant-safe pet resolution, merged intake snapshot,
+  and reviewed deterministic `SafetyDecision`.
+- Safety precedence is already owned by `evaluateSafetyDecision`; this task
+  must consume its result rather than re-evaluate symptoms or signals.
+- The Queue consumer atomically finalizes state and lease but deliberately
+  sends no reply. Direct sending there would create a lost-message or
+  duplicate-message window, so runtime wiring remains out of scope until an
+  atomic outbox boundary exists.
+- Completed conversations are not reused by inbound persistence; new inbound
+  messages receive a new active conversation.
 
-Before editing, follow `AGENTS.md`, verify these facts from repository evidence,
-and fill Observed context. Stop if repository evidence conflicts.
+Before editing, follow `AGENTS.md`, verify these facts from repository
+evidence, and fill Observed context. Stop if repository evidence conflicts.
 
 ## Allowed changes
 
-- New `src/intakeConsumer.ts`.
-- New `test/intakeConsumer.test.ts`.
-- `src/index.ts`, limited to adding the Queue handler and imports.
-- `test/index.test.ts`, limited to Queue-handler integration tests and fixtures.
-- `wrangler.toml`, limited to one consumer block.
-- `docs/inbound-queue.md`, limited to the consumer behavior/configuration.
-- Fill the Observed context and Delivery record sections of this file.
+- New `src/intakeReply.ts`.
+- New `test/intakeReply.test.ts`.
+- New `docs/intake-replies.md`.
+- Fill only the Observed context and Delivery record sections of this file.
 
-Do not change dependencies, lockfiles, `Env`, `.dev.vars.example`, migrations,
-database tests/RPCs, producer behavior, webhook behavior, extraction prompt or
-provider request contract, planner/safety/pet-resolution semantics, README,
-`AGENTS.md`, or `PROJECT_CONTEXT.md`.
+Do not change runtime wiring, `src/index.ts`, `src/intakeConsumer.ts`, existing
+planner/extraction/safety modules, prompts, environment bindings, Wrangler
+configuration, dependencies, migrations, database tests, Queue behavior,
+README, `AGENTS.md`, or `PROJECT_CONTEXT.md`.
 
-## Consumer module contract
+## Public contract
 
-Add one exported orchestration function in `src/intakeConsumer.ts`:
+Add these exported types and function in `src/intakeReply.ts`:
 
-`processIntakeQueueMessage(body: unknown, env: Env): Promise<"ack" | "retry">`
+```ts
+export type IntakeReplyCategory =
+  | "emergency_handoff"
+  | "human_handoff"
+  | "safety_questions"
+  | "pet_identity"
+  | "complaint"
+  | "intake_received";
 
-It must catch unexpected exceptions and return `"retry"`; it must never throw
-message content, identifiers, provider bodies, claim tokens, or secrets.
+export type IntakeReplyPlan =
+  | { kind: "none" }
+  | { kind: "send"; category: IntakeReplyCategory; text: string };
 
-Reuse the existing functions directly. Do not copy their parsers, HTTP clients,
-safety rules, stage graph, or database behavior. Do not introduce dependency
-injection containers, classes, factories, generic pipelines, custom retry
-frameworks, or a new dependency.
-
-## Exact processing order and dispositions
-
-For one untrusted Queue body:
-
-1. Run `parseIntakeQueueMessage` before any network call.
-   - Invalid body: `ack`. It contains no trusted locator and retry cannot repair
-     it. Do not log the body.
-2. Call `claimIntakeQueueJob` with the parsed IDs.
-   - `completed` or `not_found`: `ack`.
-   - `busy` or `failed`: `retry`.
-   - `claimed`: continue using only its claim token and message text.
-3. Call `getConversationIntakeContext` with the parsed conversation ID.
-   - `not_found` or `failed`: `retry`.
-4. Derive the OpenAI safety identifier from `context.ownerId` using native Web
-   Crypto SHA-256 over the UTF-8 bytes of the domain-separated string
-   `vetai-owner:<ownerId>`. Send the lowercase 64-character hex digest only.
-   Never send the raw owner ID, conversation ID, clinic ID, name, phone number,
-   or provider ID in `safety_identifier`.
-5. Call `extractIntakeViaOpenAi` exactly once with the claimed message text,
-   derived safety identifier, and `Env`.
-   - Failure/refusal/malformed provider result: `retry`; do not finalize.
-6. Call `planIntakeTurn` with the fetched context and validated extraction.
-   - `planned`: use its exact `nextStage`, `petId`, and `intakeData` for
-     finalization. Do not infer safety from `nextStage`; retain/read the returned
-     `safetyDecision` as described below.
-   - `failed`: treat the persisted state as poison. Build a fresh valid
-     `PersistedIntakeData` containing `schema_version: 1` and a deep-enough copy
-     of the validated current extraction, use `petId: null` so the database
-     preserves any selected pet, and choose `human_handoff` unless the current
-     stage is already `completed` (then keep `completed`). This deliberately
-     replaces the corrupt working snapshot; persisted messages remain the
-     conversation record. Attempt atomic finalization instead of retrying the
-     same poison state forever.
-7. Call `finalizeIntakeQueueJob` exactly once with the parsed IDs, current claim
-   token, fetched `stateVersion`, selected/fallback stage and pet, and selected/
-   fallback snapshot.
-   - `applied`, `already_completed`, or `stale_claim`: `ack`.
-   - `stale_state` or `failed`: `retry`.
-
-Do not call `completeIntakeQueueJob` separately. Do not implement an in-process
-retry loop: a later Queue attempt must reclaim/refetch/re-extract/replan from
-current persisted state.
-
-## Safety-result handling
-
-The consumer must explicitly inspect a successful plan's `safetyDecision`:
-
-- `emergency_handoff` and `human_handoff` must be consistent with a
-  `human_handoff` next stage unless the current stage is `completed`.
-- An inconsistent plan fails closed to `retry` without finalization.
-- A `completed` stage remains terminal. If its decision is
-  `emergency_handoff` or `human_handoff`, finalization may keep `completed`, but
-  emit only a generic operational warning reason such as
-  `terminal_safety_signal`; never include IDs, message text, clinical facts,
-  names, tokens, or provider output.
-- `needs_safety_check` at `ready_for_triage` or an appointment stage may persist
-  the same stage in this task because no triage/appointment action is executed.
-  Later triage code must consume the safety decision again before acting.
-
-When the planner fails and the poison fallback is used, emit at most one generic
-warning reason such as `poison_intake_state`, with no sensitive values. The
-database `human_handoff` state is the durable staff-facing signal for every
-non-completed conversation.
-
-## Queue handler and Cloudflare configuration
-
-Extend the Worker's default export with:
-
-`queue(batch: MessageBatch<unknown>, env: Env): Promise<void>`
-
-Process messages without `waitUntil`. For every message, await
-`processIntakeQueueMessage(message.body, env)` and then call exactly one of:
-
-- `message.ack()` for `ack`;
-- `message.retry()` for `retry`.
-
-Catch a rejected processor call per message and retry that message; one message
-must not prevent later batch messages from receiving their own explicit
-disposition. Do not call `ackAll`, `retryAll`, or throw the whole batch.
-
-Add exactly one consumer block to `wrangler.toml`:
-
-```toml
-[[queues.consumers]]
-queue = "vetai-intake"
-max_batch_size = 1
-max_batch_timeout = 5
-max_retries = 3
-retry_delay = 120
-dead_letter_queue = "vetai-intake-dlq"
+export function planIntakeReply(
+  currentStage: IntakeStage,
+  result: PlanResult,
+): IntakeReplyPlan;
 ```
 
-The explicit 120-second delay lets an abandoned database lease expire before a
-new attempt. After three retryable failures, Cloudflare must route the message
-to the DLQ instead of silently deleting it. This task only declares the
-configuration; Sonnet must not create either Queue or deploy the Worker.
+Reuse `IntakeStage`, `PlanResult`, and `SafetySignal` directly. Do not copy the
+safety evaluator, stage graph, extraction parser, or pet resolver. Do not add
+classes, factories, template engines, locale frameworks, configuration layers,
+or dependencies.
+
+The function must be pure and deterministic: no fetch, time, randomness,
+crypto, logging, mutation, or environment access. Return a fresh object on
+every call.
+
+## Exact precedence and reply behavior
+
+Apply these rules in order:
+
+1. If `currentStage === "completed"`, return `{ kind: "none" }` regardless of
+   the result. Completed conversations are terminal and inbound persistence
+   starts a new conversation for later messages.
+2. If `result.kind === "failed"`, return the fixed `human_handoff` reply. This
+   mirrors the Queue consumer's poison-snapshot handoff rather than asking the
+   user to repeat potentially urgent information forever.
+3. For a planned result with `safetyDecision.kind === "emergency_handoff"`,
+   return the fixed `emergency_handoff` reply.
+4. For `safetyDecision.kind === "human_handoff"`, return the fixed
+   `human_handoff` reply.
+5. If `result.nextStage === "human_handoff"` for any other reason, return the
+   fixed `human_handoff` reply. Do not infer or expose a medical reason.
+6. For `safetyDecision.kind === "needs_safety_check"`, return one
+   `safety_questions` reply containing only the questions mapped from its
+   `unknownSignals`, in the array's existing canonical order. Do not ask about
+   signals that are already explicitly true or false.
+7. If `petResolution.kind === "needs_clarification"`, return the fixed
+   `pet_identity` reply.
+8. If merged `complaint` is null and merged `symptoms` is empty, return the
+   fixed `complaint` reply.
+9. Otherwise return the fixed `intake_received` reply. Appointment and triage
+   actions are not implied; this is only receipt confirmation.
+
+Never insert owner name, pet name, complaint, symptom, clinic details, IDs,
+phone number, message text, or any other dynamic user/provider data into a
+reply. The only dynamic construction allowed is joining the fixed safety
+questions selected by the closed `unknownSignals` list.
+
+## Exact Turkish copy
+
+Use these strings exactly, including punctuation. Do not ask an LLM to rewrite
+them.
+
+- `emergency_handoff`:
+  `Bu durum acil olabilir. Lütfen bot üzerinden yanıt beklemeden kliniğimizi telefonla arayın veya en yakın açık veteriner kliniğine başvurun.`
+- `human_handoff`:
+  `Talebinizi klinik ekibine yönlendirdim. Lütfen ekip yanıtını bekleyin. Durum kötüleşirse en yakın açık veteriner kliniğiyle doğrudan iletişime geçin.`
+- `pet_identity`:
+  `Hangi evcil hayvanınız için yazıyorsunuz? Lütfen adını belirtin.`
+- `complaint`:
+  `Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?`
+- `intake_received`:
+  `Bilgileri aldım.`
+
+For `safety_questions`, use this exact prefix:
+
+`Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın:`
+
+Then append one line per unknown signal as `\n- <question>`, using a
+compile-time-exhaustive `Record<SafetySignal, string>`:
+
+- `breathing_difficulty` → `Nefes almakta güçlük var mı?`
+- `loss_of_consciousness` → `Bilinç kaybı var mı?`
+- `active_seizure` → `Şu anda devam eden nöbet var mı?`
+- `heavy_bleeding` → `Şiddetli veya durmayan kanama var mı?`
+- `major_trauma` → `Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?`
+- `possible_toxin_exposure` → `Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?`
+- `possible_foreign_object` → `Yabancı bir cisim yutmuş olabilir mi?`
+- `unable_to_urinate` → `İdrar yapamıyor mu?`
+
+If a future malformed internal value somehow supplies an empty or unknown
+question list, fail closed to the fixed `human_handoff` reply; do not emit an
+empty safety prompt or silently acknowledge intake. This is defense in depth,
+not a replacement for the typed safety gate.
+
+## Safety boundaries
+
+- Replies must never diagnose, list possible diseases, recommend medication,
+  dosage, treatment, food/fluid administration, home monitoring, or a waiting
+  period.
+- Emergency copy must direct immediate off-bot professional contact; it must
+  not promise that clinic staff are currently available.
+- Human-handoff copy must not promise a response time.
+- Safety questions collect explicit yes/no facts only; they do not decide or
+  communicate a diagnosis.
+- The source basis remains the reviewed deterministic gate. Merck Veterinary
+  Manual lists breathing difficulty, ongoing seizures, loss of consciousness,
+  severe bleeding, trauma, poisoning, and blocked urine flow among problems
+  requiring immediate treatment:
+  https://www.merckvetmanual.com/special-pet-topics/emergencies/evaluation-and-initial-treatment-of-dog-and-cat-emergencies
+- These strings remain unapproved for production until clinic-veterinarian and
+  Turkish legal/privacy review. Passing Codex/Opus review is not veterinary
+  approval.
 
 ## Required tests
 
-Mock every external `fetch`; no test may call OpenAI, Supabase, or Cloudflare.
-Use compact/table-driven cases where practical. Cover at least:
+Use compact table-driven tests. Cover at least:
 
-- invalid body -> ack with zero network calls;
-- claim `completed`/`not_found` -> ack and `busy`/network/shape failure -> retry;
-- context missing/failure -> retry without OpenAI/finalization;
-- the SHA-256 safety identifier is stable, 64 lowercase hex characters,
-  differs for different owners, and contains none of the raw owner,
-  conversation, clinic, provider identifiers or owner name;
-- only the claimed message text reaches OpenAI; recent history and snapshot
-  text are not added to the provider input;
-- extraction failure/refusal -> retry without finalization;
-- normal, emergency, human-request, needs-safety-check, and terminal plans pass
-  the exact planner output into atomic finalization;
-- an inconsistent handoff safety decision is retried without finalization;
-- corrupt snapshot and missing-selected-pet planner failures use the fresh
-  poison fallback, set non-completed state to `human_handoff`, preserve pet by
-  passing null, and finalize rather than retry forever;
-- every finalization result maps to the exact disposition above;
-- no separate completion RPC, no in-process retry loop, and at most one OpenAI
-  call/finalization call per processing attempt;
-- Queue handler explicitly acks/retries each message exactly once and continues
-  after a per-message failure;
-- no log or returned/thrown value contains message text, IDs, clinical facts,
-  claim tokens, API/service-role secrets, or provider response bodies;
-- existing fetch/webhook producer behavior remains unchanged.
+- completed is always `none`, including planned emergency and failed results;
+- failed result routes to fixed human handoff;
+- emergency beats human request, unknown signals, pet clarification, and
+  missing complaint;
+- human handoff beats safety clarification, pet clarification, and complaint;
+- a human-handoff next stage routes to human handoff even with a continue
+  safety decision;
+- safety clarification beats pet/complaint questions and includes only the
+  unknown signals in the supplied canonical order;
+- every `SafetySignal` maps to the exact required Turkish question;
+- empty/invalid unknown-signal data fails closed to human handoff without
+  throwing;
+- pet clarification beats complaint;
+- missing complaint and zero symptoms asks for complaint;
+- a symptom with null complaint and a complaint with zero symptoms both reach
+  `intake_received` when earlier rules do not apply;
+- appointment/triage stages do not claim that an appointment was created or
+  that triage was performed;
+- exact copy, immutability/fresh results, determinism, no logging, and absence
+  of dynamic sensitive values;
+- existing tests remain unchanged and passing.
 
-Tests may verify call order through mocked endpoint URLs and request bodies;
-do not refactor the existing clients solely to make them injectable.
+Do not add broad snapshot tests for the whole source file. Assert the public
+result and exact safety text directly.
 
-## Documentation requirements
+## Documentation
 
-Update `docs/inbound-queue.md` with:
+Create `docs/intake-replies.md` describing:
 
-- the end-to-end consumer order and closed ack/retry table;
-- the hashed owner safety identifier and data-minimization boundary;
-- poison snapshot -> atomic handoff behavior;
-- explicit per-message acknowledgement and the 120-second/3-retry/DLQ policy;
-- the fact that LLM work may repeat but state finalization remains atomic;
-- explicit limits: no outbound response, triage, appointment mutation, Queue
-  creation, deployment, production credentials, or production approval.
-
-Reference the official behavior used by this contract:
-
-- Cloudflare explicit acknowledgements/retries:
-  https://developers.cloudflare.com/queues/configuration/batching-retries/
-- Cloudflare dead-letter queues:
-  https://developers.cloudflare.com/queues/configuration/dead-letter-queues/
-- OpenAI safety identifiers:
-  https://platform.openai.com/docs/api-reference/responses
+- closed reply categories and precedence;
+- why fixed deterministic copy is used for MVP;
+- safety and privacy boundaries;
+- terminal `none` and poison-handoff behavior;
+- that no reply is persisted, queued, generated by an LLM, or sent yet;
+- that atomic outbox persistence is required before runtime wiring;
+- the required clinic-veterinarian and Turkish legal/privacy approval gate.
 
 ## Verification
 
@@ -237,134 +224,22 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-The dry-run must show both the existing producer binding and the new consumer
-configuration without creating resources.
-
-Do not commit, push, deploy, create a Queue/DLQ, call a real LLM, mutate
-Supabase, install a plugin/MCP integration, or touch another external service.
+Do not commit, push, deploy, create external resources, call a real LLM/API,
+mutate Supabase, install a plugin/MCP integration, or touch another service.
 
 ## Review gate
 
-After Sonnet delivers, Codex reviews the full orchestration, ack/retry map,
-privacy boundary, poison handoff, tests, and dry-run output, then applies only
-targeted fixes and commits if all checks pass. Claude Opus is not mandatory for
-this task unless Codex finds a new unresolved safety, privacy, tenant, or
-concurrency decision outside the reviewed contracts.
+After Sonnet delivers, Codex reviews the precedence, exact copy, privacy
+boundary, exhaustiveness, and tests, applies only targeted fixes, and reruns
+all checks. Because this task introduces user-facing emergency wording, Claude
+Opus then performs one read-only safety review. No implementation proceeds to
+outbox/runtime wiring until both reviews pass. Clinic-veterinarian approval is
+still required before production regardless of either AI review.
 
 ## Observed context — Sonnet fills before coding
 
-- Starting HEAD: `7ebb5ab` on `main` (task states `a493c1a`; `git diff --stat
-  a493c1a 7ebb5ab -- . ':!CURRENT_TASK.md'` is empty, so the only difference
-  is this task-definition commit itself). Worktree was clean.
-- Initial worktree state: clean, matching the stated baseline.
-- Relevant code/tests/config evidence: `src/intakeQueue.ts`
-  (`parseIntakeQueueMessage`, `enqueueIntakeJob`), `src/intakeJobLease.ts`
-  (`claimIntakeQueueJob`, `finalizeIntakeQueueJob`, `FinalizeIntakeQueueJobInput`),
-  `src/conversationState.ts` (`getConversationIntakeContext`,
-  `ConversationIntakeContext`, `IntakeStage`), `src/openaiIntake.ts`
-  (`extractIntakeViaOpenAi`), `src/intakeTurn.ts` (`planIntakeTurn`,
-  `PersistedIntakeData`, `PlanResult`), `src/safetyDecision.ts`
-  (`SafetyDecision`), `src/intakeExtraction.ts` (`IntakeExtraction`),
-  `src/env.ts`, `src/index.ts`, `wrangler.toml`, `docs/inbound-queue.md`,
-  and existing test conventions in `test/intakeJobLease.test.ts` and
-  `test/index.test.ts` (mocked-fetch routing by RPC/endpoint URL, `stubQueue`
-  helper, `Env` fixture shape).
-- Planned files: new `src/intakeConsumer.ts` and `test/intakeConsumer.test.ts`;
-  additive edits to `src/index.ts` (Queue handler + import), `wrangler.toml`
-  (one consumer block), `test/index.test.ts` (Queue-handler tests + fixtures),
-  and `docs/inbound-queue.md` (consumer documentation).
-- Conflicts or blockers: none. All referenced primitives' exported signatures
-  matched the task's "Starting context" claims exactly.
+Pending.
 
 ## Delivery record — Sonnet fills after coding
 
-- Changed files: `src/intakeConsumer.ts` (new), `test/intakeConsumer.test.ts`
-  (new), `src/index.ts` (added `queue()` handler + import), `wrangler.toml`
-  (added `[[queues.consumers]]` block), `test/index.test.ts` (added Queue
-  handler tests + `fakeMessage`/`fakeBatch` helpers + import), `docs/inbound-queue.md`
-  (documented the consumer), `CURRENT_TASK.md` (this section).
-- Acceptance criteria satisfied: exact processing order (parse -> claim ->
-  context -> hashed safety identifier -> extract -> plan -> atomic finalize);
-  every disposition mapping in the contract; independent `safetyDecision`
-  consistency check (retries on mismatch) rather than inferring from
-  `nextStage`; terminal `completed` stage kept terminal with only a generic
-  `terminal_safety_signal` warning; poison-snapshot/missing-pet planner
-  failures replaced with a fresh `schema_version: 1` snapshot, `petId: null`,
-  `human_handoff` unless already `completed`, finalized (not retried forever)
-  with only a generic `poison_intake_state` warning; no separate
-  `completeIntakeQueueJob` call; at most one OpenAI call and one finalize
-  call per attempt; Queue handler acks/retries each message exactly once and
-  a rejected per-message processor call doesn't block sibling messages'
-  disposition; `wrangler.toml` consumer block matches the contract exactly
-  (`max_batch_size = 1`, `max_batch_timeout = 5`, `max_retries = 3`,
-  `retry_delay = 120`, `dead_letter_queue = "vetai-intake-dlq"`).
-- Commands and exact results:
-  - `pnpm install --frozen-lockfile` — `Already up to date. Done in 598ms
-    using pnpm v11.9.0`.
-  - `pnpm typecheck` (`tsc --noEmit`) — passed, zero errors.
-  - `pnpm test` — passed, 413/413 (386 prior + 27 new: 25 in
-    `intakeConsumer.test.ts`, 2 Queue-handler tests in `index.test.ts`).
-  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — exit
-    0. Bindings table lists `env.INTAKE_QUEUE (vetai-intake)` and
-    `env.APP_TIMEZONE`, unchanged from before. Wrangler's dry-run bindings
-    table only reflects `env`-accessible bindings; queue consumers have no
-    `env` binding and are not listed there, so the consumer block's presence
-    is confirmed by the dry-run succeeding (exit 0, no config error) with
-    the new `[[queues.consumers]]` block in `wrangler.toml`, not by a table
-    row. Flagging this for Codex to double-check independently.
-  - `git diff --check` — required `git -c safe.directory='*'` because the
-    repository's `.git` is owned by a different local Windows account than
-    the one running this shell (`dubious ownership` error otherwise); this
-    was a per-invocation flag, not a persisted global config change. Result:
-    only benign LF/CRLF autocrlf notices for `src/index.ts`,
-    `test/index.test.ts`, `wrangler.toml`; no conflict markers or
-    whitespace errors.
-- Checks not run and why: no real Supabase/OpenAI/Cloudflare Queue call was
-  made anywhere (all tests mock `fetch`/`Queue`), per the task's explicit
-  scope; no Queue/DLQ resource was created and nothing was deployed.
-- Known limitations: the inconsistent-handoff-safety-decision test and the
-  Queue-handler's own per-message-exception test both use `vi.spyOn` to
-  override `planIntakeTurn` / `processIntakeQueueMessage` respectively,
-  since the real deterministic planner and the real happy-path processor
-  cannot organically produce those specific defensive/failure conditions;
-  every other required test scenario drives the real exported functions
-  through mocked `fetch` only. The `intakeData` value is passed to
-  `finalizeIntakeQueueJob` via `as unknown as Record<string, unknown>` at
-  the call site in `src/intakeConsumer.ts`, matching the existing cast
-  pattern already used for the same interface-to-index-signature gap in
-  `test/intakeTurn.test.ts`; `PersistedIntakeData` itself was not modified
-  (out of this task's allowed-changes scope).
-- Risks for Codex review: (1) the `isHandoffConsistent` guard in
-  `src/intakeConsumer.ts` is currently unreachable via the real
-  `planIntakeTurn` (it is deterministic and already enforces this
-  invariant) — confirm this is acceptable as defense-in-depth against a
-  future planner regression rather than dead code to remove; (2) confirm
-  the wrangler dry-run's bindings-table omission of consumer config is
-  expected Wrangler behavior and not a sign the consumer block was
-  misconfigured or ignored; (3) confirm the `safe.directory` override used
-  only for local verification commands needs no repository-side action.
-
-## Codex review record
-
-- Decision: `PASS` on 2026-08-09. No implementation fix was required.
-- Scope matched the contract exactly. The Queue consumer reuses the reviewed
-  parser, lease, context, extraction, planner, and atomic-finalization
-  boundaries; it does not add a second completion call, in-process retries,
-  outbound messaging, database changes, or external-resource mutation.
-- The complete disposition map, per-message acknowledgement behavior, poison
-  snapshot handoff, privacy-preserving safety identifier, generic-only warning
-  paths, and rejection containment were reviewed against the call graph and
-  tests. The extra handoff-consistency check is accepted as a small fail-closed
-  regression guard around the deterministic planner.
-- Wrangler accepted the consumer configuration in a dry-run. Consumer triggers
-  are configuration, not `env` bindings, so their absence from the binding
-  table is expected; the bundled Worker contains the `queue` handler.
-- Codex independently reran the frozen install, strict typecheck, all 413 tests,
-  and Wrangler dry-run successfully. `git diff --check` passed with only local
-  LF/CRLF notices. Focused scans found no NUL bytes, embedded credentials,
-  sensitive consumer logging, `waitUntil`, or separate completion call.
-- No live OpenAI, Supabase, WhatsApp, or Cloudflare Queue request was made; no
-  Queue/DLQ was created and nothing was deployed or pushed.
-- Claude Opus review was not required: no new unresolved safety, privacy,
-  tenant-isolation, or concurrency decision was introduced beyond the already
-  reviewed contracts.
+Pending.
