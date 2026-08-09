@@ -51,9 +51,10 @@ Defined in `supabase/migrations/20260806000000_core_tenant_schema.sql`.
   (clinic_id, source_provider_message_id)` caps it at one planned reply per
   inbound event. All three parent relationships cascade deletion so a pending
   reply—and its copied recipient phone—cannot block owner/clinic erasure or
-  survive deletion of its account/source event. Task 018 owns claiming,
-  sending, and recording delivery outcome; this table has no delivery state,
-  lease, or attempt count.
+  survive deletion of its account/source event. `delivery_status`, lease,
+  attempt-count, and outcome columns added by
+  `supabase/migrations/20260809000200_outbound_delivery.sql` are described
+  in [`docs/outbound-delivery.md`](outbound-delivery.md).
 
 ## Tenant isolation
 
@@ -365,10 +366,20 @@ This closes the double-advance window for one persisted message and, when a
 reply is planned, the lost/duplicate-reply window between state advance and
 outbox persistence. It does not cover LLM work repeating after a lease
 expiry/reclaim, or the actual WhatsApp send and its own retry/delivery
-tracking — Task 018 owns claiming and sending rows from
-`outbound_message_outbox`. `src/intakeJobLease.ts` exposes a native-`fetch`
-`finalizeIntakeQueueJob` Worker helper following the same transport and
-untrusted-response rules as the other functions on this page. It is wired
-into `src/intakeConsumer.ts`, which calls `planIntakeReply` and forwards its
-result as the reply pair; no code sends a WhatsApp message or reads from the
-outbox yet.
+tracking — see [`docs/outbound-delivery.md`](outbound-delivery.md) for the
+claim/send/accept pipeline that now owns those rows. `src/intakeJobLease.ts`
+exposes a native-`fetch` `finalizeIntakeQueueJob` Worker helper following the
+same transport and untrusted-response rules as the other functions on this
+page. It is wired into `src/intakeConsumer.ts`, which calls `planIntakeReply`
+and forwards its result as the reply pair.
+
+## Outbound WhatsApp delivery
+
+Defined in `supabase/migrations/20260809000200_outbound_delivery.sql`.
+Disposable validation passed on `vetai-test` on 2026-08-09: the migration
+applied successfully and `supabase/tests/018_outbound_delivery.sql` returned
+`PASS` with zero fixture residue. Production still requires the managed
+migration workflow. See
+[`docs/outbound-delivery.md`](outbound-delivery.md) for the full four-state
+lifecycle, the three claim/release/accept RPCs, exact-account routing, the
+at-least-once delivery guarantee, and Cron cadence.

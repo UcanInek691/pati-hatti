@@ -89,8 +89,8 @@ row into `outbound_message_outbox` in the same transaction as the
 conversation-state advance and lease completion (see
 `docs/database-schema.md`'s "Atomic intake finalization" section) — closing
 the lost/duplicate-message window that direct sending from the Queue consumer
-would have created. No code yet reads from that outbox or sends a WhatsApp
-message; Task 018 owns claiming and sending those rows.
+would have created. Claiming, sending, and delivery-outcome tracking for
+those rows is described in [`docs/outbound-delivery.md`](outbound-delivery.md).
 
 ## Required approval gate
 

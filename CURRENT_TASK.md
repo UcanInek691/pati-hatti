@@ -1,6 +1,6 @@
 # Current task — 018 send pending WhatsApp replies from the outbox
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -410,8 +410,217 @@ this do not automatically require three-agent review.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- HEAD at task start: `d6b35e3` ("docs: define outbound WhatsApp delivery
+  task"), working tree clean. `outbound_message_outbox` (from
+  `supabase/migrations/20260809000100_intake_reply_outbox.sql`) exists with
+  `clinic_id`, `conversation_id`, `whatsapp_account_id`, `recipient_e164`,
+  `content`, `source_provider_message_id`, `created_at` and no delivery
+  state/lease/attempt columns yet — confirmed by reading the migration and
+  `docs/database-schema.md`'s "outbound_message_outbox" bullet before adding
+  this task's columns.
+- `src/intakeJobLease.ts` (216 lines) is the direct style template for the
+  new Data API client: `buildEndpoint`, `callRpc`, `asPlainRecord`,
+  `isCodePointLengthInRange`, `UUID_PATTERN`, `isLoopbackHttpUrl`, and its
+  fail-closed-on-blank-config/HTTPS-or-loopback transport rules. Its private
+  helpers are not exported, so `src/outboundDelivery.ts` duplicates them
+  rather than importing, matching the contract's explicit instruction.
+- `src/env.ts`'s `Env` interface had no WhatsApp-send fields; six existing
+  test files construct their own `Env` fixture object (`conversationState`,
+  `index`, `intakeConsumer`, `intakeJobLease`, `openaiIntake`,
+  `supabaseIngest`), each needing the same two new fields added.
+- `wrangler.toml` had no `[triggers]` block and no `WHATSAPP_GRAPH_API_VERSION`
+  var; `.dev.vars.example` had no `WHATSAPP_ACCESS_TOKEN` placeholder.
+- `src/index.ts`'s default export had `fetch()` and `queue()` only, no
+  `scheduled()`; `test/index.test.ts` (370 lines) has three existing
+  `describe` blocks (`"worker fetch routing"`, `"worker whatsapp
+  persistence"`, `"worker queue handler"`) that the contract requires stay
+  unchanged, plus a shared `env` fixture and `stubQueue` helper reused as-is.
+- `tsconfig.json` has `strict: true` and `noUncheckedIndexedAccess: true` but
+  no `noUnusedLocals`/`noUnusedParameters`, so exported-but-not-yet-consumed
+  constants (`MAX_OUTBOUND_DELIVERY_ATTEMPTS`, etc.) do not fail `tsc
+  --noEmit`.
+- `supabase/migrations/20260808000100_intake_job_lease.sql`'s
+  `claim_intake_queue_job` closed result set (`claimed | not_found |
+  completed | busy`) contains no literal `"failed"`, confirming the client
+  convention of naming a generic transport-failure sentinel `"failed"` is
+  collision-free everywhere except `release_outbound_message`, whose own
+  closed result set already includes a legitimate terminal `"failed"`.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+Changed/added files (all within the contract's allowed-changes list):
+
+- `supabase/migrations/20260809000200_outbound_delivery.sql` (new) — delivery
+  state columns, state `CHECK`, claim index, and the three
+  claim/release/accept RPCs described in `docs/outbound-delivery.md`.
+- `supabase/tests/018_outbound_delivery.sql` (new) — rollback-only fixture,
+  10 `do $$ ... $$` blocks covering backfill/due-state, oldest-due claim,
+  live-lease non-reclaim, expired-lease reclaim, wrong/stale token rejection,
+  2-minute retry, terminal failure at attempt 3, exhausted-processing
+  cleanup, atomic accept + exact replay + different-provider/history-collision
+  raises, cross-clinic isolation, direct `CHECK` violation, anon/authenticated
+  privilege denial, and parent-erasure cascade preservation. Ends with
+  `rollback;` and a `'PASS'` residue-count query.
+- `src/outboundDelivery.ts` + `test/outboundDelivery.test.ts` (new) — typed
+  claim/release/accept client.
+- `src/whatsappSend.ts` + `test/whatsappSend.test.ts` (new) — native-`fetch`
+  Meta text-message sender.
+- `src/outboundSender.ts` + `test/outboundSender.test.ts` (new) — bounded
+  10-row claim/send/accept-or-release drain loop.
+- `src/index.ts` + `test/index.test.ts` — added `scheduled()` calling
+  `drainOutboundMessages` via `ctx.waitUntil`; existing `fetch()`/`queue()`
+  code and their three `describe` blocks are unchanged; added one
+  `describe("worker scheduled handler", ...)` block (registers-with-waitUntil
+  test, thrown/rejected-drain-is-contained test).
+- `src/env.ts`, `.dev.vars.example`, `wrangler.toml`, and the six existing
+  Env-fixture test files — added `WHATSAPP_ACCESS_TOKEN` (secret) and
+  `WHATSAPP_GRAPH_API_VERSION` (non-secret, `v25.0`), and one
+  `[triggers] crons = ["* * * * *"]` block.
+- `docs/outbound-delivery.md` (new) — full lifecycle, RPCs, routing/PII
+  boundary, at-least-once rationale, Cron cadence, config, "not applied"
+  status, out-of-scope list, and the five required official references.
+- `docs/database-schema.md`, `docs/intake-replies.md` — narrow updates
+  replacing the old "Task 018 owns claiming..." sentences with cross-links to
+  `docs/outbound-delivery.md`, plus a new "Outbound WhatsApp delivery"
+  section in `docs/database-schema.md`.
+- `CURRENT_TASK.md` — this Observed context and Delivery record.
+- README — not changed; it does not document the Queue consumer or any other
+  prior backend pipeline either, so there was no established section to
+  extend.
+
+Verification run (none touched a database):
+
+- `pnpm install --frozen-lockfile` — pass, already up to date.
+- `pnpm typecheck` (`tsc --noEmit`) — pass, no errors.
+- `pnpm test` (`vitest run`) — pass, 564/564 across all test files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  Total Upload 60.54 KiB / gzip 14.19 KiB; bindings listed: `INTAKE_QUEUE`
+  Queue, `APP_TIMEZONE` env var, `WHATSAPP_GRAPH_API_VERSION` env var.
+- `git diff --check` — pass; only Git's existing LF/CRLF notices, no real
+  trailing-whitespace/tab/blank-line errors.
+- Applying `supabase/migrations/20260809000200_outbound_delivery.sql` to any
+  database — **NOT RUN**. Per this delivery's explicit instruction and
+  `AGENTS.md`, Sonnet has no disposable database access in this role; Codex
+  applies it to `vetai-test` after review.
+- Running `supabase/tests/018_outbound_delivery.sql` — **NOT RUN**, same
+  reason; Codex runs it against `vetai-test` after review and records the
+  result.
+
+Self-caught issues (fixed before delivery, no DB involved):
+
+- First draft of `src/outboundDelivery.ts` used loose length-only bounds
+  (`phone_number_id` 1-256 chars with no numeric-format check,
+  `recipient_e164` 1-32 chars with no E.164-format check, `content` 1-65536)
+  instead of the contract's exact numeric `phone_number_id` (1-64),
+  strict E.164 `recipient_e164`, and 1-4096 `content`. Caught by re-reading
+  the full contract text; fixed with `PHONE_NUMBER_ID_PATTERN`/`E164_PATTERN`
+  regexes and updated bounds, propagated into
+  `test/outboundDelivery.test.ts`'s fixtures/cases before `src/whatsappSend.ts`
+  was written (which used the corrected bounds from the start).
+- `release_outbound_message`'s real closed result set already includes a
+  literal `"failed"` (terminal attempt exhaustion), unlike every other RPC in
+  this codebase, where the client's own generic transport-failure sentinel is
+  always named `"failed"` and never collides. Named the release-only
+  client-failure sentinel `"call_failed"` instead, documented inline in
+  `src/outboundDelivery.ts`, and branched `src/outboundSender.ts`'s stop/continue
+  logic on it accordingly so the contract's "stop on release transport
+  failed" rule is not conflated with the RPC's own legitimate terminal
+  `"failed"` outcome.
+
+Known limitations documented in `docs/outbound-delivery.md` rather than
+claimed as proven: the rollback-only SQL fixture runs in a single session and
+cannot prove true two-connection lock contention, a mid-send Worker crash, or
+real Meta behavior; delivery is at-least-once, so a lost acceptance response
+after a genuine Meta accept can produce a rare duplicate WhatsApp send; a
+terminally `failed` row has no staff-facing owner or alert yet.
+
+Not done, by contract: no commit, push, deploy, real Meta/LLM/Supabase call,
+Cloudflare resource creation, plugin install, or database mutation of any
+kind.
+
+## Codex review record — 2026-08-09
+
+Decision: `PASS` pending the mandatory read-only Claude Opus architecture/RLS
+review.
+
+Targeted fixes made during review:
+
+- Reworked `claim_outbound_message()` to select the oldest due pending or
+  expired processing row in one locked query. An expired third-attempt row can
+  no longer starve indefinitely behind a continuous pending backlog; it is
+  returned as `exhausted` and marked terminal before newer work.
+- Repaired the rollback fixture's shared-transaction isolation by deleting the
+  first pending probe before later oldest-due claims.
+- Preserved the first lease token before reclaim so the test now compares old
+  and new tokens rather than comparing the current token with itself.
+- Removed an accept-on-failed assertion block that always re-raised its own
+  sentinel exception; the following direct closed-result assertion remains the
+  authoritative stale-path proof.
+- Replaced a false-positive different-provider replay assertion with an
+  explicit rejection flag.
+- Replaced four non-hex payload-hash fixture characters found by the first real
+  database run.
+
+Codex local verification after fixes:
+
+- `pnpm install --frozen-lockfile` — pass, already up to date.
+- `pnpm typecheck` — pass, no errors.
+- `pnpm test` — pass, 564/564 across 19 files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  60.54 KiB / gzip 14.19 KiB, existing Queue plus timezone/Graph-version
+  bindings, no deployment.
+- `git diff --check` — pass; only existing LF/CRLF notices.
+
+Disposable database validation (`vetai-test` only):
+
+- Applied `supabase/migrations/20260809000200_outbound_delivery.sql` from a
+  fresh SQL Editor selection: success, no rows returned.
+- The first rollback-fixture run correctly aborted on the invalid non-hex test
+  hash; because the script begins a transaction, no fixture data survived.
+- After correcting all invalid hash fixtures, ran
+  `supabase/tests/018_outbound_delivery.sql`: `PASS`, with zero remaining test
+  clinics, accounts, outbox rows, messages, conversations, and owners.
+- Final read-only catalog verification returned: nine delivery columns, RLS
+  enabled, zero policies, one claimant index, all three RPCs present,
+  `service_role` execution true, `anon`/`authenticated` execution false,
+  `SKIP LOCKED` present, and zero outbox rows.
+
+Not run: a true two-session lock-contention schedule, a real Worker crash, a
+real Meta request, resource creation, deployment, push, or production
+configuration. External delivery remains explicitly at-least-once.
+
+## Claude Opus review record — 2026-08-09
+
+Initial decision: `CHANGES_REQUIRED` for two runtime-boundary issues; the
+database, tenant/RLS, lease/token, erasure, and bounded-drain design otherwise
+passed.
+
+Targeted remediation:
+
+- The Meta adapter now accepts additive enumerable fields beside
+  `messages[0].id`, while continuing to reject non-plain message objects,
+  hidden/symbol fields, missing/multiple message entries, and invalid IDs.
+  This prevents a valid Meta acceptance from being retried solely because the
+  provider extended its response shape.
+- Every Meta send now uses `AbortSignal.timeout(30_000)`. Timeout rejection is
+  contained by the existing generic `failed` path and therefore follows the
+  bounded database retry policy without exposing provider data.
+- Tests now prove both the 30-second signal and additive-field acceptance;
+  the hidden-field and non-plain-object rejection regression remains.
+- The SQL replay comment now records that a different provider ID may reflect
+  either an ambiguous at-least-once duplicate race or corrupted history.
+
+Post-remediation verification:
+
+- `pnpm install --frozen-lockfile` — pass, already up to date.
+- `pnpm typecheck` — pass, no errors.
+- Targeted `test/whatsappSend.test.ts` — pass, 32/32.
+- `pnpm test` — pass, 564/564 across 19 files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  60.70 KiB / gzip 14.25 KiB, no deployment.
+- `git diff --check` — pass; only existing LF/CRLF notices.
+
+Final Opus re-review: `PASS`. Opus independently reran typecheck, the targeted
+32-test adapter suite, all 564 tests, Worker dry-run, and diff check. The two
+blocking findings are closed and Task 018 is approved for commit. No push,
+deployment, resource creation, or real Meta call occurred.

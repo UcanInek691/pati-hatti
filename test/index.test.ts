@@ -5,6 +5,7 @@ import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { MAX_BODY_BYTES } from "../src/webhookSignature";
 import { signHmacSha256 } from "./signHelper";
 import * as intakeConsumer from "../src/intakeConsumer";
+import * as outboundSender from "../src/outboundSender";
 
 const APP_SECRET = "test-app-secret";
 const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
@@ -21,6 +22,8 @@ const env: Env = {
   SUPABASE_SERVICE_ROLE_KEY: "unused",
   OPENAI_API_KEY: "unused",
   INTAKE_QUEUE: stubQueue(),
+  WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",
+  WHATSAPP_GRAPH_API_VERSION: "v25.0",
 };
 
 async function signedPost(body: string, extraHeaders: Record<string, string> = {}): Promise<Request> {
@@ -363,5 +366,35 @@ describe("worker queue handler", () => {
     expect(failing.ack).not.toHaveBeenCalled();
     expect(succeeding.ack).toHaveBeenCalledTimes(1);
     expect(succeeding.retry).not.toHaveBeenCalled();
+  });
+});
+
+function fakeExecutionContext(): ExecutionContext {
+  return { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
+}
+
+describe("worker scheduled handler", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("registers the outbound drain with waitUntil", async () => {
+    const drainSpy = vi.spyOn(outboundSender, "drainOutboundMessages").mockResolvedValue(undefined);
+    const ctx = fakeExecutionContext();
+
+    await worker.scheduled!({} as ScheduledController, env, ctx);
+
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+    expect(drainSpy).toHaveBeenCalledWith(env);
+  });
+
+  it("contains an unexpected throw from the drain instead of letting it escape", async () => {
+    vi.spyOn(outboundSender, "drainOutboundMessages").mockRejectedValue(new Error("boom"));
+    const ctx = fakeExecutionContext();
+
+    await worker.scheduled!({} as ScheduledController, env, ctx);
+
+    const [waited] = (ctx.waitUntil as ReturnType<typeof vi.fn>).mock.calls[0] as [Promise<unknown>];
+    await expect(waited).resolves.toBeUndefined();
   });
 });

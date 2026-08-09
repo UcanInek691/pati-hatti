@@ -8,4 +8,6 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENAI_API_KEY: string;
   INTAKE_QUEUE: Queue<IntakeQueueMessage>;
+  WHATSAPP_ACCESS_TOKEN: string;
+  WHATSAPP_GRAPH_API_VERSION: string;
 }

@@ -6,6 +6,7 @@ import { extractTextMessages } from "./whatsappIngest";
 import { ingestWhatsAppTextMessage } from "./supabaseIngest";
 import { enqueueIntakeJob } from "./intakeQueue";
 import { processIntakeQueueMessage } from "./intakeConsumer";
+import { drainOutboundMessages } from "./outboundSender";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -118,5 +119,9 @@ export default {
         message.retry();
       }
     }
+  },
+
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(drainOutboundMessages(env).catch(() => {}));
   },
 };

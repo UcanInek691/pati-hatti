@@ -149,6 +149,24 @@ The secure Worker baseline is committed on `main`:
   migration and rollback test passed on disposable `vetai-test`, including
   exact-account isolation, atomic rollback, RLS/grants, erasure cascades, old
   seven-argument finalizer compatibility, and zero fixture residue.
+- A service-role-only outbound delivery protocol now claims the oldest due
+  outbox row under a five-minute lease, routes it through the exact inbound
+  WhatsApp account, retries at most three times with a two-minute delay, and
+  atomically records Meta acceptance plus one outbound conversation-history
+  row. Expired third-attempt work is terminally exhausted instead of starving.
+- A UTC one-minute scheduled Worker drains at most ten rows globally per run.
+  Meta sends use native fetch, validated fixed text requests, a 30-second
+  timeout, and additive-response-field tolerance around a strict provider ID.
+  Delivery remains explicitly at-least-once: an acceptance lost before the
+  database commit may produce a duplicate send, and HTTP acceptance is not
+  delivered/read proof.
+- Task 018's migration and rollback fixture passed on disposable `vetai-test`,
+  including tenant/account routing, leases/tokens, bounded retry/exhaustion,
+  atomic accept/replay/collision handling, privileges/RLS, erasure cascades,
+  and zero fixture residue. Frozen install, typecheck, 564/564 tests, Worker
+  dry-run, Codex review, and final Claude Opus review passed. No real Meta
+  request, deployment, Cron resource creation, or production configuration
+  occurred.
 
 Verified evidence before the context-system change:
 
@@ -164,8 +182,8 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Outbox claiming, WhatsApp delivery, provider-result persistence, and retry
-  handling for pending outbound replies.
+- Outbound delivered/read/failed status-webhook persistence and operational
+  monitoring for terminal delivery failures.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
@@ -182,11 +200,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 017 now persists one reviewed deterministic reply atomically with intake
-state/lease finalization. The next phase is Task 018: define a bounded,
-idempotent outbox claim/send/completion protocol and delivered-message history
-before any WhatsApp call is enabled. No Queue or DLQ resource has been created
-and production deployment remains out of scope.
+Task 018 now implements the reviewed, bounded outbound claim/send/accept-or-
+retry path in code. The next phase is Task 019: persist Meta outbound message
+status callbacks and define operational visibility for delivery failures
+without treating accepted as delivered. No Cron, Queue, or DLQ resource has
+been created and production deployment remains out of scope.
 
 ## Durable safety invariants
 
@@ -217,6 +235,15 @@ and production deployment remains out of scope.
   owner/account/source erasure. Future webhook-event retention must not prune
   a source event while its reply is still pending, or the cascade would
   intentionally discard that unsent reply.
+- Accepted outbox rows still retain recipient phone and fixed reply content.
+  Future retention must never prune `pending` or `processing` rows, must keep
+  erasure cascades intact, and should minimize accepted-row retention without
+  deleting the authoritative outbound history needed by product policy.
+- An exact accepted replay is resolved before claim-token comparison and
+  returns `already_accepted`; this is intentional idempotency, not current-
+  lease authorization. Different provider IDs still raise.
+- The scheduled sender's ten-row cap is global rather than per clinic; future
+  fairness or backlog controls must treat that as an operational constraint.
 - Deterministic fail-closed consumer errors can exhaust the configured three
   attempts. A real DLQ resource, monitoring path, and operational owner are a
   production blocker even though no such resource is created in this repo yet.

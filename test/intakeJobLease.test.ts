@@ -13,6 +13,8 @@ const env: Env = {
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
   OPENAI_API_KEY: "unused",
   INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
+  WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",
+  WHATSAPP_GRAPH_API_VERSION: "v25.0",
 };
 
 const conversationId = "11111111-1111-1111-1111-111111111111";

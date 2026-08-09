@@ -4,6 +4,7 @@ compatibility_date = "2025-01-01"
 
 [vars]
 APP_TIMEZONE = "Europe/Istanbul"
+WHATSAPP_GRAPH_API_VERSION = "v25.0"
 
 [[queues.producers]]
 queue = "vetai-intake"
@@ -16,3 +17,6 @@ max_batch_timeout = 5
 max_retries = 3
 retry_delay = 120
 dead_letter_queue = "vetai-intake-dlq"
+
+[triggers]
+crons = ["* * * * *"]
