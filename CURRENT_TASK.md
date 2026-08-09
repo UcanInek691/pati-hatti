@@ -1,6 +1,6 @@
 # Current task — 019 persist outbound WhatsApp status callbacks
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -27,7 +27,9 @@ appointments, deploy, create resources, or configure real secrets.
 
 ## Starting context
 
-- Starting HEAD: `26f1b25` on `main`; worktree is clean.
+- Implementation starting HEAD: `0f75a41` on `main`; worktree was clean.
+  `26f1b25` is the Task 018 product-code baseline immediately before the
+  separate Task 019 contract commit.
 - Task 018 is committed. A scheduled Worker claims at most ten globally due
   outbox rows per run, sends through the exact account, and atomically records
   Meta acceptance plus one outbound `messages` row.
@@ -323,8 +325,203 @@ new critical architecture, RLS, PII, or external-side-effect ambiguity remains.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- Starting HEAD confirmed at `0f75a41` on `main`, worktree clean. The original
+  `26f1b25` value was the Task 018 product-code baseline before Codex's
+  separate Task 019 contract commit.
+- `supabase/migrations/20260809000200_outbound_delivery.sql` (Task 018, read
+  in full) confirms: `outbound_message_outbox` has `delivery_status text not
+  null default 'pending'` (`pending|processing|accepted|failed`),
+  `provider_message_id text` (1-512 chars), `accepted_at timestamptz`, and a
+  named CHECK (`outbound_message_outbox_delivery_state_check`) that only
+  allows `provider_message_id`/`accepted_at` to be non-null when
+  `delivery_status = 'accepted'`. This makes it structurally impossible for a
+  non-accepted row to ever carry a provider message ID, which the new RPC's
+  `not_found` path and the SQL fixture's non-accepted-row case both rely on.
+- `whatsapp_accounts (id, clinic_id)` is unique (Task 017), so the new RPC can
+  join an accepted outbox row to its own tenant-scoped account without ever
+  trusting a caller-supplied clinic or outbox UUID.
+- `claim_outbound_message()`, `release_outbound_message()`, and
+  `accept_outbound_message()` are all `SECURITY INVOKER`, `VOLATILE`, empty
+  `search_path`, revoked from `PUBLIC`/`anon`/`authenticated`, granted to
+  `service_role` only — the new RPC follows the identical privilege shape.
+- `src/whatsappSend.ts` wraps its entire untrusted-response validation block
+  in `try { ... } catch { return FAILED; }` specifically to fail closed
+  against a throwing property getter on provider data; `src/whatsappStatus.ts`
+  mirrors this around its whole extraction loop.
+- `src/whatsappIngest.ts`'s `extractTextMessages` skips a non-object item in
+  its message array rather than rejecting the whole webhook; confirmed via a
+  failing test that `src/whatsappStatus.ts` must follow the same precedent
+  for a non-object `statuses[]` item (only a supported-but-malformed status
+  item rejects the whole webhook).
+- `src/intakeJobLease.ts` / `src/outboundDelivery.ts` establish the Data API
+  transport pattern this task's `src/supabaseOutboundStatus.ts` duplicates
+  per the contract: HTTPS-or-loopback-only fail-closed config validation,
+  exact one-row response-shape validation, no shared/refactored private
+  helpers, no `AbortSignal.timeout` (none of the internal Supabase helpers use
+  a fetch timeout; only the external Meta call in `whatsappSend.ts` does, for
+  a lease-overrun reason not applicable here).
+- `supabase/tests/018_outbound_delivery.sql` (read in full) is the direct
+  structural template for `019_outbound_status_tracking.sql`: `begin`/
+  `rollback` wrapper, `pg_temp` fixture helpers, numbered `do $$ ... $$;`
+  blocks with `raise exception` assertions, `set local role
+  service_role/anon/authenticated` blocks for real-role privilege proof, and
+  a final zero-residue `select 'PASS' ...` query after `rollback;`.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+### Changed/new files
+
+- `supabase/migrations/20260809000300_outbound_status_tracking.sql` (new) —
+  adds `provider_delivery_status text` and `provider_status_at timestamptz`
+  (both nullable) to `outbound_message_outbox`, a named CHECK enforcing
+  "both null, or `delivery_status = 'accepted'` and a closed status value and
+  a non-null timestamp," a partial index, and
+  `public.record_whatsapp_outbound_status(p_phone_number_id,
+  p_provider_message_id, p_recipient_e164, p_provider_status,
+  p_provider_timestamp)` implementing the rank/timestamp state machine.
+  `SECURITY INVOKER`, `VOLATILE`, empty `search_path`, `service_role`-only.
+  **NOT APPLIED to any database.**
+- `supabase/tests/019_outbound_status_tracking.sql` (new) — rollback-only
+  fixture covering every case in "Required rollback SQL test" below.
+  **NOT RUN against any database.**
+- `src/whatsappStatus.ts` (new) — `extractOutboundStatuses`, the pure status
+  extractor.
+- `test/whatsappStatus.test.ts` (new) — 36 tests.
+- `src/supabaseOutboundStatus.ts` (new) — `recordWhatsAppOutboundStatus`, the
+  native-fetch RPC client.
+- `test/supabaseOutboundStatus.test.ts` (new) — 22 tests.
+- `src/index.ts` (edited) — the signed POST handler now extracts statuses and
+  inbound text before any mutation, rejects the whole request with 400 if
+  either extraction fails, persists each status item via
+  `recordWhatsAppOutboundStatus` (client `failed` -> 503, everything else
+  acknowledged), logs only aggregate counts, then runs the unchanged inbound
+  text/Queue path. A status-only callback never enqueues intake work.
+- `test/index.test.ts` (edited) — 6 new tests: malformed mixed callback (400,
+  zero fetch/queue calls); valid status-only callback (persists via RPC,
+  never touches inbound/Queue, 200); `not_found`/`duplicate`/`stale` -> 200;
+  client `failed` -> 503 with zero queue calls; valid mixed callback (persists
+  status AND retains inbound/Queue behavior); mixed callback where the status
+  RPC fails but inbound text still processes and enqueues -> 503.
+- `docs/outbound-status.md` (new) — accepted-vs-status distinction, exact
+  routing, rank/timestamp rules, additive-field tolerance, PII boundary,
+  idempotency/out-of-order limitation, "not built here" list, migration/test
+  marked NOT APPLIED, three Meta Postman references.
+- `docs/database-schema.md` (edited) — one sentence on the
+  `outbound_message_outbox` bullet forward-referencing the new columns/RPC,
+  plus a new "Outbound WhatsApp status callbacks" section marked NOT YET
+  APPLIED.
+- `docs/outbound-delivery.md` (edited) — the "Sending" section's outdated
+  "this task does not process outbound status webhooks" sentence now points
+  to `docs/outbound-status.md`.
+- `CURRENT_TASK.md` (edited) — this section only.
+
+### Verification results
+
+- `pnpm install --frozen-lockfile` — ran clean earlier in this delivery (no
+  dependency changes made).
+- `pnpm typecheck` — **PASS**, zero errors.
+- `pnpm test` — **PASS**, 630/630 tests across 21 files (36 new in
+  `whatsappStatus.test.ts`, 22 new in `supabaseOutboundStatus.test.ts`, 6 new
+  in `index.test.ts`; all pre-existing tests remain green). Every fetch is
+  mocked; no real Meta/Supabase call was made.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — **PASS**,
+  builds and reports bindings only (`INTAKE_QUEUE`, `APP_TIMEZONE`,
+  `WHATSAPP_GRAPH_API_VERSION`); no deploy performed.
+- `git diff --check` — **PASS** (exit 0); only pre-existing LF/CRLF
+  line-ending advisories on Windows, no whitespace errors introduced.
+- Migration apply — **NOT RUN** (forbidden to Sonnet by contract and by the
+  user's explicit instruction; Codex applies it to disposable `vetai-test`
+  only).
+- `supabase/tests/019_outbound_status_tracking.sql` — **NOT RUN** against any
+  database, for the same reason.
+
+### Known limitations
+
+- The SQL fixture runs inside one PostgreSQL session/transaction and
+  therefore cannot prove true concurrent lock contention across two
+  connections or genuine out-of-order delivery from Meta's real
+  infrastructure; both `supabase/tests/019_outbound_status_tracking.sql`'s
+  header comment and `docs/outbound-status.md` document this rather than
+  claim to have tested it.
+- The "non-accepted row -> not_found" fixture case necessarily uses a still-
+  `pending` row rather than a fabricated inconsistent one, because Task 018's
+  own CHECK constraint makes a non-null `provider_message_id` on a
+  non-`accepted` row impossible to construct in the first place; this is
+  noted inline in the fixture.
+
+### Risks for Codex to review
+
+1. **SQL fixture is unverified against a real server.** It was designed
+   directly from a full read of `20260809000200_outbound_delivery.sql`'s
+   exact column/CHECK/RPC shapes and modeled closely on
+   `018_outbound_delivery.sql`, but has never been executed. Please run it
+   against disposable `vetai-test` first and check especially: the
+   `pg_temp.make_pending_outbox_row` / `make_accepted_outbox_row` helper
+   signatures against `ingest_whatsapp_text_message`,
+   `claim_intake_queue_job`, and `finalize_intake_queue_job`'s real current
+   signatures; and that `insufficient_privilege` is in fact the exception
+   Postgres raises for a revoked-EXECUTE RPC call under `anon`/`authenticated`
+   (matching 018's own fixture 9 assumption).
+2. **Rank precedence is a hardcoded literal in the migration**, not derived
+   from a table — please confirm the `sent=1, failed=2, delivered=3, read=4`
+   mapping in the `CASE`/rank logic exactly matches the contract's stated
+   order (`sent < failed < delivered < read`) with no off-by-one.
+3. **The CHECK constraint's exact null-coherence wording** ("both null, OR
+   `delivery_status='accepted'` AND status in the closed set AND timestamp
+   non-null") should be re-checked against the literal migration SQL for any
+   gap that would let a `pending`/`processing`/`failed` row carry a non-null
+   status summary, which would break the Task 018 backfill invariant.
+4. **`src/index.ts`'s status-then-text ordering inside the signed POST
+   route** — please confirm persisting all status items before running the
+   existing inbound-text/Queue loop, and returning 503 whenever either
+   `statusFailed > 0` or the existing `failed > 0`, matches the intended
+   "acknowledge everything except a client RPC failure" contract, especially
+   for a mixed callback where text processing succeeds but the status RPC
+   fails (current behavior: 503 despite the text message being enqueued —
+   verified by test, but worth an explicit sign-off since it means Meta will
+   retry a callback whose text side already fully succeeded).
+5. **No new dependency, Env binding, or Wrangler config was touched** — please
+   confirm the wrangler dry-run output above (bindings unchanged) matches
+   your own expectation before applying anything.
+
+## Codex review record — 2026-08-09
+
+Decision: `PASS`. No Claude Opus review was required because the bounded
+extension left no unresolved critical architecture, RLS, PII, or external-
+side-effect ambiguity.
+
+Targeted fixes made during review:
+
+- Closed a PostgreSQL three-valued-logic gap in the named CHECK by requiring
+  `provider_delivery_status is not null` in the populated branch. Without
+  it, an accepted row with null status and non-null timestamp evaluated to
+  unknown and passed a CHECK. Added the inverse null-coherence regression.
+- Replaced six non-hex payload-hash fixture characters before the real
+  database run.
+- Deleted the deliberately pending non-accepted probe after its assertions so
+  it cannot be claimed ahead of later accepted-row fixtures.
+- Corrected the implementation-start record: `0f75a41` is the Task 019
+  contract HEAD; `26f1b25` is the preceding product-code baseline.
+
+Local verification after fixes:
+
+- `pnpm install --frozen-lockfile` — pass, already up to date.
+- `pnpm typecheck` — pass, no errors.
+- `pnpm test` — pass, 630/630 across 21 files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  67.02 KiB / gzip 15.07 KiB, bindings unchanged, no deployment.
+- `git diff --check` — pass; only existing LF/CRLF notices.
+
+Disposable database validation (`vetai-test` only):
+
+- Applied `20260809000300_outbound_status_tracking.sql`: success, no rows
+  returned.
+- Ran `019_outbound_status_tracking.sql`: `PASS`; remaining test clinics,
+  accounts, outbox rows, messages, conversations, and owners were all zero.
+- Read-only catalog verification returned: two status columns, one named
+  status CHECK, RLS enabled, zero policies, RPC and lookup index present,
+  `service_role` execution true, `anon`/`authenticated` execution false, and
+  zero outbox rows.
+
+Not run: real Meta callbacks, production migration workflow, deployment,
+resource creation, push, or true two-session lock contention.

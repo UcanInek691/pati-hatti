@@ -54,7 +54,11 @@ Defined in `supabase/migrations/20260806000000_core_tenant_schema.sql`.
   survive deletion of its account/source event. `delivery_status`, lease,
   attempt-count, and outcome columns added by
   `supabase/migrations/20260809000200_outbound_delivery.sql` are described
-  in [`docs/outbound-delivery.md`](outbound-delivery.md).
+  in [`docs/outbound-delivery.md`](outbound-delivery.md). `provider_delivery_status`
+  and `provider_status_at`, added by
+  `supabase/migrations/20260809000300_outbound_status_tracking.sql`, record
+  Meta's later sent/delivered/read/failed status callback and are described
+  in [`docs/outbound-status.md`](outbound-status.md).
 
 ## Tenant isolation
 
@@ -383,3 +387,14 @@ migration workflow. See
 [`docs/outbound-delivery.md`](outbound-delivery.md) for the full four-state
 lifecycle, the three claim/release/accept RPCs, exact-account routing, the
 at-least-once delivery guarantee, and Cron cadence.
+
+## Outbound WhatsApp status callbacks
+
+Defined in `supabase/migrations/20260809000300_outbound_status_tracking.sql`.
+The migration and its rollback fixture,
+`supabase/tests/019_outbound_status_tracking.sql`, passed against disposable
+`vetai-test` on 2026-08-09 with zero fixture residue. See
+[`docs/outbound-status.md`](outbound-status.md) for the
+accepted-vs-sent/delivered/read/failed distinction, the tenant-safe
+`record_whatsapp_outbound_status` RPC, and the non-regressing rank/timestamp
+rules.

@@ -173,6 +173,59 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function statusOnlyWebhookBody(status: "sent" | "delivered" | "read" | "failed" = "delivered"): unknown {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "WABA_ID",
+        changes: [
+          {
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { display_phone_number: "16505551111", phone_number_id: "123456123" },
+              statuses: [{ id: "wamid.STATUS1", status, timestamp: "1603059201", recipient_id: "16315551181" }],
+            },
+            field: "messages",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function mixedWebhookBody(): unknown {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "WABA_ID",
+        changes: [
+          {
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { display_phone_number: "16505551111", phone_number_id: "123456123" },
+              contacts: [{ profile: { name: "Kerry Fisher" }, wa_id: "16315551181" }],
+              messages: [{ from: "16315551181", id: "wamid.ID1", timestamp: "1603059201", type: "text", text: { body: "Hello!" } }],
+              statuses: [{ id: "wamid.STATUS1", status: "delivered", timestamp: "1603059201", recipient_id: "16315551181" }],
+            },
+            field: "messages",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function routedFetch(byEndpoint: Record<string, unknown>): ReturnType<typeof vi.fn> {
+  return vi.fn(async (url: URL) => {
+    for (const [rpcName, body] of Object.entries(byEndpoint)) {
+      if (url.toString().endsWith(`/rest/v1/rpc/${rpcName}`)) return jsonResponse(body);
+    }
+    return jsonResponse([]);
+  });
+}
+
 describe("worker whatsapp persistence", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -193,6 +246,95 @@ describe("worker whatsapp persistence", () => {
     expect(res.status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a malformed status callback and performs no persistence or queue calls", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+    const body = mixedWebhookBody() as {
+      entry: Array<{ changes: Array<{ value: { statuses: Array<Record<string, unknown>> } }> }>;
+    };
+    const status = body.entry[0]?.changes[0]?.value.statuses[0];
+    if (status) status.timestamp = "not-a-number";
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(body)), testEnv);
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("persists a valid status-only webhook via the status RPC, never touches inbound text or Queue, and returns 200", async () => {
+    const fetchMock = routedFetch({ record_whatsapp_outbound_status: [{ result: "recorded" }] });
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(statusOnlyWebhookBody("delivered"))), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [URL];
+    expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/record_whatsapp_outbound_status");
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["not_found", "duplicate", "stale"] as const)(
+    "returns 200 for a status-only webhook when the status RPC reports %s",
+    async (result) => {
+      vi.stubGlobal("fetch", routedFetch({ record_whatsapp_outbound_status: [{ result }] }));
+      const res = await worker.fetch(await signedPost(JSON.stringify(statusOnlyWebhookBody())), env);
+      expect(res.status).toBe(200);
+    },
+  );
+
+  it("returns 503 for a status-only webhook when the status RPC call itself fails, without touching Queue", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(statusOnlyWebhookBody())), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("persists the status and retains inbound text/Queue processing for a valid mixed callback", async () => {
+    const fetchMock = routedFetch({
+      record_whatsapp_outbound_status: [{ result: "recorded" }],
+      ingest_whatsapp_text_message: [{ result: "processed", conversation_id: CONVERSATION_ID }],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mixedWebhookBody())), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    expect(queueSend).toHaveBeenCalledWith(
+      { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
+      { contentType: "json" },
+    );
+  });
+
+  it("returns 503 for a mixed callback when the status RPC fails even though the inbound text is processed and enqueued", async () => {
+    const fetchMock = vi.fn(async (url: URL) => {
+      if (url.toString().endsWith("/rest/v1/rpc/record_whatsapp_outbound_status")) throw new Error("network down");
+      return jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mixedWebhookBody())), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
   it("returns 400 for a webhook with a malformed declared text message and performs no persistence or queue calls", async () => {

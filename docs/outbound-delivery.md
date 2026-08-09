@@ -105,8 +105,9 @@ and non-plain objects still fail closed. Everything else — timeout, network
 failure, non-2xx, malformed body, missing or multiple message IDs — is a
 generic `failed` with no response body logged or returned. **Meta HTTP success only means Meta
 accepted the request for delivery, not that the message was delivered or
-read** — this task does not process outbound status webhooks, so a clinic
-has no delivered/read visibility yet.
+read** — see [`docs/outbound-status.md`](outbound-status.md) for how a later
+Meta status callback records sent/delivered/read/failed against this same
+row (Task 019).
 
 ## At-least-once delivery, not exactly-once
 

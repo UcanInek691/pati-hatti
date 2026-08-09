@@ -4,6 +4,8 @@ import { verifyWhatsAppChallenge } from "./webhookVerify";
 import { MAX_BODY_BYTES, readRawBodyWithLimit, verifyHmacSignature } from "./webhookSignature";
 import { extractTextMessages } from "./whatsappIngest";
 import { ingestWhatsAppTextMessage } from "./supabaseIngest";
+import { extractOutboundStatuses } from "./whatsappStatus";
+import { recordWhatsAppOutboundStatus } from "./supabaseOutboundStatus";
 import { enqueueIntakeJob } from "./intakeQueue";
 import { processIntakeQueueMessage } from "./intakeConsumer";
 import { drainOutboundMessages } from "./outboundSender";
@@ -47,18 +49,31 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
 
   console.log("whatsapp webhook event received");
 
-  const extraction = await extractTextMessages(body);
-  if (!extraction.ok) {
+  const statusExtraction = await extractOutboundStatuses(body);
+  const textExtraction = await extractTextMessages(body);
+  if (!statusExtraction.ok || !textExtraction.ok) {
     return new Response("Bad Request", { status: 400 });
   }
-  if (extraction.items.length === 0) {
-    return Response.json({ received: true });
+
+  let statusFailed = 0;
+  for (const item of statusExtraction.items) {
+    const outcome = await recordWhatsAppOutboundStatus(item, env);
+    if (outcome.kind === "failed") {
+      statusFailed++;
+    }
+  }
+  if (statusExtraction.items.length > 0) {
+    console.log("whatsapp webhook status callbacks persisted", { total: statusExtraction.items.length, failed: statusFailed });
+  }
+
+  if (textExtraction.items.length === 0) {
+    return statusFailed > 0 ? new Response("Service Unavailable", { status: 503 }) : Response.json({ received: true });
   }
 
   let processed = 0;
   let duplicate = 0;
   let failed = 0;
-  for (const item of extraction.items) {
+  for (const item of textExtraction.items) {
     const outcome = await ingestWhatsAppTextMessage(item, env);
     if (outcome.kind !== "processed" && outcome.kind !== "duplicate") {
       failed++;
@@ -76,7 +91,7 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   }
   console.log("whatsapp webhook event persisted", { processed, duplicate, failed });
 
-  if (failed > 0) {
+  if (failed > 0 || statusFailed > 0) {
     return new Response("Service Unavailable", { status: 503 });
   }
   return Response.json({ received: true });

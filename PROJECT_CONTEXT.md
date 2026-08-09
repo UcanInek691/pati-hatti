@@ -167,6 +167,21 @@ The secure Worker baseline is committed on `main`:
   dry-run, Codex review, and final Claude Opus review passed. No real Meta
   request, deployment, Cron resource creation, or production configuration
   occurred.
+- Signed WhatsApp webhooks now extract supported outbound `sent | failed |
+  delivered | read` callbacks before mutation, tolerate additive/unsupported
+  provider fields, and persist a bounded status summary through one native
+  service-role RPC. Status-only callbacks never enqueue intake work; mixed
+  callback replays remain idempotent.
+- Status routing locks an accepted outbox row only when exact account phone-
+  number ID, provider message ID, and recipient match. The summary is non-
+  regressing (`sent < failed < delivered < read`), with provider time used
+  only to order repeated same-rank events; accepted remains distinct from
+  sent/delivered/read.
+- Task 019's migration and rollback fixture passed on disposable `vetai-test`,
+  including rank/timestamp behavior, cross-tenant account isolation, null-
+  coherent CHECK enforcement, RLS/grants, erasure cascades, and zero residue.
+  Frozen install, typecheck, 630/630 tests, Worker dry-run, and Codex review
+  passed. No real Meta callback, deployment, or production migration ran.
 
 Verified evidence before the context-system change:
 
@@ -182,8 +197,7 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Outbound delivered/read/failed status-webhook persistence and operational
-  monitoring for terminal delivery failures.
+- Operational monitoring and alerts for terminal send/provider failures.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
@@ -200,11 +214,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 018 now implements the reviewed, bounded outbound claim/send/accept-or-
-retry path in code. The next phase is Task 019: persist Meta outbound message
-status callbacks and define operational visibility for delivery failures
-without treating accepted as delivered. No Cron, Queue, or DLQ resource has
-been created and production deployment remains out of scope.
+Task 019 now persists reviewed outbound provider-status callbacks without
+confusing acceptance with delivery. The next phase is Task 020: define a
+minimal backend staff work queue for human handoff and terminal delivery
+failures before appointments or a staff UI. No Cron, Queue, or DLQ resource
+has been created and production deployment remains out of scope.
 
 ## Durable safety invariants
 
