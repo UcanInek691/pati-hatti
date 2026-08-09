@@ -87,9 +87,13 @@ advance conversation state twice. `finalizeIntakeQueueJob` in
 token, advances conversation intake state, and completes the same lease in
 one transaction, returning a closed `applied` / `already_completed` /
 `stale_claim` / `stale_state` / `failed` result. The consumer below is wired
-to this boundary; it still does not cover any WhatsApp send or other
-irreversible external effect beyond conversation-state finalization — those
-still need an idempotent/outbox-style boundary of their own when added.
+to this boundary and also calls `planIntakeReply` (`src/intakeReply.ts`),
+forwarding its result so a planned reply is inserted into
+`outbound_message_outbox` in that same transaction (see
+`docs/database-schema.md`'s "Atomic intake finalization" section and
+`docs/intake-replies.md`). It still does not cover the actual WhatsApp send
+or any other irreversible external effect beyond conversation-state and
+outbox finalization — Task 018 owns claiming and sending outbox rows.
 
 A `stale_state` result preserves the current token but does not extend its
 original 120-second lease. A corrected retry is valid only before expiry and

@@ -9,6 +9,7 @@ import { planIntakeTurn } from "./intakeTurn";
 import type { PersistedIntakeData } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
 import type { SafetyDecision } from "./safetyDecision";
+import { planIntakeReply } from "./intakeReply";
 
 export type QueueDisposition = "ack" | "retry";
 
@@ -103,6 +104,8 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       intakeData = fallback.intakeData;
     }
 
+    const replyPlan = planIntakeReply(context.intakeStage, plan);
+
     const finalizeInput: FinalizeIntakeQueueJobInput = {
       conversationId,
       providerMessageId,
@@ -111,6 +114,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       nextStage,
       petId,
       intakeData: intakeData as unknown as Record<string, unknown>,
+      reply: replyPlan,
     };
     const finalizeResult = await finalizeIntakeQueueJob(finalizeInput, env);
 

@@ -1,6 +1,6 @@
 # Current task — 017 persist intake replies in an atomic outbox
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -320,8 +320,205 @@ RLS review before Codex marks the task complete and commits it.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- HEAD is `59d06e3` (docs-only: this file), one commit after the stated
+  starting point `e0f9698`; worktree clean. No outbox migration, no
+  `reply`-related code exists anywhere in `src/` yet — Task 017 has not been
+  started.
+- `src/intakeReply.ts` exports `planIntakeReply(currentStage: IntakeStage,
+  result: PlanResult): IntakeReplyPlan` (not `plan`, matching `PlanResult`
+  from `src/intakeTurn.ts`, whose `.kind` is `"planned" | "failed"`).
+  `IntakeReplyCategory` has exactly the six documented values. It is pure and
+  unwired, confirmed by `docs/intake-replies.md`.
+- `public.ingest_whatsapp_text_message` current signature (from
+  `20260806000300_ingest_whatsapp_conversation_locator.sql`) takes the
+  documented seven params and returns exactly `(result text, conversation_id
+  uuid)` — two columns, confirmed.
+- `public.finalize_intake_queue_job` current signature (from
+  `20260808000200_finalize_intake_queue_job.sql`) takes the documented seven
+  params, locks the message/webhook_events pair, calls
+  `advance_conversation_intake` then `complete_intake_queue_job`, and returns
+  exactly `(result text, intake_stage text, state_version integer)` — three
+  columns, confirmed.
+- `public.whatsapp_accounts (id uuid pk, clinic_id fk -> clinics, phone_number_id
+  text unique, ...)` has no `(id, clinic_id)` composite unique yet — must be
+  added. `public.webhook_events` already has `unique (clinic_id,
+  provider_event_id)`, directly usable as the outbox's source-event composite
+  FK target. `public.owners`, `public.pets`, `public.conversations` already
+  follow the `unique (id, <parent>_id, clinic_id)`-style composite-FK pattern
+  this task must extend to `whatsapp_accounts`.
+- The established backend-only RLS pattern (used for `webhook_events`):
+  `alter table ... enable row level security;` +
+  `revoke all on ... from anon, authenticated, public;` +
+  `grant all on ... to service_role;` with **no** policy created. This is the
+  exact pattern to replicate for `outbound_message_outbox`.
+- `src/intakeJobLease.ts`: `FinalizeIntakeQueueJobInput` currently has the
+  seven fields matching the RPC's seven params 1:1 (`conversationId`,
+  `providerMessageId`, `claimToken`, `expectedVersion`, `nextStage`, `petId`,
+  `intakeData`). `finalizeIntakeQueueJob` posts them as `p_*` fields and
+  parses the response row with `Reflect.ownKeys(row).length !== 3` (must stay
+  3 columns) via a shared `asPlainRecord`/`callRpc`/`buildEndpoint` helper set
+  also used by `claimIntakeQueueJob`/`completeIntakeQueueJob`.
+- `src/intakeConsumer.ts`: after `const plan = planIntakeTurn(context,
+  extraction);`, `plan.kind === "planned"` builds `nextStage`/`petId`/
+  `intakeData`; the `else` branch is the poison path (`plan.kind ===
+  "failed"`) that builds a fresh fallback snapshot for finalization only.
+  `planIntakeReply` must be called once on the raw `plan` (not the poison
+  fallback) together with `context.intakeStage`, since `planIntakeReply`
+  itself already special-cases `result.kind === "failed"` to the fixed
+  human-handoff reply per `docs/intake-replies.md`'s documented precedence.
+- Test conventions confirmed in `test/intakeJobLease.test.ts` and
+  `test/intakeConsumer.test.ts`: Vitest, `vi.stubGlobal("fetch", ...)`, a
+  `routedFetch`/`happyRoutes` helper in the consumer test keyed by URL
+  substring, and a `bodyOf(fetchMock, callIndex)` helper that JSON-parses a
+  given call's request body for exact-shape assertions.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+Changed/new files (`git status --porcelain`):
+
+- `supabase/migrations/20260809000100_intake_reply_outbox.sql` (new) —
+  composite unique on `whatsapp_accounts (id, clinic_id)`; nullable
+  `webhook_events.whatsapp_account_id` with composite FK; replaced
+  `ingest_whatsapp_text_message` to resolve/persist the exact account and
+  backfill/reject on duplicate; new `outbound_message_outbox` table
+  (backend-only RLS, three composite FKs, unique `(clinic_id,
+  source_provider_message_id)`, length/category/E.164 checks, `(created_at,
+  id)` index); `finalize_intake_queue_job` recreated with the nine-argument
+  signature, reply-pair validation, and the exactly-one-outbox-insert step
+  before lease completion.
+- `supabase/tests/017_intake_reply_outbox.sql` (new) — single-transaction
+  rollback test covering every bullet in "Required tests > Rollback SQL
+  test": exact-account storage across two accounts in one clinic, duplicate
+  backfill/conflict-reject, full claim+finalize with exactly one outbox row
+  and no duplicate on already-completed retry, `none`-reply zero-outbox
+  path, stale claim/state/invalid transition/cross-tenant pet/malformed
+  reply pair/unknown category/blank+oversized content/missing account link
+  all leaving conversation/lease/outbox unchanged, same provider message ID
+  in two clinics producing independent rows, direct-insert FK/unique
+  violations, `anon`/`authenticated` privilege denial on the table and the
+  finalizer, and a final zero-residue row count after `rollback;`.
+- `src/intakeJobLease.ts` — `FinalizeIntakeQueueJobInput` gained `reply:
+  IntakeReplyPlan`; `finalizeIntakeQueueJob` maps it to `p_reply_category`/
+  `p_reply_text` (both null for `none`, exact values for `send`). Response
+  parsing (three-column shape) unchanged.
+- `src/intakeConsumer.ts` — calls `planIntakeReply(context.intakeStage,
+  plan)` once, on the raw `planIntakeTurn` result before poison-fallback
+  substitution, and passes the result as `reply` on the finalize input. No
+  other consumer behavior changed.
+- `test/intakeJobLease.test.ts` — `baseInput` now includes `reply: { kind:
+  "none" }`; the exact-body-shape test asserts both `p_reply_category` and
+  `p_reply_text` are null; a new test asserts a `send`-kind plan maps to the
+  exact `p_reply_category`/`p_reply_text` values.
+- `test/intakeConsumer.test.ts` — added `p_reply_category`/`p_reply_text`
+  assertions to the normal-continue, emergency, human-requested,
+  needs-safety-check, terminal-completed, corrupt-snapshot, and
+  missing-pet-fallback finalize-reaching cases, each expected category
+  derived by hand from `docs/intake-replies.md`'s precedence rules against
+  that test's fixture.
+- `docs/database-schema.md`, `docs/inbound-queue.md`, `docs/intake-replies.md`
+  — updated to describe the account-preservation columns, the outbox table,
+  the nine-argument finalizer contract, the consumer wiring, and marked the
+  new migration/test `NOT APPLIED` pending Codex validation.
+- `CURRENT_TASK.md` — Observed context and this Delivery record.
+
+Verification run (none touched a database):
+
+- `pnpm install --frozen-lockfile` — pass.
+- `pnpm typecheck` (`tsc --noEmit`) — pass, no errors.
+- `pnpm test` (`vitest run`) — pass, 445/445 across 16 test files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  Total Upload 51.58 KiB / gzip 12.42 KiB; bindings listed:
+  `INTAKE_QUEUE` Queue, `APP_TIMEZONE` env var.
+- `git diff --check` — pass, exit 0, no whitespace errors.
+- Applying `supabase/migrations/20260809000100_intake_reply_outbox.sql` to
+  any database — **NOT RUN**. Per the explicit instruction for this
+  delivery and `AGENTS.md`, Sonnet has no disposable database access in
+  this role; Codex applies it to `vetai-test` after review.
+- Running `supabase/tests/017_intake_reply_outbox.sql` — **NOT RUN**, same
+  reason; Codex runs it against `vetai-test` after review and records the
+  result.
+
+Self-caught issue (fixed before delivery, no DB involved): the SQL test's
+first draft declared a nested `procedure` inside a `do $$ ... $$` anonymous
+block, which PL/pgSQL does not support. Replaced with a top-level `create
+function assert_outbox_fixture6_unchanged(...)` used by that fixture's
+negative-path assertions; re-verified against the migration source
+afterward.
+
+Not done, by contract: no commit, push, deploy, real Meta/LLM/Supabase call,
+resource creation, or database mutation of any kind.
+
+## Codex review record — 2026-08-09
+
+Decision: `PASS`. Codex validation and the mandatory read-only Opus gate are
+complete.
+
+Targeted fixes made during review:
+
+- Moved `planIntakeReply` after the planned-result handoff-consistency check,
+  preserving exactly one call only on attempts that may reach finalization.
+- Added missing consumer coverage for pet-clarification and complaint replies,
+  explicit planner-call ordering/count coverage, and all six send-category
+  passthrough cases.
+- Added `FOR UPDATE` to the duplicate webhook-event lookup so concurrent
+  redeliveries cannot race while backfilling a legacy null account link; after
+  the first writer, a different account observes the non-null link and raises.
+- Strengthened the source-event FK fixture so the rejected provider event now
+  really exists under the other clinic instead of being absent everywhere.
+
+Codex verification after those fixes:
+
+- `pnpm install --frozen-lockfile` — pass, already up to date.
+- `pnpm typecheck` — pass, no errors.
+- `pnpm test` — pass, 452/452 across 16 test files.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
+  51.58 KiB / gzip 12.42 KiB, existing Queue/timezone bindings only.
+- `git diff --check` — pass; only Git's existing LF/CRLF notices.
+
+Disposable database validation (`vetai-test` only):
+
+- A first SQL Editor attempt was rejected at parse time because that editor
+  had retained unrelated historical text after the pasted migration. A
+  read-only follow-up proved `outbound_message_outbox` was absent and
+  `webhook_events.whatsapp_account_id` did not exist, so no partial migration
+  state remained.
+- Applied `supabase/migrations/20260809000100_intake_reply_outbox.sql` from a
+  fresh query: success, no rows returned.
+- Ran `supabase/tests/017_intake_reply_outbox.sql`: `PASS`; every reported
+  fixture count was zero after rollback.
+- Re-ran `supabase/tests/013_finalize_intake_queue_job.sql`: `PASS`, proving
+  historical seven-argument finalizer calls still resolve through the two
+  trailing defaulted parameters.
+- Final read-only introspection: outbox exists; account-link column exists;
+  RLS enabled; policy count 0; outbox row count 0; finalizer defaulted-argument
+  count 2; `service_role` can execute; `anon` and `authenticated` cannot.
+
+Not run: a true two-session concurrent legacy-backfill race. The new row lock
+and read-committed recheck were reviewed from PostgreSQL locking semantics;
+the rollback fixture remains intentionally single-session.
+
+### Opus review response — 2026-08-09
+
+Opus returned `CHANGES_REQUIRED` with one blocking erasure finding; the other
+eight requested architecture/security areas passed.
+
+Resolved before re-review:
+
+- Added `ON DELETE CASCADE` to all three outbox composite foreign keys. A
+  pending reply and its copied recipient phone can no longer block deletion of
+  its owner/conversation, WhatsApp account, source event, or clinic cascade.
+- Added `and whatsapp_account_id is null` to the legacy backfill update as a
+  local fail-closed guard in addition to the existing row lock.
+- Extended the rollback fixture to exercise conversation/owner erasure and
+  the account/source-event cascade actions independently.
+- Applied the targeted function/FK update to disposable `vetai-test`; the
+  updated Task 017 rollback test returned `PASS` with zero residue.
+- Read-only catalog verification returned three total outbox foreign keys,
+  three cascade actions, the local null guard present, and zero outbox rows.
+- Post-fix local verification passed: frozen install, typecheck, 452/452 tests,
+  Worker dry-run (unchanged bindings), and `git diff --check`.
+
+Final Opus re-review: `PASS`. The reviewer confirmed all three cascade actions
+are tenant-safe, the owner/KVKK erasure path is restored, the local null guard
+is correct, and no RLS, privilege, atomic-order, validation-order, tenant, or
+privacy regression was introduced. Task 017 is approved for commit.

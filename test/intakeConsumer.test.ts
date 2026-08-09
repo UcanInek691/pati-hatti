@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { processIntakeQueueMessage } from "../src/intakeConsumer";
 import type { QueueDisposition } from "../src/intakeConsumer";
+import * as intakeReplyModule from "../src/intakeReply";
 import * as intakeTurnModule from "../src/intakeTurn";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
@@ -269,6 +270,9 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(finalizeBody.p_pet_id).toBe(PET_ID);
     expect(finalizeBody.p_claim_token).toBe(CLAIM_TOKEN);
     expect(finalizeBody.p_expected_version).toBe(1);
+    expect(finalizeBody.p_reply_category).toBe("intake_received");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
+    expect((finalizeBody.p_reply_text as string).length).toBeGreaterThan(0);
   });
 
   it("emergency signal plan finalizes with human_handoff", async () => {
@@ -283,6 +287,8 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(result).toBe("ack");
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("emergency_handoff");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
   });
 
   it("human-requested plan finalizes with human_handoff", async () => {
@@ -297,6 +303,8 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(result).toBe("ack");
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
   });
 
   it("needs_safety_check plan persists the same stage", async () => {
@@ -311,6 +319,47 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(result).toBe("ack");
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
+    expect(finalizeBody.p_reply_category).toBe("safety_questions");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
+  });
+
+  it("ambiguous pet plan forwards the pet-identity reply", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({
+        intake_stage: "pet_identification",
+        pet_id: null,
+        pets: [
+          { id: PET_ID, name: "Fluffy", species: "cat" },
+          { id: "77777777-7777-7777-7777-777777777777", name: "Misty", species: "cat" },
+        ],
+      }),
+      extraction: extractionJson({ pet_name: null }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("pet_identification");
+    expect(finalizeBody.p_reply_category).toBe("pet_identity");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
+  });
+
+  it("missing complaint plan forwards the complaint reply", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "complaint_collection", pet_id: PET_ID }),
+      extraction: extractionJson({ complaint: null, symptoms: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("complaint_collection");
+    expect(finalizeBody.p_reply_category).toBe("complaint");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
   });
 
   it("terminal completed stage with a handoff-grade signal stays completed and logs only a generic warning", async () => {
@@ -327,6 +376,8 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(result).toBe("ack");
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("completed");
+    expect(finalizeBody.p_reply_category).toBeNull();
+    expect(finalizeBody.p_reply_text).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("terminal_safety_signal"));
     const loggedText = warnSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     for (const secret of [CONVERSATION_ID, PROVIDER_MESSAGE_ID, CLAIM_TOKEN, MESSAGE_TEXT, OWNER_ID, OWNER_NAME]) {
@@ -335,6 +386,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
   });
 
   it("an inconsistent handoff safety decision is retried without finalization", async () => {
+    const replySpy = vi.spyOn(intakeReplyModule, "planIntakeReply");
     vi.spyOn(intakeTurnModule, "planIntakeTurn").mockReturnValue({
       kind: "planned",
       nextStage: "safety_check",
@@ -350,6 +402,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
 
     expect(result).toBe("retry");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(replySpy).not.toHaveBeenCalled();
   });
 });
 
@@ -369,6 +422,8 @@ describe("processIntakeQueueMessage: poison snapshot fallback", () => {
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_intake_data).toMatchObject({ schema_version: 1, complaint: "limping" });
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("poison_intake_state"));
     const loggedText = warnSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     for (const secret of [CONVERSATION_ID, PROVIDER_MESSAGE_ID, CLAIM_TOKEN, MESSAGE_TEXT, OWNER_ID]) {
@@ -389,6 +444,8 @@ describe("processIntakeQueueMessage: poison snapshot fallback", () => {
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("completed");
     expect(finalizeBody.p_pet_id).toBeNull();
+    expect(finalizeBody.p_reply_category).toBeNull();
+    expect(finalizeBody.p_reply_text).toBeNull();
   });
 });
 
@@ -412,12 +469,14 @@ describe("processIntakeQueueMessage: finalization disposition mapping", () => {
 
 describe("processIntakeQueueMessage: bounded work per attempt", () => {
   it("calls claim, context, OpenAI, and finalize exactly once each on the happy path, and never completes separately", async () => {
+    const replySpy = vi.spyOn(intakeReplyModule, "planIntakeReply");
     const fetchMock = happyRoutes();
     vi.stubGlobal("fetch", fetchMock);
 
     await processIntakeQueueMessage(validBody, env);
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(replySpy).toHaveBeenCalledTimes(1);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("complete_intake_queue_job"))).toBe(false);
   });

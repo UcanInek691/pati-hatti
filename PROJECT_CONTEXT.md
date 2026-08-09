@@ -67,8 +67,8 @@ The secure Worker baseline is committed on `main`:
   contract with fixed precedence: any explicit emergency signal stops normal
   automation, human and medical-advice requests route to staff, unknown safety
   facts require clarification, and only eight explicit false values may
-  continue. The canonical signal list is compile-time exhaustive, the gate is
-  not wired into runtime yet, and both Codex and Claude Opus reviews passed.
+  continue. The canonical signal list is compile-time exhaustive, is reused by
+  the runtime intake planner, and both Codex and Claude Opus reviews passed.
 - Inbound persistence now returns a validated, tenant-scoped conversation ID
   for both newly processed and exact-duplicate WhatsApp messages. Unknown
   accounts return no locator; malformed Data API results and orphaned duplicate
@@ -97,7 +97,8 @@ The secure Worker baseline is committed on `main`:
   completes the matching lease in one PostgreSQL transaction. It returns a
   closed `applied | already_completed | stale_claim | stale_state` result and
   rolls back state if completion cannot succeed. Its native-fetch client
-  validates the exact Data API row shape and is not wired into a consumer yet.
+  validates the exact Data API row shape and is wired only through the bounded
+  intake consumer.
 - The finalization migration and rollback test passed on disposable
   `vetai-test`, including a real service-role claim/write/finalize path,
   cross-tenant same-provider isolation, stale token/state behavior, invalid
@@ -109,8 +110,8 @@ The secure Worker baseline is committed on `main`:
   keeps reported danger and human requests sticky, resolves pet identity only
   against tenant-scoped context, reuses the reviewed safety gate, and selects
   only a same-stage, one-step-forward, or human-handoff transition. Corrupt
-  snapshots fail closed; no planner code is wired into runtime yet. Codex and
-  Claude Opus reviews passed with 386/386 tests.
+  snapshots fail closed; the planner is consumed by the bounded Queue
+  consumer. Codex and Claude Opus reviews passed with 386/386 tests.
 - A bounded Cloudflare Queue consumer now connects the reviewed intake
   pipeline in runtime order: strict job parsing, database lease claim,
   tenant-scoped context fetch, privacy-preserving owner hash, structured
@@ -121,19 +122,33 @@ The secure Worker baseline is committed on `main`:
   stale-state failures are retried, and retry configuration is bounded to
   three attempts with a 120-second delay and a declared dead-letter queue.
   Corrupt snapshots are replaced with a fresh current-turn snapshot and
-  atomically routed to human handoff instead of retrying forever. No outbound
-  WhatsApp response is generated or sent. Codex review passed with 413/413
-  tests, typecheck, frozen install, and Worker dry-run.
+  atomically routed to human handoff instead of retrying forever. No WhatsApp
+  send occurs in this consumer. Codex review passed with 413/413 tests,
+  typecheck, frozen install, and Worker dry-run.
 - A pure deterministic reply planner now maps the reviewed turn result to a
   closed Turkish fixed-copy response or terminal `none`. Emergency and unknown
   safety paths tell the user not to wait for the bot and to contact an open
   veterinary clinic; human-handoff copy truthfully says the bot cannot answer
   and does not claim staff notification. No dynamic owner, pet, complaint,
   symptom, clinic, or provider data is inserted into reply text.
-- The reply planner is not wired, persisted, queued, or sent. Codex and Claude
-  Opus safety reviews passed after wording fixes, with 444/444 tests,
-  typecheck, frozen install, and Worker dry-run. Clinic-veterinarian and Turkish
+- The reply planner is wired into the intake consumer and its result is
+  persisted, but no code sends it to WhatsApp. Codex and Claude Opus safety
+  reviews passed after wording fixes. Clinic-veterinarian and Turkish
   legal/privacy approval remain required before production use.
+- Inbound webhook events now preserve the exact tenant-scoped WhatsApp account
+  used for receipt. Exact duplicate legacy rows may backfill a null link under
+  a row lock; a different linked account raises instead of being overwritten.
+- A backend-only, service-role-only outbox now stores at most one deterministic
+  pending reply per tenant-scoped inbound event. The finalizer atomically
+  advances state, inserts the optional outbox row, and completes the current
+  lease; routing values and recipient phone are derived inside PostgreSQL.
+  Composite foreign keys enforce tenant boundaries and cascade pending replies
+  during owner/account/source erasure.
+- Task 017 passed 452/452 tests, frozen install, typecheck, Worker dry-run,
+  Codex review, and two-stage Claude Opus architecture/RLS/KVKK review. Its
+  migration and rollback test passed on disposable `vetai-test`, including
+  exact-account isolation, atomic rollback, RLS/grants, erasure cascades, old
+  seven-argument finalizer compatibility, and zero fixture residue.
 
 Verified evidence before the context-system change:
 
@@ -149,8 +164,8 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Atomic outbound-message persistence, WhatsApp delivery, and retry handling;
-  deterministic response planning exists but is not wired.
+- Outbox claiming, WhatsApp delivery, provider-result persistence, and retry
+  handling for pending outbound replies.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
@@ -167,12 +182,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 016 now provides reviewed deterministic user-response planning, but the
-reply remains unwired. The next phase must add an atomic database outbox tied
-to current-token intake finalization before any WhatsApp send is attempted;
-direct sending inside the intake consumer would risk either lost or duplicate
-messages. No Queue or DLQ resource has been created and production deployment
-remains out of scope.
+Task 017 now persists one reviewed deterministic reply atomically with intake
+state/lease finalization. The next phase is Task 018: define a bounded,
+idempotent outbox claim/send/completion protocol and delivered-message history
+before any WhatsApp call is enabled. No Queue or DLQ resource has been created
+and production deployment remains out of scope.
 
 ## Durable safety invariants
 
@@ -199,6 +213,13 @@ remains out of scope.
 - The current Turkish safety copy is not production-approved until a clinic
   veterinarian and Turkish legal/privacy reviewer approve it; AI review does
   not replace those gates.
+- Pending outbox rows contain recipient phone data and must cascade with
+  owner/account/source erasure. Future webhook-event retention must not prune
+  a source event while its reply is still pending, or the cascade would
+  intentionally discard that unsent reply.
+- Deterministic fail-closed consumer errors can exhaust the configured three
+  attempts. A real DLQ resource, monitoring path, and operational owner are a
+  production blocker even though no such resource is created in this repo yet.
 
 ## Context maintenance
 

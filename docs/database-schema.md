@@ -19,7 +19,9 @@ Defined in `supabase/migrations/20260806000000_core_tenant_schema.sql`.
 - **whatsapp_accounts** — a clinic's WhatsApp Business phone number
   (`phone_number_id`, globally unique — Meta assigns it globally). No
   token or secret is stored here; those live only in Worker secret
-  bindings (see below).
+  bindings (see below). Also unique on `(id, clinic_id)` so other tables can
+  hold a composite, tenant-safe foreign key to a specific account (a clinic
+  may own more than one).
 - **owners** — pet owners contacting a clinic, keyed by
   `(clinic_id, phone_e164)` with a basic E.164 format check.
 - **pets** — belongs to one owner. The foreign key is on
@@ -38,7 +40,20 @@ Defined in `supabase/migrations/20260806000000_core_tenant_schema.sql`.
   system-generated messages.
 - **webhook_events** — records that a provider webhook event was received
   and its processing outcome, keyed uniquely per `(clinic_id,
-  provider_event_id)`.
+  provider_event_id)`. Also carries the resolved `whatsapp_account_id` (a
+  composite, tenant-safe foreign key into `whatsapp_accounts`) so a later
+  reply can be sent from the same account the inbound message arrived on.
+- **outbound_message_outbox** — one planned-but-not-yet-sent WhatsApp reply
+  per inbound event, inserted atomically alongside intake-state finalization
+  (see "Atomic intake finalization" below). Backend-only, `service_role`-only,
+  no RLS policy. Composite tenant-safe foreign keys tie it to the exact
+  conversation, WhatsApp account, and source `webhook_events` row; `unique
+  (clinic_id, source_provider_message_id)` caps it at one planned reply per
+  inbound event. All three parent relationships cascade deletion so a pending
+  reply—and its copied recipient phone—cannot block owner/clinic erasure or
+  survive deletion of its account/source event. Task 018 owns claiming,
+  sending, and recording delivery outcome; this table has no delivery state,
+  lease, or attempt count.
 
 ## Tenant isolation
 
@@ -92,9 +107,12 @@ goes through RLS policies described above instead.
 ## Inbound WhatsApp text message ingestion
 
 Defined in
-`supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql` and
+`supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql`,
 revised by
-`supabase/migrations/20260806000300_ingest_whatsapp_conversation_locator.sql`.
+`supabase/migrations/20260806000300_ingest_whatsapp_conversation_locator.sql`,
+and revised again by
+`supabase/migrations/20260809000100_intake_reply_outbox.sql` to preserve the
+exact inbound `whatsapp_accounts` row.
 
 > **Disposable validation passed.** On 2026-08-06 the migration was applied to
 > `vetai-test` and `supabase/tests/005_ingest_whatsapp_text_message.sql`
@@ -107,6 +125,11 @@ revised by
 > `PASS` with every fixture count at zero. Production still requires the
 > managed Supabase migration workflow.
 
+> **Account-preservation validation passed (2026-08-09).** Codex applied the
+> `20260809000100` migration to disposable `vetai-test`; the rollback-only
+> `supabase/tests/017_intake_reply_outbox.sql` returned `PASS` with zero fixture
+> residue. Production still requires the managed migration workflow.
+
 `public.ingest_whatsapp_text_message(...)` is the single Data API entry
 point the Worker calls after signature/envelope validation. It is
 `SECURITY INVOKER`, `VOLATILE`, has an empty `search_path`, and is granted
@@ -115,14 +138,20 @@ so it runs with the caller's own privileges — service-role's table grants
 and RLS bypass, not an elevated definer identity. It returns exactly one row
 of `(result text, conversation_id uuid)`. In one call it:
 
-1. Resolves the clinic from `whatsapp_accounts.phone_number_id`, writing
-   nothing and returning `unknown_account` with a null `conversation_id` if
-   no match exists.
+1. Resolves the clinic and exact `whatsapp_accounts` row from
+   `whatsapp_accounts.phone_number_id`, writing nothing and returning
+   `unknown_account` with a null `conversation_id` if no match exists.
 2. Claims idempotency via `webhook_events (clinic_id, provider_event_id)`
-   with `ON CONFLICT DO NOTHING RETURNING`; a redelivery with a matching
+   with `ON CONFLICT DO NOTHING RETURNING`, storing the resolved
+   `whatsapp_account_id` on the new row; a redelivery with a matching
    `payload_hash` returns `duplicate` with no further mutation, and a
    redelivery with a different hash for the same provider event ID raises
    an error and writes nothing.
+   A `duplicate` redelivery also backfills a null `whatsapp_account_id` on
+   the existing row (covering events persisted before this account link
+   existed) and raises if the redelivery resolves to a different,
+   already-linked account — the exact account is never silently
+   overwritten.
    The `duplicate` locator is resolved from `public.messages` by
    `(clinic_id, whatsapp_message_id)` — never by provider ID alone, because
    that ID is only unique within a clinic. If a claimed event has no
@@ -259,7 +288,10 @@ any Queue handler yet.
 
 ## Atomic intake finalization
 
-Defined in `supabase/migrations/20260808000200_finalize_intake_queue_job.sql`.
+Defined in `supabase/migrations/20260808000200_finalize_intake_queue_job.sql`
+and extended by
+`supabase/migrations/20260809000100_intake_reply_outbox.sql` to add an atomic
+outbox insert.
 
 > **Disposable validation passed (2026-08-08).** Codex applied this migration
 > to `vetai-test`; `supabase/tests/013_finalize_intake_queue_job.sql` returned
@@ -267,17 +299,35 @@ Defined in `supabase/migrations/20260808000200_finalize_intake_queue_job.sql`.
 > Supabase CLI migration-history entry; production still requires the managed
 > migration workflow.
 
+> **Outbox extension validation passed (2026-08-09).** Codex applied the
+> `20260809000100` migration to disposable `vetai-test`; the rollback-only
+> `supabase/tests/017_intake_reply_outbox.sql` returned `PASS` with zero fixture
+> residue, including owner/conversation, account, and source-event cascade
+> deletion of pending replies. The earlier seven-argument finalizer fixture
+> also still returned `PASS`, confirming the two trailing defaults preserve
+> compatibility.
+> Production still requires the managed migration workflow.
+
 A lease guarantees one successful completer, not one executing worker after
 expiry/reclaim (see [`docs/inbound-queue.md`](inbound-queue.md)). Calling
 `advance_conversation_intake` and `complete_intake_queue_job` as two separate
 HTTP RPCs would leave a crash window where the same persisted message could
 advance conversation state twice. `public.finalize_intake_queue_job(
 p_conversation_id, p_provider_message_id, p_claim_token, p_expected_version,
-p_next_stage, p_pet_id, p_intake_data)` closes that window by composing both
-existing, already-validated operations inside one transaction instead of
-duplicating their transition/pet-ownership/completion logic. It is
-`SECURITY INVOKER`, `VOLATILE`, empty-`search_path`, and granted to
-`service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`).
+p_next_stage, p_pet_id, p_intake_data, p_reply_category, p_reply_text)`
+closes that window by composing both existing, already-validated operations
+inside one transaction instead of duplicating their
+transition/pet-ownership/completion logic, and now also persists the planned
+reply (if any) in the same transaction. It is `SECURITY INVOKER`, `VOLATILE`,
+empty-`search_path`, and granted to `service_role` only (revoked from
+`PUBLIC`, `anon`, `authenticated`).
+
+`p_reply_category` and `p_reply_text` must both be null (no reply owed) or
+both non-null (a planned reply); a mismatched pair, an unrecognized category,
+or an out-of-range reply text (1-4096 code points) raises before anything is
+locked or changed. They mirror `IntakeReplyCategory`/`IntakeReplyPlan` from
+`src/intakeReply.ts` exactly — this RPC does not itself decide whether to
+reply, it only persists the caller's already-planned decision.
 
 It resolves and locks the exact tenant-safe inbound processed message/event
 pair using the same relationship as `claim_intake_queue_job`, re-checks the
@@ -286,29 +336,39 @@ intake_stage, state_version)` with a closed outcome set:
 
 - `applied` — the event was `processing` with a matching token and
   `advance_conversation_intake` succeeded for the supplied expected version;
-  the same lease is completed in the same transaction and the resulting
-  non-null stage/version is returned.
+  if a reply was requested, exactly one row is inserted into
+  `outbound_message_outbox` deriving its clinic, conversation, WhatsApp
+  account, and recipient phone number entirely from the locked event and
+  conversation (never from caller-supplied routing data); the same lease is
+  completed in the same transaction and the resulting non-null stage/version
+  is returned. A null reply pair inserts no outbox row.
 - `already_completed` — the exact event was already completed; no
-  conversation change, null stage/version.
+  conversation, lease, or outbox change, null stage/version.
 - `stale_claim` — the exact pair is missing, not processing, or held by a
-  different/newer token; no conversation change, null stage/version.
+  different/newer token; no conversation, lease, or outbox change, null
+  stage/version.
 - `stale_state` — the token is valid but the optimistic state version no
   longer matches; the lease stays `processing` (available for a corrected
-  retry only until its original 120-second expiry), no conversation change,
-  null stage/version. A reclaim before that retry changes the outcome to
-  `stale_claim`.
+  retry only until its original 120-second expiry), no conversation or
+  outbox change, null stage/version. A reclaim before that retry changes the
+  outcome to `stale_claim`.
 
 If the reused state transition raises (invalid stage, invalid/empty intake
-data, or pet ownership outside the conversation's own owner/clinic), or if
-current-token completion unexpectedly fails after a successful state
-advance, the whole call raises and neither the conversation row nor the
-lease row is left partially changed.
+data, or pet ownership outside the conversation's own owner/clinic), if a
+reply was requested but the locked event has no linked
+`whatsapp_account_id` or the conversation's owner has no recipient phone
+number, or if current-token completion unexpectedly fails after a successful
+state advance, the whole call raises and neither the conversation row, the
+lease row, nor the outbox table is left partially changed.
 
-This closes the double-advance window for one persisted message; it does not
-cover LLM work repeating after a lease expiry/reclaim, any WhatsApp send or
-other irreversible external effect, or a Queue consumer/orchestration — those
-still need an idempotent/outbox-style boundary and remain unimplemented.
-`src/intakeJobLease.ts` exposes a native-`fetch` `finalizeIntakeQueueJob`
-Worker helper following the same transport and untrusted-response rules as
-the other functions on this page; it is not wired into `src/index.ts` or any
-Queue handler yet.
+This closes the double-advance window for one persisted message and, when a
+reply is planned, the lost/duplicate-reply window between state advance and
+outbox persistence. It does not cover LLM work repeating after a lease
+expiry/reclaim, or the actual WhatsApp send and its own retry/delivery
+tracking — Task 018 owns claiming and sending rows from
+`outbound_message_outbox`. `src/intakeJobLease.ts` exposes a native-`fetch`
+`finalizeIntakeQueueJob` Worker helper following the same transport and
+untrusted-response rules as the other functions on this page. It is wired
+into `src/intakeConsumer.ts`, which calls `planIntakeReply` and forwards its
+result as the reply pair; no code sends a WhatsApp message or reads from the
+outbox yet.

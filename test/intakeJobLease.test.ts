@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { claimIntakeQueueJob, completeIntakeQueueJob, finalizeIntakeQueueJob } from "../src/intakeJobLease";
 import type { FinalizeIntakeQueueJobInput } from "../src/intakeJobLease";
+import type { IntakeReplyCategory, IntakeReplyPlan } from "../src/intakeReply";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 
@@ -233,6 +234,7 @@ describe("finalizeIntakeQueueJob", () => {
     nextStage: "complaint_collection",
     petId: null,
     intakeData: { note: "hello" },
+    reply: { kind: "none" },
   };
 
   it("calls the RPC with the documented URL, method, headers, and body", async () => {
@@ -258,6 +260,30 @@ describe("finalizeIntakeQueueJob", () => {
       p_next_stage: "complaint_collection",
       p_pet_id: null,
       p_intake_data: { note: "hello" },
+      p_reply_category: null,
+      p_reply_text: null,
+    });
+  });
+
+  it.each([
+    "emergency_handoff",
+    "human_handoff",
+    "safety_questions",
+    "pet_identity",
+    "complaint",
+    "intake_received",
+  ] satisfies IntakeReplyCategory[])("maps the %s reply category and text unchanged", async (category) => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const text = `fixed copy for ${category}`;
+    const reply: IntakeReplyPlan = { kind: "send", category, text };
+
+    await finalizeIntakeQueueJob({ ...baseInput, reply }, env);
+
+    const [, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      p_reply_category: category,
+      p_reply_text: text,
     });
   });
 

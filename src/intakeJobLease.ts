@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import type { IntakeStage } from "./conversationState";
+import type { IntakeReplyPlan } from "./intakeReply";
 
 export type ClaimIntakeQueueJobResult =
   | { kind: "claimed"; claimToken: string; messageText: string }
@@ -25,6 +26,7 @@ export interface FinalizeIntakeQueueJobInput {
   nextStage: IntakeStage;
   petId: string | null;
   intakeData: Record<string, unknown>;
+  reply: IntakeReplyPlan;
 }
 
 const FAILED_CLAIM: ClaimIntakeQueueJobResult = { kind: "failed" };
@@ -187,6 +189,8 @@ export async function finalizeIntakeQueueJob(input: FinalizeIntakeQueueJobInput,
     p_next_stage: input.nextStage,
     p_pet_id: input.petId,
     p_intake_data: input.intakeData,
+    p_reply_category: input.reply.kind === "send" ? input.reply.category : null,
+    p_reply_text: input.reply.kind === "send" ? input.reply.text : null,
   });
   if (rows === null || rows.length !== 1) return FAILED_FINALIZE;
 
