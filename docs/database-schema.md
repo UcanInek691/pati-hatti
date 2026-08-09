@@ -398,3 +398,14 @@ The migration and its rollback fixture,
 accepted-vs-sent/delivered/read/failed distinction, the tenant-safe
 `record_whatsapp_outbound_status` RPC, and the non-regressing rank/timestamp
 rules.
+
+## Staff work items
+
+Defined in `supabase/migrations/20260809000400_staff_work_items.sql`.
+Disposable validation passed on `vetai-test` on 2026-08-09: apply-time
+backfill produced the three expected work kinds/reasons, and
+`supabase/tests/020_staff_work_items.sql` returned `PASS` with zero fixture
+residue. See [`docs/staff-work-items.md`](staff-work-items.md) for the two
+work kinds, the human-handoff and delivery-failure triggers, the tenant/RLS
+boundaries, and why durable visibility is not notification. It has not been
+applied to production.

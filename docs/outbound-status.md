@@ -99,8 +99,12 @@ claiming to have tested it.
 ## Not built here
 
 No dashboard, alert, retention/pruning job, deployment, or real-provider
-test is part of this task. A `failed` status is only visible via direct
-database inspection, same as a terminally failed send from Task 018.
+test is part of this task. A `provider_delivery_status = 'failed'` row is
+durably recorded as a `provider_failed` staff work item by Task 020's
+`public.staff_work_items` (see
+[`docs/staff-work-items.md`](staff-work-items.md)), which a later
+`delivered` or `read` callback resolves automatically. That is durable
+visibility for clinic staff, not a dashboard, alert, or notification.
 
 ## Disposable validation passed
 

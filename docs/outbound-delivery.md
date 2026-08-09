@@ -139,10 +139,12 @@ been made by this task.
 
 ## Failed rows have no operational owner yet
 
-A row that exhausts all 3 attempts becomes terminally `failed` with no retry,
-no staff notification, and no panel to view it — this task does not build
-one. Until such a surface exists, a `failed` row is only visible via direct
-database inspection.
+A row that exhausts all 3 attempts becomes terminally `failed` with no retry
+and no panel to view it — this task does not build one. Task 020's
+`public.staff_work_items` (see [`docs/staff-work-items.md`](staff-work-items.md))
+durably records a `send_attempts_exhausted` work item for it so clinic staff
+can see it in their own tenant's data; that is visibility, not notification —
+no email, push, or WhatsApp alert is sent, and no one is paged.
 
 ## Disposable validation passed
 

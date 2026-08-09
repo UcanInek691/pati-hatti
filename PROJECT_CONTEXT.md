@@ -182,6 +182,22 @@ The secure Worker baseline is committed on `main`:
   coherent CHECK enforcement, RLS/grants, erasure cascades, and zero residue.
   Frozen install, typecheck, 630/630 tests, Worker dry-run, and Codex review
   passed. No real Meta callback, deployment, or production migration ran.
+- A minimal `staff_work_items` table now durably records human-handoff
+  conversations and terminal outbound delivery failures without copying phone
+  numbers or message content. Native PostgreSQL triggers deduplicate replays,
+  upgrade a handoff to urgent when any persisted safety signal is true, and
+  resolve provider-failure work when later delivered/read evidence arrives.
+- Authenticated clinic staff have read-only access through one tenant-scoped
+  RLS policy; anon has no access, and trigger writes run through two narrowly
+  scoped empty-search-path `SECURITY DEFINER` functions with direct execution
+  revoked. Composite FKs preserve clinic/conversation/outbox ownership and
+  successful erasure paths cascade staff items.
+- Task 020's migration, apply-time three-case backfill, rollback fixture, and
+  catalog checks passed on disposable `vetai-test` with zero fixture residue.
+  Frozen install, typecheck, 630/630 tests, Worker dry-run, and Codex review
+  passed. Claude Opus's final architecture/RLS/safety review also passed with
+  no blocking finding; no notification, staff UI, resolution API, deployment,
+  or production migration was added.
 
 Verified evidence before the context-system change:
 
@@ -197,7 +213,8 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Operational monitoring and alerts for terminal send/provider failures.
+- Operational alerts/notifications and a dashboard for terminal send/provider
+  failures and human handoffs.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
@@ -214,11 +231,12 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 019 now persists reviewed outbound provider-status callbacks without
-confusing acceptance with delivery. The next phase is Task 020: define a
-minimal backend staff work queue for human handoff and terminal delivery
-failures before appointments or a staff UI. No Cron, Queue, or DLQ resource
-has been created and production deployment remains out of scope.
+Task 020 is complete with Codex and Claude Opus approval. The next phase is
+Task 021: one combined minimal staff read/detail/resolve workflow and internal
+surface. After Task 020, the fixed MVP roadmap has four main implementation
+tasks: staff workflow, appointment database engine, WhatsApp appointment
+confirmation flow, and production readiness. No real notification,
+Cron/Queue/DLQ resource creation, or production deployment has occurred.
 
 ## Durable safety invariants
 
@@ -261,6 +279,21 @@ has been created and production deployment remains out of scope.
 - Deterministic fail-closed consumer errors can exhaust the configured three
   attempts. A real DLQ resource, monitoring path, and operational owner are a
   production blocker even though no such resource is created in this repo yet.
+- Staff work items contain routing identifiers and closed operational reasons,
+  never recipient phone numbers or message content. They are durable
+  visibility, not proof that a person was notified or responded.
+- Standalone WhatsApp-account deletion may be blocked while the pre-existing
+  webhook-event account link remains; successful owner/account/outbox/clinic
+  erasure paths must cascade related staff work items and leave no dangling
+  operational record.
+- Staff work-list queries must order textual priority with `priority DESC` so
+  `urgent` precedes `normal`. Work-item durability is intentionally bounded by
+  source conversation/outbox lifetime because KVKK erasure cascades take
+  precedence over an immutable audit trail.
+- The one-open-delivery-item invariant currently depends on the protected
+  outbox CHECK that makes exhausted-send and provider-failed states mutually
+  exclusive. A future relaxation of that CHECK must revisit the partial unique
+  key and trigger conflict behavior together.
 
 ## Context maintenance
 

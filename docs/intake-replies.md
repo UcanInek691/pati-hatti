@@ -80,6 +80,13 @@ condition the Queue consumer atomically routes to `human_handoff`
 too, so a corrupt snapshot cannot cause the reply planner to ask the user to
 repeat potentially urgent information forever.
 
+A conversation that reaches `intake_stage = 'human_handoff'` is separately,
+durably recorded for clinic staff by Task 020's `public.staff_work_items`
+(see [`docs/staff-work-items.md`](staff-work-items.md)), escalated to urgent
+if any persisted safety signal was `true`. That is durable visibility in the
+database, not a notification — the reply text above is still the only thing
+that tells the user what happens next.
+
 ## Persisted, not yet sent
 
 A planned reply is now persisted atomically: `src/intakeConsumer.ts` passes
