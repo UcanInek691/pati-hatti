@@ -105,6 +105,13 @@ assign, or resolve endpoint, RPC, or UI in this task — `resolved_at` is set
 only by the delivery-failure supersession trigger described above. Building
 a resolution workflow is explicitly out of scope here.
 
+Task 021 (see [`docs/staff-workflow.md`](staff-workflow.md)) later adds the
+one explicit resolution path: `public.resolve_staff_work_item`, a
+`SECURITY DEFINER` RPC callable only by `authenticated`. It does not change
+anything described in this document — the table grants, RLS policy, and both
+triggers above are unchanged; `authenticated` still has no direct table
+`UPDATE`.
+
 ## Durable visibility is not notification
 
 This task makes handoff and failure work durably queryable by staff who
@@ -116,11 +123,11 @@ were notified, and this task does not change that copy.
 
 ## Not built here
 
-No notification/alert of any kind, no admin panel or other UI, no
-assignment, no acknowledgement/resolution API, no appointment flow, no
-retention/pruning job, no deployment, and no real-provider or real-clinic
-operations test. This task adds no TypeScript, no Worker wiring, no new
-dependency.
+Task 020 itself added no notification/alert, UI, assignment, resolution API,
+appointment flow, retention/pruning job, deployment, or real-provider or
+real-clinic operations test. Task 021 later adds only the minimal internal
+read/detail/resolve surface described above; it still adds no notification,
+assignment, appointment, or deployment behavior.
 
 ## Disposable validation passed
 

@@ -409,3 +409,20 @@ residue. See [`docs/staff-work-items.md`](staff-work-items.md) for the two
 work kinds, the human-handoff and delivery-failure triggers, the tenant/RLS
 boundaries, and why durable visibility is not notification. It has not been
 applied to production.
+
+## Staff workflow resolution RPC
+
+Defined in `supabase/migrations/20260809000500_staff_workflow.sql`:
+`public.resolve_staff_work_item(p_work_item_id uuid) returns table(result
+text)`. `SECURITY DEFINER`, `VOLATILE`, `SET search_path = ''`, executable
+only by `authenticated` (revoked from `PUBLIC`, `anon`, `service_role`). It
+locks the target row, authorizes with the caller's identity via the existing
+`vetai_private.is_clinic_staff(clinic_id)` helper, and returns exactly one of
+`resolved | already_resolved | not_found` — never distinguishing an absent
+item from one outside the caller's clinics. It adds no column, policy, table
+grant, or general-purpose mutation endpoint; `authenticated` direct table
+`UPDATE` remains denied. See [`docs/staff-workflow.md`](staff-workflow.md)
+for the full login/list/detail/resolve flow. The migration and rollback SQL
+fixture passed on disposable `vetai-test` on 2026-08-09 with zero fixture
+residue; they have not been applied to production or recorded in Supabase
+migration history.

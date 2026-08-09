@@ -20,6 +20,7 @@ const env: Env = {
   WHATSAPP_APP_SECRET: APP_SECRET,
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "unused",
+  SUPABASE_ANON_KEY: "unused-anon-key",
   OPENAI_API_KEY: "unused",
   INTAKE_QUEUE: stubQueue(),
   WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",
@@ -144,6 +145,54 @@ describe("worker fetch routing", () => {
   it("returns 404 for unknown routes", async () => {
     const res = await worker.fetch(new Request("https://vetai.test/nope"), env);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("worker staff routes", () => {
+  it.each(["https://vetai.test/staff", "https://vetai.test/staff/"])("GET %s returns the staff HTML shell", async (url) => {
+    const res = await worker.fetch(new Request(url), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("GET /staff/app.js returns the staff browser script", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/staff/app.js"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
+  });
+
+  it("GET /staff/config.json returns only the public Supabase config", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/staff/config.json"), env);
+    expect(res.status).toBe(200);
+    const body = await res.json<Record<string, string>>();
+    expect(Object.keys(body).sort()).toEqual(["supabaseAnonKey", "supabaseUrl"]);
+  });
+
+  it("GET /staff returns 503 when Supabase configuration is missing", async () => {
+    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_ANON_KEY: "" };
+    const res = await worker.fetch(new Request("https://vetai.test/staff"), noConfigEnv);
+    expect(res.status).toBe(503);
+  });
+
+  it.each(["/staff", "/staff/", "/staff/app.js", "/staff/config.json"])(
+    "POST %s returns 405 with Allow: GET and staff security headers",
+    async (path) => {
+      const res = await worker.fetch(new Request(`https://vetai.test${path}`, { method: "POST" }), env);
+      expect(res.status).toBe(405);
+      expect(res.headers.get("Allow")).toBe("GET");
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
+    },
+  );
+
+  it("GET /staff/unknown returns 404 with staff security headers", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/staff/unknown"), env);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
   });
 });
 

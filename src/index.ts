@@ -9,6 +9,7 @@ import { recordWhatsAppOutboundStatus } from "./supabaseOutboundStatus";
 import { enqueueIntakeJob } from "./intakeQueue";
 import { processIntakeQueueMessage } from "./intakeConsumer";
 import { drainOutboundMessages } from "./outboundSender";
+import { STAFF_SECURITY_HEADERS, handleStaffConfig, handleStaffScript, handleStaffShell } from "./staffPage";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -114,6 +115,25 @@ export default {
       if (request.method === "POST") {
         return handleWebhookPost(request, env);
       }
+    }
+
+    if (url.pathname === "/staff" || url.pathname === "/staff/" || url.pathname.startsWith("/staff/")) {
+      if (request.method !== "GET") {
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { ...STAFF_SECURITY_HEADERS, Allow: "GET" },
+        });
+      }
+      if (url.pathname === "/staff" || url.pathname === "/staff/") {
+        return handleStaffShell(env);
+      }
+      if (url.pathname === "/staff/app.js") {
+        return handleStaffScript();
+      }
+      if (url.pathname === "/staff/config.json") {
+        return handleStaffConfig(env);
+      }
+      return new Response("Not Found", { status: 404, headers: STAFF_SECURITY_HEADERS });
     }
 
     return new Response("Not Found", { status: 404 });

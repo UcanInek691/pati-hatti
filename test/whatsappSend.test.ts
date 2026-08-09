@@ -9,6 +9,7 @@ const env: Env = {
   WHATSAPP_APP_SECRET: "test-app-secret",
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+  SUPABASE_ANON_KEY: "test-anon-key",
   OPENAI_API_KEY: "unused",
   INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
   WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",

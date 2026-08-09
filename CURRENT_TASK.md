@@ -1,6 +1,6 @@
 # Current task — 021 minimal staff work surface
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -299,8 +299,230 @@ re-check.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- Read `AGENTS.md`, `PROJECT_CONTEXT.md`, and this file in full before editing.
+  Starting `HEAD` was `89f3596` on `main`; `git status` showed a clean
+  worktree, matching the "Starting context" claim above.
+- Confirmed `supabase/migrations/20260809000400_staff_work_items.sql` (Task
+  020): `staff_work_items` has RLS enabled with exactly one authenticated
+  `SELECT` policy gated by `vetai_private.is_clinic_staff(clinic_id)`; no
+  authenticated `INSERT`/`UPDATE`/`DELETE` grant exists, which is why an
+  RPC — not a PostgREST `PATCH` — is required to resolve an item.
+- Confirmed `supabase/migrations/20260808000200_finalize_intake_queue_job.sql`
+  as the codebase's existing style reference for a `SECURITY DEFINER`
+  function: parameter null-checks before lookup, `FOR UPDATE` row locking,
+  `RETURNS TABLE(result text)`, `SET search_path = ''`, fully-qualified
+  relations, and explicit `revoke`/`grant execute` statements.
+- Confirmed `conversations`/`owners`/`pets`/`messages` already grant
+  authenticated RLS-scoped `SELECT` via the same `is_clinic_staff` helper
+  (`supabase/migrations/20260806000000_core_tenant_schema.sql`), so the
+  staff browser can read detail data directly with the caller's own access
+  token and the publishable anon key — no new table grant is needed.
+- Confirmed `package.json` has no DOM/UI/testing-library dependency beyond
+  `vitest`, `wrangler`, `typescript`, `@cloudflare/workers-types` — the staff
+  page had to stay dependency-free and source-testable, not DOM-tested.
+- Confirmed `src/env.ts` had no `SUPABASE_ANON_KEY` binding yet, and that no
+  existing code path used the Supabase anon (publishable) key — only the
+  service-role key, which must never reach a staff response or script.
+- Confirmed `supabase/tests/020_staff_work_items.sql` as the rollback-fixture
+  style reference (`BEGIN`/`ROLLBACK`, deterministic fixture UUIDs,
+  `set local role` + `request.jwt.claim.sub` to simulate an authenticated
+  identity, zero-residue verification after rollback).
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+### Changed files
+
+- `supabase/migrations/20260809000500_staff_workflow.sql` (new) —
+  `public.resolve_staff_work_item(p_work_item_id uuid) returns
+  table(result text)`. **NOT APPLIED.**
+- `supabase/tests/021_staff_workflow.sql` (new) — rollback-only SQL proof
+  fixture for the RPC. **NOT APPLIED / NOT RUN** by Sonnet.
+- `src/staffPage.ts` (new) — `StaffConfig`, `readStaffConfig`, `STAFF_HTML`,
+  `STAFF_APP_JS`, `handleStaffShell`, `handleStaffScript`,
+  `handleStaffConfig`.
+- `src/index.ts` — added the staff routing block only (GET `/staff`,
+  `/staff/`, `/staff/app.js`, `/staff/config.json`; 405 with `Allow: GET`
+  for other methods; 404 for unknown `/staff/*` subpaths). Existing
+  `/health`, `/webhooks/whatsapp`, `queue`, and `scheduled` handlers are
+  unchanged.
+- `src/env.ts`, `.dev.vars.example` — added the `SUPABASE_ANON_KEY` binding.
+- `test/staffPage.test.ts` (new) — 32 tests covering `readStaffConfig`,
+  `handleStaffShell`, `handleStaffScript`, `handleStaffConfig`, and
+  source-level assertions on `STAFF_HTML`/`STAFF_APP_JS`.
+- `test/index.test.ts` — added a `SUPABASE_ANON_KEY` field to the shared
+  `Env` fixture and one new `describe("worker staff routes", ...)` block
+  covering `/staff` routing (200/503/405/404); existing webhook/Queue/
+  scheduled/health/unknown-route tests are untouched and still pass.
+- `test/conversationState.test.ts`, `test/intakeConsumer.test.ts`,
+  `test/intakeJobLease.test.ts`, `test/openaiIntake.test.ts`,
+  `test/outboundDelivery.test.ts`, `test/outboundSender.test.ts`,
+  `test/supabaseIngest.test.ts`, `test/supabaseOutboundStatus.test.ts`,
+  `test/whatsappSend.test.ts` — added only the `SUPABASE_ANON_KEY: "test-anon-key"`
+  field their existing `Env` fixtures needed once the binding became
+  required (these files were previously omitted from the "Allowed changes"
+  list's explicit examples but fall under "existing test Env fixtures,
+  limited to one required `SUPABASE_ANON_KEY` string binding"; without this
+  addition `pnpm typecheck` fails with `TS2741` in each).
+- `docs/staff-workflow.md` (new); `docs/staff-work-items.md`,
+  `docs/database-schema.md` — narrow additions cross-referencing the new
+  RPC and marking it **NOT APPLIED**.
+- `CURRENT_TASK.md` — this section only.
+
+### Acceptance criteria
+
+- Database contract: `resolve_staff_work_item` is `SECURITY DEFINER`,
+  `VOLATILE`, `SET search_path = ''`, revoked from `PUBLIC`/`anon`/
+  `service_role`, granted only to `authenticated`; rejects a null id before
+  lookup; locks the row with `FOR UPDATE`; authorizes via
+  `vetai_private.is_clinic_staff(row.clinic_id)`; returns indistinguishable
+  `not_found` for an absent row or one outside the caller's clinics;
+  returns `already_resolved` only for an authorized already-resolved row;
+  otherwise sets `status = 'resolved'`, `resolved_at =
+  pg_catalog.now()` and returns `resolved`; returns exactly one row; fully
+  qualifies every relation; accepts no clinic id; touches no
+  conversation/outbox state. Verified by source review against the
+  contract text; **not verified by running SQL**, per the instruction that
+  Sonnet must not apply the migration.
+- Staff browser surface: routes, media types, security headers, CSP,
+  405/404 behavior, auth flow, list query shape, detail scope, resolve
+  action, and every "must not contain" bullet (service-role reference,
+  console call, dynamic HTML sink, eval/Function, refresh-token
+  persistence, webhook/outbox/intake-data reference, unrestricted select)
+  are all asserted directly in `test/staffPage.test.ts` and pass.
+- Out-of-scope items (notification, user creation, password reset, role/
+  clinic/account management, notes, messaging, conversation-state changes,
+  reopen, appointments, analytics/realtime, deployment, real credentials)
+  were not built.
+
+### Checks run
+
+```text
+pnpm install --frozen-lockfile   → up to date, exit 0
+pnpm typecheck                   → exit 0, no errors
+pnpm test                        → 672 passed, 0 failed (includes all new
+                                    staffPage.test.ts and staff-route tests
+                                    in index.test.ts)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → exit 0, "--dry-run: exiting now."
+git diff --check                 → exit 0 (only benign CRLF-conversion
+                                    notices, no whitespace errors)
+```
+
+### Checks not run, and why
+
+- **Local `/staff` smoke test (`wrangler dev` with placeholder config):
+  attempted, could not complete.** A `.dev.vars` file with clearly
+  placeholder, non-real values (`http://127.0.0.1:54321` Supabase URL,
+  placeholder keys/tokens — never entered anywhere real) was created,
+  gitignored, and removed again after the attempt. `pnpm exec wrangler dev`
+  loaded the config and bindings correctly (confirmed by its own startup
+  log, which listed all seven `Env` bindings including the new
+  `SUPABASE_ANON_KEY`), but the underlying `workerd` runtime crashed before
+  serving any request: `*** std::terminate() called with no exception` /
+  `The Workers runtime failed to start. There was likely a problem with the
+  workerd binary or your configuration.` This crash occurs during `workerd`
+  process startup, before the Worker's `fetch` handler — and therefore
+  before any of my routing code — ever runs, on both a Git Bash and a
+  PowerShell/cmd launch. It is a local Windows `workerd`-binary/environment
+  problem, not something introduced by this task's diff; `wrangler deploy
+  --dry-run` (which builds and validates the same bundle without invoking
+  `workerd`) succeeded. Recommend Codex or Opus attempt the local `wrangler
+  dev` smoke test on their own environment as part of review; I could not
+  complete it here.
+- SQL migration and rollback fixture: intentionally not applied or run, per
+  explicit instruction ("Sonnet must not apply the migration or SQL
+  fixture... Codex alone validates them on disposable `vetai-test`").
+- No real Meta/OpenAI/Supabase credentials were used, entered, or called at
+  any point.
+
+### Known limitations (see also `docs/staff-workflow.md`)
+
+- sessionStorage-only auth: closing the tab or token expiry requires
+  re-login; no refresh-token lifecycle.
+- No notification/assignment; staff must open `/staff` and refresh
+  manually.
+- No reopen, note, or messaging capability; no appointment/analytics/
+  realtime behavior.
+- Not deployed.
+
+### Risks Codex/Opus should inspect
+
+- The RPC's authorization and result-shape correctness is asserted only by
+  source review here; Codex's SQL-fixture run against disposable
+  `vetai-test` is the actual proof and has not happened yet.
+- The local Worker runtime smoke test did not complete (see above); Codex's
+  own local run is the first real confirmation that `/staff`,
+  `/staff/app.js`, and `/staff/config.json` serve correctly end to end.
+- `isSafeSupabaseUrl` in `src/staffPage.ts` accepts `https:` unconditionally
+  and `http:` only for `localhost`/`127.0.0.1`/`[::1]` (matching
+  `URL.hostname`'s bracketed IPv6 form) — worth Opus double-checking this
+  is the intended loopback allowlist and that no other bypass exists.
+
+## Codex review record
+
+Codex reviewed the complete diff and browser/RLS/RPC call path on 2026-08-09.
+The allowed-change boundary is intact; no dependency, lockfile, Wrangler,
+webhook, Queue, Cron, intake, prompt, or existing migration drift was found.
+
+Minimum fixes made during review:
+
+- normalized `SUPABASE_URL` to a root origin and rejected credentials, path,
+  query, and fragment components;
+- added the required no-store/nosniff/no-referrer headers to staff 404/405
+  responses and `form-action 'none'` to prevent a no-JavaScript login form
+  submission from placing credentials in a URL;
+- made the resolve response parser reject additional row fields and corrected
+  one Turkish error string;
+- repaired the rollback fixture's null-input false positive, PostgreSQL 17
+  empty-search-path representation, implicit function-owner privilege
+  accounting, authenticated access to its temporary ID table, and
+  transaction-timestamp expectation. These were test-proof defects, not RPC
+  behavior changes.
+
+Verification after the fixes:
+
+```text
+pnpm install --frozen-lockfile   -> PASS (unchanged lock)
+pnpm typecheck                   -> PASS
+pnpm test                        -> PASS (676/676, 22 files)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS (no deployment)
+git diff --check                 -> PASS
+```
+
+Wrangler local smoke testing with placeholder-only values passed for the
+fixed `/staff` shell, JavaScript, two-field config, 405, and 404 responses.
+No real staff login or Supabase browser call was made.
+
+Codex applied the migration only to disposable `vetai-test`. The corrected
+rollback fixture returned `PASS` with `remaining_test_clinics = 0`,
+`remaining_test_users = 0`, and `remaining_test_items = 0`. A separate
+catalog query confirmed: function present; `SECURITY DEFINER`; `VOLATILE`;
+empty search path; execute allowed for `authenticated` and denied for
+`PUBLIC`, `anon`, and `service_role`; staff table RLS enabled with one policy;
+zero fixture users/clinics. No production migration or migration-history
+entry was created.
+
+Codex decision: **PASS, pending the single mandatory read-only Claude Opus
+review.** No commit is made until that review passes.
+
+## Claude Opus review record
+
+Claude Opus completed the mandatory read-only architecture/RLS/privacy review
+on 2026-08-10 and returned **PASS** with no blocking finding. The review
+independently reran all 676 tests and verified the caller-identity
+`SECURITY DEFINER` boundary, indistinguishable absent/cross-tenant results,
+closed grants, publishable-key/service-role separation, RLS-protected PII,
+`textContent`-only rendering, CSP/URL controls, urgent-first ordering,
+fail-closed resolution parsing, and truthful operational claims.
+
+Accepted non-blocking notes: the trusted operator URL binding could receive
+additional hostname-character hardening; the RPC locks the target row before
+membership authorization, which can cause only a short statement-lifetime
+lock for a guessed UUID; absent and cross-tenant paths are not timing-equal;
+membership revocation currently means deleting the `clinic_staff` row. These
+do not expose data or weaken the reviewed tenant boundary and do not justify
+another implementation/review cycle for this MVP task.
+
+Final decision: **PASS / COMPLETE**. No production deploy, production
+migration, real staff login, or external provider call occurred.

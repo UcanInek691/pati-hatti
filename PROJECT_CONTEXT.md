@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-09 by Codex.
+Last verified: 2026-08-10 by Codex.
 
 ## Product
 
@@ -198,6 +198,21 @@ The secure Worker baseline is committed on `main`:
   passed. Claude Opus's final architecture/RLS/safety review also passed with
   no blocking finding; no notification, staff UI, resolution API, deployment,
   or production migration was added.
+- A dependency-free internal staff surface now supports password login
+  directly to Supabase Auth, an urgent-first RLS-scoped open-work list,
+  owner/pet/latest-20-message detail, manual refresh/logout, and one explicit
+  resolve action. Only the publishable anon key reaches the browser; the
+  service-role credential remains server-only. Remote values are rendered
+  through `textContent`, staff responses are non-cacheable, and CSP blocks
+  inline scripts, framing, base changes, and form submission.
+- Resolution uses one authenticated-only empty-search-path `SECURITY DEFINER`
+  RPC that locks the item, checks caller clinic membership, hides absent and
+  cross-tenant rows behind the same `not_found` result, and preserves direct
+  authenticated table-update denial. Task 021's migration and rollback proof
+  passed on disposable `vetai-test` with zero fixture residue; 676/676 tests,
+  typecheck, frozen install, Worker dry-run, local route smoke testing, and
+  Codex review and the required final Claude Opus privacy/RLS review passed;
+  nothing was deployed or applied to production.
 
 Verified evidence before the context-system change:
 
@@ -213,13 +228,13 @@ Verified evidence before the context-system change:
 
 - General-purpose application queries; only the inbound WhatsApp persistence
   RPC is implemented.
-- Operational alerts/notifications and a dashboard for terminal send/provider
-  failures and human handoffs.
+- Operational alerts/notifications, staff assignment, and administrative user
+  or clinic management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Appointment operations.
 - Summaries, memory, embeddings, or RAG.
-- Staff/admin panel.
+- A full staff/admin panel beyond the minimal read/detail/resolve surface.
 - Production deployment and real external-service configuration.
 
 ## Environment constraints
@@ -231,10 +246,9 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 020 is complete with Codex and Claude Opus approval. The next phase is
-Task 021: one combined minimal staff read/detail/resolve workflow and internal
-surface. After Task 020, the fixed MVP roadmap has four main implementation
-tasks: staff workflow, appointment database engine, WhatsApp appointment
+Task 021 is complete with Codex implementation/RLS validation and Claude Opus
+privacy/security approval. The fixed MVP roadmap now has three main
+implementation tasks: appointment database engine, WhatsApp appointment
 confirmation flow, and production readiness. No real notification,
 Cron/Queue/DLQ resource creation, or production deployment has occurred.
 
