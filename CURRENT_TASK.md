@@ -1,243 +1,269 @@
-# Current task — 020 durable staff work items
+# Current task — 021 minimal staff work surface
 
-Status: `COMPLETE`
+Status: `READY`
 
 Primary implementer: Claude Sonnet
 
-Reviewers: Codex, then one read-only Claude Opus architecture/RLS/safety
-review. Opus is mandatory for this task because it introduces a
-`SECURITY DEFINER` trigger boundary and makes human-handoff work visible to
-authenticated clinic staff. Do not repeat the Opus review unless Codex makes
-a material design change after it.
+Reviewers: Codex, then one read-only Claude Opus architecture/RLS/privacy
+review. Opus is required once because this task exposes authenticated clinical
+conversation data in a browser and adds a callable `SECURITY DEFINER` mutation.
+Do not repeat the review unless Codex makes a material security design change.
 
 ## Goal
 
-Create a minimal, durable, tenant-safe staff work queue for:
-
-- intake conversations that require human attention; and
-- outbound WhatsApp replies that reached a terminal delivery failure.
-
-Use PostgreSQL tables, constraints, RLS, and row triggers so every current or
-future write path receives the same behavior without adding Worker wiring or
-a dependency.
-
-The resulting path is:
+Deliver one minimal, usable staff workflow:
 
 ```text
-conversation enters human_handoff ─┐
-                                   ├─> durable staff_work_items row
-outbound delivery becomes failed ──┘
+staff signs in -> sees own clinic's open work, urgent first
+               -> opens owner/pet/recent-message detail
+               -> explicitly marks the work resolved
 ```
 
-This task does not notify staff, send email/push/WhatsApp alerts, add an admin
-panel, assign work, let staff resolve work, expose phone numbers or message
-content, alter intake replies, implement appointments, deploy, or create
-external resources. Documentation must say plainly that durable visibility is
-not the same as notification.
+Use the existing Cloudflare Worker, Supabase Auth, PostgREST, table RLS, and
+native browser APIs. Add no UI framework, SDK, dependency, backend proxy, new
+Queue, or speculative admin abstraction.
+
+This task does not notify or assign staff, create users, reset passwords,
+manage roles/clinics/accounts, add notes, send messages, change conversation
+state, reopen work manually, implement appointments, add analytics/realtime,
+deploy, or configure real credentials.
 
 ## Starting context
 
-- Starting HEAD: `eefc970` on `main`; worktree was clean.
-- Task 019 is committed and validated on disposable `vetai-test`.
-- `conversations` is tenant-scoped and already readable by authenticated
-  clinic staff under RLS. Its `intake_stage = 'human_handoff'` and
-  `status = 'handoff'` identify conversations that require human handling.
-- `intake_data.reported_safety_signals` is the validated persisted safety
-  snapshot. Any literal JSON boolean `true` means the work is urgent; absence
-  of a true value must not be described as clinically safe.
-- `outbound_message_outbox.delivery_status = 'failed'` means bounded send
-  attempts were exhausted. Its `provider_delivery_status = 'failed'` means a
-  previously accepted provider message currently has failure evidence; a
-  later `delivered` or `read` callback may supersede that evidence.
-- The protected outbox contains recipient and reply PII and has no client RLS
-  policy. This task must not expose or copy those values.
-- Human-handoff reply text currently tells the user to contact a clinic; the
-  product does not claim that staff were notified. This task preserves that
-  truthful behavior.
+- Starting HEAD: `89f3596` on `main`; worktree was clean.
+- Task 020 is committed and passed Codex plus Claude Opus review. Its
+  `staff_work_items` table contains no phone/message content, grants
+  authenticated users SELECT only, and exposes rows only through
+  `vetai_private.is_clinic_staff(clinic_id)`.
+- Same-clinic authenticated staff already have RLS-protected SELECT access to
+  `conversations`, `owners`, `pets`, and `messages`. The staff browser can
+  read those tables with its own Supabase access token; the Worker service-role
+  credential must never enter a staff response or browser script.
+- Task 020 intentionally provides no direct authenticated UPDATE. Resolution
+  needs one predefined operation that authorizes the caller's clinic and
+  performs the closed state transition.
+- Text priority ordering is `normal < urgent`; the open work query must use
+  `priority.desc`, then oldest first.
+- Work-item erasure follows its source conversation/outbox. This is an
+  operational queue, not a tamper-evident clinical audit log.
+- The project has no runtime dependency beyond platform APIs and no frontend
+  build pipeline. Preserve that property.
 
 Before editing, follow `AGENTS.md`, read `PROJECT_CONTEXT.md` and this file,
-then verify these facts from source, callers, tests, migrations, scripts, Git
+then verify every fact from source, migrations, callers, tests, scripts, Git
 status, and recent commits. Stop on a material conflict.
 
 ## Allowed changes
 
-- New migration
-  `supabase/migrations/20260809000400_staff_work_items.sql`.
-- New rollback SQL test `supabase/tests/020_staff_work_items.sql`.
-- New `docs/staff-work-items.md`.
-- Narrowly relevant updates to `docs/database-schema.md`,
-  `docs/intake-replies.md`, `docs/outbound-delivery.md`, and
-  `docs/outbound-status.md`.
+- New migration `supabase/migrations/20260809000500_staff_workflow.sql`.
+- New rollback SQL test `supabase/tests/021_staff_workflow.sql`.
+- New `src/staffPage.ts` and `test/staffPage.test.ts`.
+- `src/index.ts` and `test/index.test.ts`, limited to the new staff GET routes.
+- `src/env.ts`, `.dev.vars.example`, and existing test Env fixtures, limited
+  to one required `SUPABASE_ANON_KEY` string binding.
+- New `docs/staff-workflow.md` plus narrowly relevant updates to
+  `docs/staff-work-items.md` and `docs/database-schema.md`.
 - Fill only the Observed context and Delivery record sections of this file.
 
-Do not change TypeScript, tests, dependencies, lockfiles, Env bindings,
-Wrangler configuration, existing migrations/SQL fixtures, prompts, reply
-copy, intake/safety/planning behavior, webhook/Queue/Cron behavior,
-`AGENTS.md`, or `PROJECT_CONTEXT.md`.
+Do not change dependencies, lockfiles, `wrangler.toml`, existing migrations or
+SQL fixtures, webhook/Queue/Cron paths, service-role clients, intake/safety/
+reply behavior, prompts, appointment tables, `AGENTS.md`, or
+`PROJECT_CONTEXT.md`.
 
 ## Database contract
 
-### Staff work table
+### Resolution RPC
 
-Create `public.staff_work_items` with exactly these data fields:
+Create exactly one operation:
 
-- `id uuid primary key default gen_random_uuid()`;
-- `clinic_id uuid not null`;
-- `conversation_id uuid not null`;
-- `kind text not null` in `human_handoff | delivery_failure`;
-- `priority text not null` in `urgent | normal`;
-- `reason text not null` in
-  `emergency_handoff | human_handoff | send_attempts_exhausted | provider_failed`;
-- `source_outbox_id uuid` nullable;
-- `status text not null default 'open'` in `open | resolved`;
-- `created_at timestamptz not null default now()`;
-- `resolved_at timestamptz` nullable.
+```text
+public.resolve_staff_work_item(p_work_item_id uuid)
+returns table(result text)
+```
 
-Add named checks enforcing all state coherence:
+It must be `SECURITY DEFINER`, `VOLATILE`, `SET search_path = ''`, revoked
+from `PUBLIC`, `anon`, and `service_role`, and executable only by
+`authenticated`.
 
-- `open` requires `resolved_at is null`; `resolved` requires a non-null
-  `resolved_at`;
-- `human_handoff` requires a null `source_outbox_id` and a reason of
-  `emergency_handoff | human_handoff`;
-- `delivery_failure` requires a non-null `source_outbox_id` and a reason of
-  `send_attempts_exhausted | provider_failed`;
-- only `emergency_handoff` is `urgent`; every other reason is `normal`.
+Behavior:
 
-Tenant ownership must be structural:
+- reject a null identifier before lookup;
+- lock the exact work-item row;
+- authorize with the caller's Supabase identity and the existing
+  `vetai_private.is_clinic_staff(row.clinic_id)` helper;
+- return `not_found` for an absent item or an item outside the caller's
+  clinics, without revealing which case occurred;
+- return `already_resolved` only for an authorized already-resolved row;
+- otherwise atomically set `status = 'resolved'` and
+  `resolved_at = pg_catalog.now()`, then return `resolved`;
+- return exactly one row and no identifiers, PII, message content, clinic
+  existence, or raw database detail.
 
-- clinic FK to `clinics(id)` with `ON DELETE CASCADE`;
-- composite `(conversation_id, clinic_id)` FK to
-  `conversations(id, clinic_id)` with `ON DELETE CASCADE`;
-- add the minimum unique key needed on
-  `outbound_message_outbox(id, clinic_id)`, then use a composite
-  `(source_outbox_id, clinic_id)` FK with `ON DELETE CASCADE`.
+Fully qualify every relation/helper, use no dynamic SQL, do not accept a
+clinic ID, and do not change conversation/outbox state. Preserve direct table
+UPDATE denial for authenticated users. Concurrent resolve calls must serialize
+on the row and yield one `resolved`, then `already_resolved`.
 
-Add partial uniqueness so there can be at most:
+Do not add columns, policies, table grants, assignment/audit/note fields, or a
+general-purpose mutation endpoint in this task.
 
-- one open `human_handoff` item per clinic/conversation; and
-- one open `delivery_failure` item per clinic/source-outbox row.
+## Staff browser surface
 
-Add one staff-list index beginning with `(clinic_id, status, priority,
-created_at, id)`. Do not add speculative assignment, note, payload, phone,
-message-content, SLA, retry, or notification columns.
+### Routes and assets
 
-### RLS and privileges
+Add only these GET routes:
 
-- Enable RLS on `staff_work_items`.
-- Revoke all table access from `PUBLIC`, `anon`, and `authenticated`.
-- Grant `SELECT` to `authenticated` and all required backend access to
-  `service_role`.
-- Add exactly one authenticated `SELECT` policy using the existing
-  `vetai_private.is_clinic_staff(clinic_id)` helper.
-- Do not permit authenticated insert/update/delete in this task. Staff
-  resolution is a later, explicit workflow.
+- `/staff` and `/staff/` — fixed HTML shell;
+- `/staff/app.js` — fixed browser JavaScript;
+- `/staff/config.json` — JSON containing only normalized `supabaseUrl` and
+  `supabaseAnonKey`.
 
-### Human-handoff trigger
+Any non-GET request below `/staff` returns 405 with `Allow: GET`; any unknown
+staff subpath returns 404. Existing routes and handlers remain unchanged.
 
-Create one private trigger function and trigger on relevant
-`conversations` updates. The function must:
+`SUPABASE_ANON_KEY` is a publishable browser credential, never the
+service-role key. Require non-blank `SUPABASE_URL` and `SUPABASE_ANON_KEY`;
+allow HTTPS or loopback HTTP only. Missing/unsafe configuration returns a
+generic 503 for `/staff` and `/staff/config.json`. Never include or compare
+against `SUPABASE_SERVICE_ROLE_KEY` in staff assets.
 
-- derive clinic and conversation only from `NEW`;
-- create an open `human_handoff` item whenever the resulting
-  `NEW.intake_stage = 'human_handoff'`;
-- inspect only JSON boolean values under
-  `NEW.intake_data.reported_safety_signals`; if any value is literal `true`,
-  use `urgent/emergency_handoff`, otherwise use
-  `normal/human_handoff` without calling it safe;
-- tolerate absent/non-object safety data without raising;
-- deduplicate repeated handoff-stage messages while one item remains open;
-- upgrade an existing open normal item to urgent/emergency if a later update
-  contains any true safety signal;
-- allow a future new open item after an earlier item has been resolved.
+All staff responses use `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. The HTML
+uses a restrictive CSP: default deny, scripts from self only, no frames/base
+objects, and `connect-src` limited to the configured Supabase origin. Keep
+JavaScript in `/staff/app.js`; do not enable inline script execution.
 
-Use `SECURITY DEFINER` only because authenticated conversation updates must
-not require direct insert rights on `staff_work_items`. Fix
-`search_path = ''`, fully qualify every object, use no dynamic SQL, accept no
-caller parameters, and revoke direct execution from all roles. The trigger
-must not weaken the existing conversation policies.
+### Authentication
 
-Backfill one coherent open handoff item for each existing handoff-stage
-conversation, applying the same priority/reason rule and deduplication.
+The browser JavaScript uses native `fetch` directly against:
 
-### Delivery-failure trigger
+```text
+POST {SUPABASE_URL}/auth/v1/token?grant_type=password
+```
 
-Create one private trigger function and trigger on relevant
-`outbound_message_outbox` updates. It must derive every identifier from
-`NEW`, copy no PII, and:
+It sends email/password only from the user's browser to Supabase with the
+publishable key. It stores only the returned access token in `sessionStorage`,
+ignores the refresh token, never logs credentials/tokens, and provides a
+logout action that clears the token. On 401/403 it clears the session and
+returns to the login form. No signup, password reset, refresh-token lifecycle,
+cookie, or Worker credential proxy is added.
 
-- when `delivery_status` newly becomes `failed`, create one open normal
-  `delivery_failure/send_attempts_exhausted` item;
-- when `provider_delivery_status` newly becomes `failed`, create one open
-  normal `delivery_failure/provider_failed` item;
-- when a prior provider status `failed` is superseded by `delivered` or
-  `read`, resolve only the matching open `provider_failed` item and set its
-  `resolved_at`; never auto-resolve `send_attempts_exhausted`;
-- create nothing for unrelated, accepted, sent, delivered, or read updates;
-- deduplicate replays while an item remains open.
+### Open-work list
 
-Use the same narrowly scoped `SECURITY DEFINER`, empty-search-path,
-fully-qualified, no-dynamic-SQL posture. Backfill current terminal
-`delivery_status = 'failed'` and current
-`provider_delivery_status = 'failed'` rows using identical rules.
+Using the authenticated user's access token and publishable key, request only
+the necessary columns from `public.staff_work_items`, filtered to `status =
+open`, capped at 100, and ordered exactly:
 
-Trigger/backfill failures must abort the originating database transaction;
-do not swallow errors or create a partial state.
+```text
+priority.desc,created_at.asc,id.asc
+```
 
-## Required rollback SQL test
+Display fixed Turkish labels for kind/priority/reason, creation time, and a
+detail action. Urgent work must be visibly first and marked without relying on
+color alone. Provide manual refresh; do not poll or use Realtime.
 
-`supabase/tests/020_staff_work_items.sql` must run inside `BEGIN`/`ROLLBACK`
-and prove at least:
+### Detail
 
-- a normal handoff creates one normal item; repeated handoff updates do not
-  duplicate it;
-- any literal true persisted safety signal creates or upgrades the one open
-  item to urgent/emergency, without hardcoding the current signal names;
-- absent or malformed/non-object safety data does not raise and creates a
-  normal item rather than asserting safety;
-- after a simulated resolved item, a later handoff update may create one new
-  open item;
-- exhausted send and provider failure transitions create the exact failure
-  reason once; unrelated transitions create none;
-- delivered/read supersession resolves an open provider-failed item, while
-  an exhausted-send item remains open;
-- all named state checks and composite tenant FKs reject invalid/cross-tenant
-  rows with zero partial mutation;
-- owner/conversation, account/outbox, and clinic erasure cascades leave no
-  dangling staff items;
-- RLS is enabled; clinic staff A can select only clinic A rows; unrelated
-  staff, `anon`, and unauthenticated callers cannot see rows;
-- `authenticated` cannot insert, update, or delete rows directly;
-- trigger functions cannot be executed directly and only the intended table
-  privileges/policy exist;
+On explicit selection, use the item's `conversation_id` and the same caller
+token to read only that RLS-visible conversation, its owner, optional pet, and
+at most the latest 20 messages. Display:
+
+- owner name and phone;
+- pet name/species when present;
+- conversation status/intake stage;
+- message direction, timestamp, and content.
+
+Order the fetched messages newest-first at the API boundary, then display them
+chronologically. If any linked record is unavailable, show a generic Turkish
+error rather than falling back to an unscoped query.
+
+Never fetch `intake_data`, webhook events, outbox rows, provider IDs, payload
+hashes, secrets, or more than 20 message bodies. Never put remote data into
+`innerHTML`, `outerHTML`, `insertAdjacentHTML`, script, style, or an unsafe URL;
+construct dynamic nodes and assign remote text only through `textContent`.
+Never log owner, phone, pet, content, token, or response bodies.
+
+### Resolve action
+
+The detail view provides one explicit “Çözüldü olarak işaretle” action with a
+fixed confirmation step. It calls:
+
+```text
+POST {SUPABASE_URL}/rest/v1/rpc/resolve_staff_work_item
+body: { "p_work_item_id": "..." }
+```
+
+Accept only an exact one-row response with result `resolved |
+already_resolved | not_found`. On `resolved` or `already_resolved`, remove the
+item from the open list after refresh. On `not_found`, unauthorized, network,
+HTTP, or malformed response, show a generic error without leaking raw body or
+identifiers. Disable the action while the request is in flight.
+
+## Required tests
+
+### TypeScript
+
+Prove at least:
+
+- exact `/staff`, `/staff/`, `/staff/app.js`, and `/staff/config.json` GET
+  behavior, media types, no-store/security headers, CSP connect origin, 404,
+  and staff-subpath 405;
+- blank/unsafe URL or blank anon key fails closed with 503;
+- config returns only the two public fields and never includes the service-role
+  value/name;
+- HTML has semantic login, queue, detail, refresh, logout, and status/error
+  regions, references only the self-hosted script, and has no inline script;
+- browser source uses native fetch/sessionStorage, password-grant auth,
+  `priority.desc,created_at.asc,id.asc`, `status=eq.open`, `limit=100`, latest
+  20 messages, closed resolve RPC/result set, fixed confirmation, logout, and
+  401/403 session clearing;
+- browser source contains no service-role reference, console call, dynamic
+  HTML sink, eval/function constructor, refresh-token persistence, webhook,
+  outbox, intake-data, or unrestricted select;
+- all dynamic provider/user values are routed to `textContent` only;
+- existing webhook, Queue, scheduled, health, and unknown-route behavior stays
+  green.
+
+Do not call real Supabase or add a DOM/test dependency. Source-level assertions
+are acceptable for this fixed, dependency-free asset; mock any Worker fetch.
+
+### Rollback SQL fixture
+
+`supabase/tests/021_staff_workflow.sql` runs inside `BEGIN`/`ROLLBACK` and
+proves at least:
+
+- same-clinic authenticated staff resolves one open item and receives exactly
+  `resolved`, with coherent `resolved_at`;
+- replay by the same authorized staff returns `already_resolved` with no
+  timestamp rewrite;
+- another clinic's item and an unknown UUID both return `not_found` with zero
+  mutation;
+- authenticated user without clinic membership receives `not_found`;
+- `anon`, `PUBLIC`, and `service_role` cannot execute the RPC;
+- authenticated direct table UPDATE remains denied;
+- null input fails before mutation;
+- concurrent behavior is documented as not proven by the single-session test,
+  while the row lock is verified from the stored function definition;
+- a Task 020 urgent open handoff remains urgent/emergency after a later
+  handoff update with no true signal;
+- function security-definer/search-path/grant shape and the existing one-policy
+  table RLS shape are unchanged;
 - rollback leaves zero fixture residue.
 
-The single-session fixture cannot prove true concurrent trigger races.
-Document that limitation and rely on the partial unique indexes plus
-`ON CONFLICT` behavior for race safety.
-
-The post-migration rollback fixture also cannot prove apply-time backfill by
-itself. During Codex's disposable database gate, seed one eligible row for
-each of the three backfill cases before applying the migration, then verify
-that applying it creates exactly one coherent item per source and leaves no
-residue after the test database is cleaned.
+Sonnet must not apply the migration or SQL fixture. Codex alone validates them
+on disposable `vetai-test`.
 
 ## Documentation
 
-Create `docs/staff-work-items.md` describing:
+Create `docs/staff-workflow.md` describing the exact login/list/detail/resolve
+flow, direct RLS reads, controlled resolution RPC, data displayed, public anon
+key versus forbidden service-role key, sessionStorage/no-refresh limitation,
+security headers/CSP, manual refresh/no notification, and all omitted admin/
+appointment/deployment behavior.
 
-- the two work kinds, closed reasons, and urgent rule;
-- database-trigger creation, replay deduplication, emergency escalation, and
-  provider-failure auto-resolution;
-- tenant/RLS boundaries and the no-PII-copy rule;
-- erasure cascades;
-- staff read-only status in this task;
-- no alert/notification, assignment, acknowledgement/resolution API, UI,
-  appointment flow, retention job, deployment, or real operations test;
-- migration and SQL fixture as `NOT APPLIED` until Codex validates them.
-
-Update existing documentation only where necessary to link this durable work
-queue and remove any claim that handoff/failure visibility is wholly absent.
-Do not claim that a person was notified or will respond.
+Update `docs/staff-work-items.md` and `docs/database-schema.md` narrowly. Mark
+the migration/SQL test `NOT APPLIED` until Codex validates them. Do not claim a
+person was notified, assigned, or responded.
 
 ## Verification
 
@@ -251,189 +277,30 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-Sonnet must not apply the migration or SQL fixture. Mark both database checks
-`NOT RUN`; Codex alone reviews and runs them on disposable `vetai-test`.
+Also start Wrangler locally with placeholder public configuration and manually
+verify the fixed `/staff` shell, app asset, config shape, 405, and 404. Do not
+enter a real staff credential or call real Supabase.
 
-Do not commit, push, deploy, call real Meta/OpenAI/Supabase endpoints, create
-a resource, install a plugin, or mutate an external service.
+Do not commit, push, deploy, apply SQL, call real Meta/OpenAI/Supabase, create a
+resource/user, install a plugin/dependency, or mutate an external service.
 
 ## Review gate
 
-After Sonnet delivers, Codex reviews the full migration, trigger paths,
-backfill, tenant FKs, RLS/grants, emergency escalation, provider-failure
-resolution, erasure behavior, tests, and docs. Codex applies the migration and
-rollback fixture only to disposable `vetai-test`, makes minimum fixes, reruns
-all required checks, and records the result.
+After Sonnet delivers, Codex reviews the complete browser-auth/RLS/RPC/data-
+display path, runs all checks, applies the migration and rollback fixture only
+to disposable `vetai-test`, performs a local page smoke test, makes minimum
+fixes, updates `PROJECT_CONTEXT.md`, and records the result.
 
-Then Claude Opus performs one read-only review focused on the
-`SECURITY DEFINER` boundary, authenticated staff visibility, tenant/RLS
-isolation, emergency work escalation, failure auto-resolution, PII/KVKK, and
-erasure behavior. A PASS closes the task; otherwise Codex makes only the
-verified blocking fixes and requests a narrow re-check if the design changed.
+Then Claude Opus performs one read-only review focused on callable
+`SECURITY DEFINER`, tenant isolation, browser credential separation, PII/XSS,
+resolution authorization, urgent-first ordering, and truthful operational
+claims. PASS closes the task; only a material blocking fix requires a narrow
+re-check.
 
 ## Observed context — Sonnet fills before coding
 
-Verified before coding, HEAD `eefc970` on `main`, worktree clean, no
-material conflict found:
-
-- `conversations` (`20260806000000_core_tenant_schema.sql`) has
-  `unique (id, clinic_id)`; `intake_stage` includes `human_handoff`
-  (`20260806000200_conversation_intake_state.sql`); `intake_data jsonb not
-  null default '{}'` checked to be a JSON object; `advance_conversation_intake`
-  bypasses its terminal-stage guard when `p_next_stage = v_current_stage`, so
-  a conversation already at `human_handoff` can receive further UPDATEs while
-  staying at that stage — the trigger must handle repeated updates, not only
-  the first transition.
-- `outbound_message_outbox` (`20260809000100_intake_reply_outbox.sql`,
-  `..._outbound_delivery.sql`, `..._outbound_status_tracking.sql`) had no
-  `unique (id, clinic_id)` yet, so the task's own instruction to add the
-  minimum such key is required, not optional. Its named CHECK
-  `outbound_message_outbox_provider_status_check` requires
-  `provider_delivery_status` non-null only when `delivery_status =
-  'accepted'`, which structurally proves `delivery_status = 'failed'` and
-  `provider_delivery_status = 'failed'` can never both hold on the same row,
-  simplifying the delivery-failure partial-unique-index key to
-  `(clinic_id, source_outbox_id)` without needing `reason`.
-- `vetai_private.is_clinic_staff(target_clinic_id uuid)` exists
-  (`20260806000000_core_tenant_schema.sql`) as the standard `SECURITY
-  DEFINER`, `STABLE`, `search_path = ''` membership check already used by
-  every authenticated `SELECT` policy in this project; reused as-is.
-- `intake_data.reported_safety_signals` (`src/safetyDecision.ts`,
-  `src/intakeTurn.ts`) is a JSON object of named boolean/null signal values
-  on the persisted snapshot, confirming the contract's requirement to scan
-  generically for any true value rather than naming specific signals.
-- `conversations_one_open_per_owner_idx`
-  (`20260806000100_ingest_whatsapp_text_message.sql`) is a pre-existing
-  partial unique index on `conversations (clinic_id, owner_id) WHERE status
-  IN ('active', 'handoff')`, unrelated to this task's schema but relevant to
-  the rollback test's fixture design (each independent test conversation
-  needed its own owner).
-- No existing doc claimed handoff/failure visibility was permanently
-  impossible; `docs/outbound-delivery.md` and `docs/outbound-status.md` each
-  had one sentence saying a failed/failed-provider row was "only visible via
-  direct database inspection," which this task's docs updates narrow rather
-  than contradict.
+Pending.
 
 ## Delivery record — Sonnet fills after coding
 
-Files added (no other files touched):
-
-- `supabase/migrations/20260809000400_staff_work_items.sql` — table,
-  constraints, partial unique indexes, list index, RLS/grants/policy,
-  `vetai_private.has_true_safety_signal`, the human-handoff trigger
-  (`vetai_private.sync_human_handoff_work_item`), the delivery-failure
-  trigger (`vetai_private.sync_delivery_failure_work_item`), and the three
-  backfill statements.
-- `supabase/tests/020_staff_work_items.sql` — rollback-only fixture
-  (`BEGIN`/`ROLLBACK`) covering all twelve required proofs from this file's
-  "Required rollback SQL test" section, plus the documented single-session
-  concurrency-race limitation.
-- `docs/staff-work-items.md` — new task doc.
-- Narrow edits: `docs/database-schema.md` (new "Staff work items" section
-  linking the migration/test, marked not yet applied),
-  `docs/outbound-delivery.md` ("Failed rows have no operational owner yet"
-  now links the durable `send_attempts_exhausted` work item instead of
-  saying failed rows are invisible outside direct DB inspection),
-  `docs/outbound-status.md` ("Not built here" now links the durable
-  `provider_failed` work item and its delivered/read auto-resolution),
-  `docs/intake-replies.md` (one paragraph after the poison-handoff section
-  noting the durable handoff record; reply copy itself is unchanged).
-
-`git status --porcelain` before any check matched exactly this file list —
-no unrelated changes.
-
-Verification:
-
-- `pnpm install --frozen-lockfile` — OK, already up to date.
-- `pnpm typecheck` — OK, zero errors (no TypeScript changed by this task).
-- `pnpm test` — OK, full suite passed (no TypeScript changed by this task).
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — OK,
-  built and validated bindings, exited on `--dry-run` as expected.
-- `git diff --check` — OK, zero whitespace/conflict-marker errors (checked
-  against both the modified tracked docs and, via a temporary
-  `git add -N` / `git reset` that changed no content, the three new files).
-- Migration apply and rollback-fixture run: **NOT RUN**. Per this task's
-  explicit instruction, Sonnet did not apply
-  `supabase/migrations/20260809000400_staff_work_items.sql` or run
-  `supabase/tests/020_staff_work_items.sql` against any database, disposable
-  or otherwise. Codex applies and runs both against disposable `vetai-test`.
-
-No commit, push, deploy, or call to a real Meta/OpenAI/Supabase endpoint was
-made. No resource was created and no plugin installed.
-
-Next: Codex review (full migration, trigger paths, backfill, tenant FKs,
-RLS/grants, emergency escalation, provider-failure resolution, erasure
-behavior, tests, docs), then apply + rollback fixture on disposable
-`vetai-test`; then the mandatory read-only Claude Opus review of the
-`SECURITY DEFINER` boundary, staff visibility, tenant/RLS isolation,
-emergency escalation, failure auto-resolution, PII/KVKK, and erasure
-behavior.
-
-## Codex review record — 2026-08-09
-
-Decision: `PASS`, pending the mandatory single Claude Opus read-only review.
-
-Targeted fixes made during review:
-
-- Renamed the table-level priority/reason coherence constraint to
-  `staff_work_items_reason_priority_check`. PostgreSQL generated the same
-  `staff_work_items_priority_check` name for the inline closed-value check,
-  so the original migration stopped at `CREATE TABLE` with a duplicate
-  constraint-name error.
-- Added the required `next_attempt_at = null` to the fixture's unrelated
-  accepted-row transition; the original test data violated Task 018's
-  accepted-state CHECK before reaching the behavior under test.
-- Isolated the account-to-outbox cascade by nulling the fixture webhook
-  event's account link before standalone account deletion. The pre-existing
-  webhook-event FK intentionally remains `NO ACTION` and can block account
-  deletion while event history carries the link; documentation now states
-  that boundary instead of implying every standalone account deletion must
-  succeed.
-
-Local verification after fixes:
-
-- `pnpm install --frozen-lockfile` — pass, already up to date.
-- `pnpm typecheck` — pass, no errors.
-- `pnpm test` — pass, 630/630 across 21 files.
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — pass;
-  67.02 KiB / gzip 15.07 KiB, bindings unchanged, no deployment.
-- `git diff --check` — pass; only existing LF/CRLF notices.
-
-Disposable database validation (`vetai-test` only):
-
-- Seeded one pre-migration urgent handoff, one exhausted-send row, and one
-  provider-failed row. Applying the migration succeeded and backfilled
-  exactly the three expected coherent open work items.
-- Ran `supabase/tests/020_staff_work_items.sql`: `PASS`; remaining test
-  clinics, auth users, work items, and outbox rows were all zero.
-- Read-only catalog verification returned: ten staff-work columns, RLS
-  enabled, one policy, two triggers, two `SECURITY DEFINER` trigger
-  functions, authenticated SELECT true, authenticated INSERT false, anon
-  SELECT false, authenticated direct trigger execution false, and zero
-  remaining staff-work rows.
-
-Not run: production migration workflow, real clinic/staff operation, alert or
-UI behavior, deployment, resource creation, push, or true two-session trigger
-race.
-
-## Claude Opus review record — 2026-08-09
-
-Decision: `PASS`. No blocking finding and no narrow re-review required.
-
-Opus independently confirmed the two `SECURITY DEFINER` boundaries, empty
-search paths, revoked execution, single tenant-scoped read policy, composite
-tenant FKs, generic literal-true emergency escalation, atomic dedup/upgrade,
-provider-failure-only auto-resolution, PII-free table shape, erasure chains,
-and truthful no-notification wording.
-
-Non-blocking follow-ups carried forward:
-
-- staff list queries must use `priority DESC` so textual `urgent` sorts before
-  `normal`;
-- one open delivery-failure item per outbox currently relies on the existing
-  CHECK that makes exhausted-send and provider-failed states mutually
-  exclusive;
-- the future staff workflow should add a regression proving urgent work is
-  never downgraded by a later normal handoff update;
-- work-item durability is intentionally bounded by its source conversation or
-  outbox lifetime because KVKK erasure cascades take precedence.
+Pending.
