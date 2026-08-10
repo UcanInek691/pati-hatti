@@ -1,6 +1,6 @@
 # Inbound intake queue (producer and bounded consumer)
 
-Last verified: 2026-08-09.
+Last verified: 2026-08-10.
 
 ## What this step does
 
@@ -230,6 +230,86 @@ effects of its own — but conversation-state finalization stays atomic:
 exactly one `finalize_intake_queue_job` call per attempt, guarded by the
 current claim token and expected state version.
 
+### Dead-letter handoff consumer (`src/intakeDeadLetter.ts`)
+
+When `vetai-intake` exhausts its three retries, Cloudflare routes the same
+message body to `vetai-intake-dlq`. The Worker's `queue()` handler
+distinguishes the two queues by `batch.queue` and routes
+`vetai-intake-dlq` messages through `processIntakeDeadLetterQueueMessage`
+instead of `processIntakeQueueMessage`; every other part of the handler
+(per-message `ack`/`retry`, one bad message never blocking its batch
+siblings, no `ackAll`/`retryAll`, no `waitUntil`) is unchanged and shared
+across both queues.
+
+`processIntakeDeadLetterQueueMessage(body, env)` re-validates the body with
+the same `parseIntakeQueueMessage` used by the primary consumer, then calls
+`finalizeIntakeDeadLetter`, a native-`fetch` service-role client for the new
+`finalize_intake_dead_letter` database function (see
+`docs/database-schema.md`). That function locks the exact tenant-safe
+message/webhook-event pair, and — unless the event is already `completed` or
+the conversation is already terminal — moves the conversation straight to
+`human_handoff` via the existing `advance_conversation_intake`, so the
+existing `sync_human_handoff_work_item` trigger creates the usual staff work
+item. It never re-attempts extraction, re-plans a turn, or sends any reply;
+a message that reached the DLQ has already exhausted the primary consumer's
+normal retries, so this path only parks the conversation for a human.
+
+If every first-message attempt failed before a snapshot was persisted, the
+conversation still contains the core `{}` default that the existing advance
+RPC rejects. The dead-letter finalizer replaces only that empty value with
+the fixed, non-sensitive `{ "dead_letter_handoff": true }` terminal marker;
+otherwise it preserves the existing intake document. A later message on the
+handoff conversation reaches the already-reviewed poison-snapshot fallback
+and replaces the marker with a validated current-turn snapshot.
+
+Its disposition table deliberately inverts the primary consumer's parse-step
+row:
+
+| Step     | Outcome                                                        | Disposition |
+|----------|------------------------------------------------------------------|-------------|
+| parse    | invalid body                                                      | `retry`     |
+| finalize | `handed_off` / `already_completed` / `already_terminal` / `not_found` | `ack`  |
+| finalize | `failed`                                                          | `retry`     |
+| (any)    | unexpected thrown exception                                       | `retry`     |
+
+The primary consumer `ack`s an unparseable body because a retry would never
+succeed on the same malformed bytes. The DLQ consumer instead `retry`s an
+unparseable body: `vetai-intake-dlq` has its own bounded `max_retries`
+(configured below) and its own `dead_letter_queue`, so a malformed message
+still reaches a terminal parking queue instead of silently disappearing on
+its first DLQ delivery. `finalize_intake_dead_letter` returns only a closed
+`result` value — never an identifier, phone number, message content, or
+error detail — matching the same data-minimization rule the primary
+consumer follows.
+
+```toml
+[[queues.consumers]]
+queue = "vetai-intake-dlq"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 300
+dead_letter_queue = "vetai-intake-terminal-dlq"
+```
+
+`vetai-intake-terminal-dlq` intentionally has no consumer configured
+anywhere in this project. A message only reaches it after both the primary
+queue's and the DLQ's retries are exhausted; see
+[`docs/production-readiness.md`](production-readiness.md) for the
+operational monitoring and manual-recovery expectations that go with an
+unconsumed terminal queue.
+
+A configuration-only `GET /ready` endpoint (`src/readiness.ts`) reports
+`200 { "status": "ready" }` only when every `Env` binding this Worker
+depends on — including `INTAKE_QUEUE` — looks structurally present and
+non-placeholder, and `503 { "status": "unavailable" }` otherwise. It never
+makes a network call and never returns or logs which field failed.
+
+> **Disposable validation passed (2026-08-10).** Codex applied
+> `20260810000300_intake_dead_letter_handoff.sql` only to `vetai-test`; the
+> strengthened rollback fixture returned `PASS` with all six residue counts
+> at zero. This is not a production migration-history entry.
+
 ## Not implemented in this step
 
 - No outbound WhatsApp response or deterministic triage action happens from
@@ -239,7 +319,9 @@ current claim token and expected state version.
   its migration is **validated only on disposable `vetai-test` and not applied
   to production**; no real WhatsApp send occurs anywhere in this project yet —
   only outbox rows are written.
-- No real Cloudflare Queue or dead-letter-queue resource has been created,
-  and the Worker has not been deployed.
+- The code-level `vetai-intake-dlq` consumer and `/ready` endpoint exist as
+  of this task, but no real Cloudflare Queue resource (`vetai-intake`,
+  `vetai-intake-dlq`, or `vetai-intake-terminal-dlq`) has been created, and
+  the Worker has not been deployed.
 - No production credentials are used and this task is not production
   approval; `wrangler deploy --dry-run` only validates configuration.

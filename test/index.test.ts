@@ -5,6 +5,7 @@ import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { MAX_BODY_BYTES } from "../src/webhookSignature";
 import { signHmacSha256 } from "./signHelper";
 import * as intakeConsumer from "../src/intakeConsumer";
+import * as intakeDeadLetter from "../src/intakeDeadLetter";
 import * as outboundSender from "../src/outboundSender";
 
 const APP_SECRET = "test-app-secret";
@@ -46,6 +47,37 @@ describe("worker fetch routing", () => {
     expect(res.status).toBe(200);
     const body = await res.json<{ status: string }>();
     expect(body.status).toBe("ok");
+  });
+
+  it("GET /ready returns 200 with the exact ready body and security headers when config is valid", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ready" });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("GET /ready returns 503 with the exact unavailable body and security headers when config is invalid", async () => {
+    const brokenEnv: Env = { ...env, SUPABASE_URL: "" };
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), brokenEnv);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ status: "unavailable" });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("non-GET /ready returns 405 with Allow: GET and security headers", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/ready", { method: "POST" }), env);
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("/health is unaffected by /ready being added", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/health"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).not.toBe("no-store");
   });
 
   it("GET /webhooks/whatsapp with valid token returns the challenge as plain text", async () => {
@@ -524,8 +556,8 @@ function fakeMessage(body: unknown): Message<unknown> {
   } as unknown as Message<unknown>;
 }
 
-function fakeBatch(messages: Message<unknown>[]): MessageBatch<unknown> {
-  return { queue: "vetai-intake", messages, ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>;
+function fakeBatch(messages: Message<unknown>[], queue = "vetai-intake"): MessageBatch<unknown> {
+  return { queue, messages, ackAll: vi.fn(), retryAll: vi.fn() } as unknown as MessageBatch<unknown>;
 }
 
 describe("worker queue handler", () => {
@@ -557,6 +589,62 @@ describe("worker queue handler", () => {
     expect(failing.ack).not.toHaveBeenCalled();
     expect(succeeding.ack).toHaveBeenCalledTimes(1);
     expect(succeeding.retry).not.toHaveBeenCalled();
+  });
+
+  it("routes vetai-intake batches only through the primary processor", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockResolvedValueOnce("ack");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
+    const message = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([message], "vetai-intake"), env);
+
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(dlqSpy).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes vetai-intake-dlq batches only through the dead-letter processor", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValueOnce("ack");
+    const message = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([message], "vetai-intake-dlq"), env);
+
+    expect(dlqSpy).toHaveBeenCalledTimes(1);
+    expect(primarySpy).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a rejected dead-letter processor call without blocking other messages' own disposition", async () => {
+    vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce("ack");
+    const failing = fakeMessage({ irrelevant: true });
+    const succeeding = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([failing, succeeding], "vetai-intake-dlq"), env);
+
+    expect(failing.retry).toHaveBeenCalledTimes(1);
+    expect(failing.ack).not.toHaveBeenCalled();
+    expect(succeeding.ack).toHaveBeenCalledTimes(1);
+    expect(succeeding.retry).not.toHaveBeenCalled();
+  });
+
+  it("fails closed and retries every message for an unknown queue name, calling no processor", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const first = fakeMessage({ irrelevant: true });
+    const second = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([first, second], "vetai-intake-terminal-dlq"), env);
+
+    expect(first.retry).toHaveBeenCalledTimes(1);
+    expect(first.ack).not.toHaveBeenCalled();
+    expect(second.retry).toHaveBeenCalledTimes(1);
+    expect(second.ack).not.toHaveBeenCalled();
+    expect(primarySpy).not.toHaveBeenCalled();
+    expect(dlqSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

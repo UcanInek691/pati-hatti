@@ -486,3 +486,68 @@ same transaction, and any unreachable/inconsistent state raises rather than
 returning a false success row. Neither RPC changes
 `public.appointment_slots`'s columns, constraints, or the three Task 022 RPCs
 themselves.
+
+## Dead-letter intake handoff
+
+Defined in
+`supabase/migrations/20260810000300_intake_dead_letter_handoff.sql`:
+`public.finalize_intake_dead_letter(p_conversation_id uuid,
+p_provider_message_id text) returns table(result text)`. **Not yet
+validated on production** — Codex applied the migration only to disposable
+`vetai-test` on 2026-08-10; the rollback fixture returned `PASS` with zero
+test clinics/owners/conversations/messages/webhook events/staff work items.
+It is not recorded in production migration history. The function is
+`SECURITY INVOKER`, `VOLATILE`, `SET search_path = ''`, and
+granted to `service_role` only (revoked from `PUBLIC`, `anon`,
+`authenticated`).
+
+This is the terminal parking-lot finalizer for the Cloudflare Queue
+dead-letter path described in
+[`docs/inbound-queue.md`](inbound-queue.md#dead-letter-handoff-consumer-srcintakedeadletterts):
+once `vetai-intake` exhausts its own retries and Cloudflare routes a message
+to `vetai-intake-dlq`, this function is the only mutation the dead-letter
+consumer performs. It resolves and locks the exact tenant-safe inbound
+processed message/webhook-event pair using the same relationship as
+`claim_intake_queue_job` — never a caller-supplied clinic ID — then:
+
+- If the event is already `completed`, returns `already_completed` with no
+  mutation.
+- Otherwise locks the conversation. If its intake stage is `completed`,
+  returns `already_terminal`, still marks the event `completed` (so a repeat
+  delivery of the same exhausted message does not reprocess it), and creates
+  no false staff work item.
+- For every other stage, including an existing `human_handoff`, calls the
+  existing `advance_conversation_intake` to move or keep the conversation at
+  `human_handoff`, preserving `intake_data` and any
+  already-selected pet exactly as that function already does, then marks
+  the event `completed` and returns `handed_off`. The existing
+  `sync_human_handoff_work_item` trigger on `conversations` creates the
+  usual `staff_work_items` row from that same update — this function adds no
+  trigger, no direct `staff_work_items` write, and no branching on any
+  specific safety-signal name.
+- If all first-message attempts failed before any intake snapshot existed,
+  the core default is still `{}` and the reused advance RPC would reject it.
+  Only for that case the finalizer stores the fixed non-sensitive terminal
+  marker `{ "dead_letter_handoff": true }`; a later message on the handoff
+  conversation follows the existing poison-snapshot fallback and replaces it
+  with a validated current-turn snapshot.
+- An absent, cross-tenant, mismatched, or outbound-direction
+  conversation/message pair returns `not_found` with no mutation, matching
+  `claim_intake_queue_job`'s fail-closed resolution.
+
+Unlike `claim_intake_queue_job` and `finalize_intake_queue_job`, this
+function does not require the old intake claim token. A slow or replayed
+primary worker may still exist after retry exhaustion, so correctness comes
+from the shared webhook-event row lock: whichever finalizer wins completes
+the event, and the later one observes completed/stale state rather than
+committing a second outcome. Every mutation (event completion, conversation
+advance, and the trigger-driven staff work item) happens in one transaction;
+if the reused state transition raises for any reason, the whole call raises
+and nothing is left partially changed. It returns only the
+closed `result` column — never a conversation ID, phone number, message
+text, payload, claim token, or error detail — and never inserts an outbound
+reply or otherwise implies a message was sent to the owner.
+`src/intakeDeadLetter.ts` exposes a native-`fetch` `finalizeIntakeDeadLetter`
+Worker helper following the same transport and untrusted-response rules as
+the other functions on this page; it is wired into the Worker's `queue()`
+handler for the `vetai-intake-dlq` queue only.

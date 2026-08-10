@@ -24,6 +24,7 @@ pnpm dev
 Worker `http://localhost:8787` adresinde başlar.
 
 - `GET /health` — durum ve sürüm bilgisi döner.
+- `GET /ready` — yapılandırma denetimi: gerekli tüm secret/URL/queue binding'leri dolu ve geçerli görünüyorsa `200 { "status": "ready" }`, değilse `503 { "status": "unavailable" }` döner. Hiçbir dış servise gerçek istek atmaz; eksik alanın adını, değerini ya da secret'ını asla döndürmez veya loglamaz.
 - `GET /webhooks/whatsapp` — Meta webhook doğrulama (`hub.mode`, `hub.verify_token`, `hub.challenge`).
 - `POST /webhooks/whatsapp` — ham gövdeyi `X-Hub-Signature-256` (HMAC-SHA256, `WHATSAPP_APP_SECRET`) ile doğrular, ardından JSON'u parse edip temel event zarfını kontrol eder. Content-Type `application/json` olmalı (aksi halde 415), gövde 256 KiB'yi geçemez (aksi halde 413), imza eksik/bozuk/yanlışsa 401 döner ve gövde hiç parse edilmez.
 

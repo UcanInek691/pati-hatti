@@ -230,6 +230,15 @@ The secure Worker baseline is committed on `main`:
   with zero residue. Frozen install, typecheck, 904/904 tests, Worker dry-run,
   Codex review, and the required Claude Opus atomicity/confirmation/tenant/
   KVKK/copy review all passed. No production migration or deployment occurred.
+- Exhausted intake jobs now enter a bounded dead-letter consumer. Its
+  service-role-only finalizer locks the persisted event and conversation,
+  atomically moves non-terminal conversations to `human_handoff`, relies on
+  the existing trigger for tenant-scoped staff visibility, and completes the
+  event. A configuration-only `GET /ready` endpoint reports only `ready` or
+  `unavailable`. Task 024's migration and strengthened rollback fixture passed
+  on disposable `vetai-test` with zero residue; 1013/1013 tests, typecheck,
+  Worker dry-run, Codex review, and the required Claude Opus review passed.
+  No production migration, Queue resource, secret, or deployment occurred.
 
 Verified evidence before the context-system change:
 
@@ -262,10 +271,12 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 023 is complete with disposable-database validation plus Codex and Claude
-Opus approval. The fixed MVP roadmap now has one main task: production
-readiness. No real notification, Cron/Queue/DLQ resource creation, or
-production deployment has occurred.
+Task 024 is complete with disposable-database validation plus Codex and Claude
+Opus approval. The code-level MVP scope is closed. Production release remains
+blocked on the human approvals and operational setup in
+`docs/production-readiness.md`; no real notification, Queue/DLQ resource
+creation, secret configuration, production migration, or deployment has
+occurred.
 
 ## Durable safety invariants
 
@@ -311,6 +322,9 @@ production deployment has occurred.
 - Staff work items contain routing identifiers and closed operational reasons,
   never recipient phone numbers or message content. They are durable
   visibility, not proof that a person was notified or responded.
+- A normal-priority staff item backed by the fixed
+  `{ "dead_letter_handoff": true }` marker means the message's safety risk was
+  not evaluated; it must not be interpreted as a low-risk classification.
 - Standalone WhatsApp-account deletion may be blocked while the pre-existing
   webhook-event account link remains; successful owner/account/outbox/clinic
   erasure paths must cascade related staff work items and leave no dangling

@@ -1,6 +1,6 @@
 # Current task — 024 production readiness and dead-letter handoff
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -323,8 +323,163 @@ production rollout, not additional feature tasks.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+- Read `AGENTS.md`, `PROJECT_CONTEXT.md`, and this file in order before any edit.
+- Confirmed `src/env.ts`'s `Env` interface exactly: `APP_TIMEZONE`,
+  `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `SUPABASE_URL`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `OPENAI_API_KEY`,
+  `INTAKE_QUEUE: Queue<IntakeQueueMessage>`, `WHATSAPP_ACCESS_TOKEN`,
+  `WHATSAPP_GRAPH_API_VERSION`. `APP_TIMEZONE` was previously unused anywhere
+  in `src/` outside this declaration and `wrangler.toml`, so its validation in
+  `readiness.ts` has no existing repo pattern to reuse; used the native
+  throw-on-invalid-timeZone behavior of `Intl.DateTimeFormat` instead of a
+  hardcoded IANA list or new dependency.
+- Confirmed `src/intakeJobLease.ts`'s exact RPC-client shape
+  (`isLoopbackHttpUrl`, `buildEndpoint`, `callRpc`, `asPlainRecord`, all
+  re-implemented per-file rather than shared, per its own `ponytail:`
+  precedent) and used it as the direct structural template for
+  `src/intakeDeadLetter.ts`, simplified to the new function's single `{result}`
+  row shape and no claim token.
+- Confirmed `src/intakeQueue.ts`'s `parseIntakeQueueMessage` and
+  `IntakeQueueMessage` shape (`version: 1`, `conversationId`,
+  `providerMessageId`) — reused unchanged, not modified.
+- Confirmed `src/intakeConsumer.ts`'s exact disposition table and that it
+  `ack`s on parse failure (a retry can never succeed on the same malformed
+  bytes); the new DLQ processor deliberately inverts this to `retry` on parse
+  failure, so a malformed body still reaches the terminal parking queue via
+  `vetai-intake-dlq`'s own `max_retries` rather than disappearing on first
+  DLQ delivery.
+- Confirmed `advance_conversation_intake` already permits a direct transition
+  to `human_handoff` from any non-completed stage, and that the existing
+  `sync_human_handoff_work_item` trigger on `conversations` creates the
+  tenant-scoped `staff_work_items` row automatically — the new finalizer calls
+  the existing function and adds no trigger, no direct `staff_work_items`
+  write, and no hardcoded safety-signal name.
+- Confirmed the existing finalizer lock order (webhook event, then
+  conversation) via `claim_intake_queue_job`/`finalize_intake_queue_job` and
+  preserved it in `finalize_intake_dead_letter`.
+- Confirmed `wrangler.toml`'s existing `vetai-intake` consumer block
+  (`max_batch_size 1`, `max_batch_timeout 5`, `max_retries 3`, `retry_delay
+  120`, `dead_letter_queue = "vetai-intake-dlq"`) was already present with no
+  DLQ consumer configured.
+- Confirmed `src/staffPage.ts` already exports `STAFF_SECURITY_HEADERS`
+  (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`) and was
+  already imported into `src/index.ts`, so `/ready` reuses it directly instead
+  of duplicating an equivalent headers object.
+- Confirmed `src/whatsappSend.ts`'s `GRAPH_VERSION_PATTERN`
+  (`/^v\d+\.0$/`) and duplicated it in `readiness.ts` (same per-file
+  convention as the RPC-client helpers above).
+- Starting HEAD matched the value already recorded above; the worktree was
+  clean apart from this task's own new/edited files.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+- New migration `supabase/migrations/20260810000300_intake_dead_letter_handoff.sql`
+  defines `public.finalize_intake_dead_letter(p_conversation_id uuid,
+  p_provider_message_id text) returns table(result text)` per the contract
+  above (`SECURITY INVOKER`, `VOLATILE`, `SET search_path = ''`,
+  service_role-only). **Not applied to any database.**
+- New rollback fixture `supabase/tests/024_intake_dead_letter_handoff.sql`
+  covers function shape/grants, the four closed results, an urgent-priority
+  safety-signal handoff, replay idempotency, an already-terminal conversation,
+  five fail-closed negative cases (absent/mismatched/outbound/cross-tenant/
+  invalid-UUID/direct-role-call), an induced-failure atomic-rollback proof,
+  and zero fixture residue. **Not run against any database — Sonnet did not
+  execute it; Codex validates it on disposable `vetai-test`.**
+- New `src/intakeDeadLetter.ts` (RPC client + `processIntakeDeadLetterQueueMessage`)
+  and `test/intakeDeadLetter.test.ts`.
+- New `src/readiness.ts` (`checkReadiness`) and `test/readiness.test.ts`.
+- `src/index.ts`: added the `GET /ready` route (200/503/405, `STAFF_SECURITY_HEADERS`
+  on all three) and routed `queue()` by `batch.queue` to the primary or
+  dead-letter processor, with an unknown queue name failing closed to `retry`
+  for every message. `test/index.test.ts` extended to match. `/health` and
+  every other existing route are unchanged.
+- `wrangler.toml`: added the exact second `[[queues.consumers]]` block for
+  `vetai-intake-dlq` specified above. No producer/consumer binding added for
+  `vetai-intake-terminal-dlq`.
+- New `docs/production-readiness.md`: the 7-section runbook (human gates;
+  managed data rollout; Cloudflare/Meta/OpenAI setup; seed/admin
+  prerequisites; a 10-step controlled smoke journey including deliberate DLQ
+  retry-exhaustion and recovery-before-four-day-retention; operations; go/no-go
+  and rollback), citing Cloudflare's dead-letter-queue documentation and
+  explicitly stating that passing this task's own review gate is not
+  production approval.
+- `docs/inbound-queue.md`: added a "Dead-letter handoff consumer" subsection
+  documenting the DLQ path, its inverted parse-failure disposition, and the
+  `vetai-intake-dlq` Cloudflare config block; corrected the stale "no DLQ
+  resource or consumer" line to reflect that the code-level consumer now
+  exists while the real Cloudflare resource still does not.
+- `docs/database-schema.md`: added a "Dead-letter intake handoff" section
+  documenting `finalize_intake_dead_letter`'s exact signature, lock order,
+  behavior, and closed result set, matching the sibling RPC sections' style,
+  and explicitly marked not yet validated on any database.
+- `README.md`: added a `GET /ready` line to the existing Turkish route list.
+- Verification run and results (all local, no deploy):
+  - `pnpm install --frozen-lockfile` — already up to date.
+  - `pnpm typecheck` — clean, zero errors.
+  - `pnpm test` — full suite passed (1007 tests).
+  - `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` —
+    succeeded; confirmed bindings and exited before any real deploy
+    (`--dry-run: exiting now`).
+  - `git diff --check` — no whitespace errors.
+- No migration or SQL test file was applied to any database. No commit, push,
+  deploy, or real Meta/OpenAI/Supabase call was made. No dependency, lockfile,
+  Queue/Cron/user/slot resource, or production resource was created or
+  mutated. `rtk` (the user's global shell-prefix tooling) is not installed in
+  this environment, so verification commands above were run directly instead.
+
+## Codex review record — 2026-08-10
+
+**Decision: PASS.** Codex
+traced the primary Queue → DLQ → strict parser/client → locked webhook event
+→ locked conversation → existing advance RPC/trigger → staff item → event
+completion path. Scope matches the allowed list and no dependency, Env,
+secret example, webhook, intake/appointment planner, safety copy, staff UI,
+outbound sender, existing migration, or production-resource drift was found.
+
+Targeted fixes made during review:
+
+- readiness now rejects the repository's real `[placeholder]` syntax and
+  enforces the product boundary `APP_TIMEZONE = Europe/Istanbul` rather than
+  accepting any valid IANA zone;
+- the dead-letter RPC client validates UUID/provider identifiers before fetch,
+  tolerates runtime-missing config without throwing, and returns fresh failure
+  objects;
+- the finalizer now handles the most important first-message failure case:
+  when all primary attempts failed before a snapshot existed, it replaces
+  only the rejected `{}` default with the non-sensitive terminal marker
+  `{ "dead_letter_handoff": true }`, completes the event, and creates the
+  existing trigger-driven staff item atomically;
+- the SQL fixture now proves that empty-snapshot path and the unchanged
+  owner/account/source erasure chains, in addition to its original RLS,
+  replay, urgent, terminal, cross-tenant, and rollback cases;
+- documentation was corrected to match the real existing-`human_handoff`
+  result, acknowledge a possible slow primary worker serialized by the same
+  event lock, and keep failure injection out of shared production config.
+
+Verification after fixes:
+
+- `pnpm install --frozen-lockfile` — passed, no dependency/lockfile change;
+- `pnpm typecheck` — passed;
+- `pnpm test` — **1013/1013 passed across 26 files**;
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed;
+- `git diff --check` — passed (line-ending advisories only);
+- migration — applied successfully only to disposable `vetai-test`;
+- strengthened rollback fixture — returned `PASS` with all six residue counts
+  at `0`;
+- production, real services, Cloudflare resources, and production migration
+  history remain untouched.
+
+## Claude Opus review record — 2026-08-10
+
+**Decision: PASS.** The narrow read-only review found no blocking atomicity,
+lock-order, tenant-isolation, RLS/service-role, staff-visibility, Queue
+disposition, truthful-copy, or KVKK-erasure issue. Its two documentation
+follow-ups were applied without changing runtime behavior:
+
+- the runbook now explicitly requires creation of the unconsumed
+  `vetai-intake-terminal-dlq` resource;
+- durable context and operations guidance now state that an empty-snapshot
+  dead-letter handoff's normal priority means unassessed risk, not low risk.
+
+Task 024 is approved for commit. Production approval remains gated by the
+unchecked human and operational requirements in `docs/production-readiness.md`.

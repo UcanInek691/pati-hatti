@@ -8,8 +8,11 @@ import { extractOutboundStatuses } from "./whatsappStatus";
 import { recordWhatsAppOutboundStatus } from "./supabaseOutboundStatus";
 import { enqueueIntakeJob } from "./intakeQueue";
 import { processIntakeQueueMessage } from "./intakeConsumer";
+import { processIntakeDeadLetterQueueMessage } from "./intakeDeadLetter";
 import { drainOutboundMessages } from "./outboundSender";
 import { STAFF_SECURITY_HEADERS, handleStaffConfig, handleStaffScript, handleStaffShell } from "./staffPage";
+import { checkReadiness } from "./readiness";
+import type { QueueDisposition } from "./intakeConsumer";
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -106,6 +109,20 @@ export default {
       return Response.json(getHealth());
     }
 
+    if (url.pathname === "/ready") {
+      if (request.method !== "GET") {
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { ...STAFF_SECURITY_HEADERS, Allow: "GET" },
+        });
+      }
+      const readiness = checkReadiness(env);
+      return Response.json(readiness, {
+        status: readiness.status === "ready" ? 200 : 503,
+        headers: STAFF_SECURITY_HEADERS,
+      });
+    }
+
     if (url.pathname === "/webhooks/whatsapp") {
       if (request.method === "GET") {
         const result = verifyWhatsAppChallenge(url.searchParams, env.WHATSAPP_VERIFY_TOKEN);
@@ -140,12 +157,25 @@ export default {
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    let processor: ((body: unknown, env: Env) => Promise<QueueDisposition>) | null;
+    if (batch.queue === "vetai-intake") {
+      processor = processIntakeQueueMessage;
+    } else if (batch.queue === "vetai-intake-dlq") {
+      processor = processIntakeDeadLetterQueueMessage;
+    } else {
+      processor = null;
+    }
+
     for (const message of batch.messages) {
-      let disposition: "ack" | "retry";
-      try {
-        disposition = await processIntakeQueueMessage(message.body, env);
-      } catch {
+      let disposition: QueueDisposition;
+      if (processor === null) {
         disposition = "retry";
+      } else {
+        try {
+          disposition = await processor(message.body, env);
+        } catch {
+          disposition = "retry";
+        }
       }
 
       if (disposition === "ack") {
