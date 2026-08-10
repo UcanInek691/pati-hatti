@@ -1,60 +1,73 @@
-# Current task — 022 appointment booking database engine
+# Current task — 023 single-slot WhatsApp appointment confirmation flow
 
-Status: `COMPLETE`
+Status: `READY`
 
 Primary implementer: Claude Sonnet
 
-Reviewers: Codex, then one read-only Claude Opus architecture/RLS/KVKK and
-concurrency review. Opus is required once because this task creates the
-authoritative appointment mutation boundary. Do not repeat that review unless
-Codex makes a material security or booking-state design change.
+Reviewers: Codex, then one read-only Claude Opus review limited to appointment
+atomicity, explicit confirmation, tenant isolation, truthful copy, and KVKK.
+Do not repeat Task 022's already-passed engine review.
 
 ## Goal
 
-Build the smallest authoritative appointment engine needed by the next
-WhatsApp task:
+Wire the reviewed appointment engine into the existing intake Queue consumer
+using the smallest truthful MVP flow:
 
 ```text
-pre-provisioned clinic slot
-  -> list as available for the conversation's own clinic
-  -> hold for 10 minutes while the owner confirms
-  -> confirm only with the current hold token
+safe appointment request
+  -> database selects and temporarily holds the earliest available slot
+  -> WhatsApp asks for exact EVET / HAYIR
+  -> EVET atomically confirms the current hold
+  -> HAYIR atomically releases it and creates no appointment
 ```
 
-The database, not prompts or Worker timing, must prevent a slot from being
-confirmed twice. Tenant, owner, pet, and conversation routing must be derived
-from persisted relationships; callers never supply a clinic or owner ID.
+Only an exact, deterministic `EVET` decision may confirm. LLM output must never
+select a slot, provide an ID/token, or authorize confirmation. Emergency/human
+safety decisions still take precedence over every appointment action.
 
-Use one backend-only `appointment_slots` table and exactly three predefined
-service-role RPCs. A held slot is not an appointment. Only the confirm RPC
-changes it to `confirmed`; the next task may call that RPC only after an
-explicit WhatsApp confirmation.
+The database transaction must keep the current Queue claim, conversation
+state, slot mutation, outbox reply, and lease completion coherent. A held slot
+is not a confirmed appointment. User-facing confirmation copy may be persisted
+only after the database has changed the slot to `confirmed` in that same
+transaction.
 
-This task does not generate clinic schedules, create a calendar UI, modify the
-staff page, send WhatsApp messages, parse appointment replies, advance
-conversation state, create an outbox reply, cancel/reschedule appointments,
-assign veterinarians/rooms/services, send reminders, sync external calendars,
-deploy, or configure real resources. Slots are fixed 30-minute rows provisioned
-outside this runtime; production provisioning remains a later operational
-requirement.
+## Deliberately small MVP
+
+Offer only the earliest eligible slot. Do not build multi-slot menus, free-text
+date parsing, interactive WhatsApp buttons, alternate-slot browsing,
+cancel/reschedule after confirmation, calendar/room/veterinarian assignment,
+reminders, schedule generation, or external calendar sync.
+
+`HAYIR` means “do not create this appointment”: release the current hold,
+finish the conversation without a confirmed slot, and send truthful decline
+copy. An unrecognized reply repeats the same held-slot prompt; it never
+confirms or declines. If no slot exists or the hold expires before `EVET`,
+route the conversation to human handoff and tell the owner to call the clinic.
+
+This limitation is intentional: one candidate plus exact confirmation avoids
+persisting an offer-list snapshot or trusting a changing ordinal selection.
 
 ## Starting context
 
-- Starting HEAD: `6432556` on `main`; the worktree is clean.
-- Task 021 is complete with Codex and Claude Opus approval. No production
-  migration or deployment has occurred.
-- There is no appointment or schedule table. Conversations already have the
-  forward-only stages `appointment_offer`, `appointment_selection`, and
-  `appointment_confirmation`, but the existing intake planner deliberately
-  holds those stages and performs no booking operation.
-- `conversations` already enforces `(owner_id, clinic_id)` and optional
-  `(pet_id, owner_id, clinic_id)` relationships. The new engine must preserve
-  that structure instead of trusting caller-supplied routing.
-- Backend RPC clients use native `fetch`, the existing `SUPABASE_URL` and
-  `SUPABASE_SERVICE_ROLE_KEY` bindings, HTTPS/loopback-only endpoints, strict
-  response parsing, and generic fail-closed results.
-- PostgreSQL `timestamptz` is authoritative. Store instants, not local-time
-  strings; the later WhatsApp flow will render them in `Europe/Istanbul`.
+- Starting HEAD: `deec7c8` on `main`; the worktree is clean.
+- Task 022's `appointment_slots` table and three service-role RPCs are committed
+  and passed disposable `vetai-test`, Codex, and Claude Opus review. They are
+  not wired into runtime and are not applied to production.
+- The Queue consumer already performs parse → claim → context → LLM extraction
+  → deterministic safety/planning → atomic finalization/outbox/lease.
+- `planIntakeTurn` holds `ready_for_triage`, `appointment_offer`,
+  `appointment_selection`, and `appointment_confirmation` unless safety forces
+  handoff. Persisted `intent = 'appointment_request'` is available after the
+  safety gate.
+- `advance_conversation_intake` permits only same-stage, one-step-forward, or
+  human-handoff transitions. The new database finalizers may compose existing
+  one-step operations within one transaction; do not weaken that function.
+- `outbound_message_outbox` carries fixed reply categories/content and is sent
+  by the existing scheduled sender. Staff work items already appear when a
+  conversation reaches `human_handoff`; this is visibility, not notification.
+- `APP_TIMEZONE` is `Europe/Istanbul`. PostgreSQL `timestamptz` remains
+  authoritative; format appointment copy from the selected database instant,
+  never from untrusted text.
 
 Before editing, follow `AGENTS.md`, read `PROJECT_CONTEXT.md` and this file,
 then verify every fact from source, migrations, callers, tests, scripts, Git
@@ -63,217 +76,235 @@ status, and recent commits. Stop on a material conflict.
 ## Allowed changes
 
 - New migration
-  `supabase/migrations/20260810000100_appointment_booking_engine.sql`.
+  `supabase/migrations/20260810000200_whatsapp_appointment_flow.sql`.
 - New rollback SQL test
-  `supabase/tests/022_appointment_booking_engine.sql`.
-- New `src/appointmentEngine.ts` and `test/appointmentEngine.test.ts`.
-- New `docs/appointment-booking-engine.md` and a narrow appointment-engine
-  section in `docs/database-schema.md`.
-- Fill only the **Observed context** and **Delivery record** sections of this
-  file.
+  `supabase/tests/023_whatsapp_appointment_flow.sql`.
+- New `src/appointmentFlow.ts` and `test/appointmentFlow.test.ts`.
+- Narrow changes to:
+  - `src/intakeConsumer.ts` and `test/intakeConsumer.test.ts`;
+  - `src/intakeReply.ts` and `test/intakeReply.test.ts` only to extend the
+    closed reply-category type/coverage; do not alter reviewed safety copy or
+    precedence;
+  - `docs/database-schema.md`, `docs/inbound-queue.md`,
+    `docs/appointment-booking-engine.md`, and a new
+    `docs/whatsapp-appointment-flow.md`.
+- Fill only the **Observed context** and **Delivery record** sections below.
 
-Do not change dependencies, lockfiles, `wrangler.toml`, Env bindings, Worker
-routes/handlers, existing migrations or SQL fixtures, the staff surface,
-webhook/Queue/Cron/outbox behavior, intake extraction/planning/replies,
-conversation-state code, prompts, `AGENTS.md`, or `PROJECT_CONTEXT.md`.
+Do not change dependencies, lockfiles, Env bindings, `wrangler.toml`, Worker
+routes/handlers, webhook parsing/signature behavior, Queue message shape,
+prompts/OpenAI adapter/extraction schema, safety rules, staff UI, outbound
+sender/Cron behavior, Task 022 migration/RPCs, or other existing migrations.
+Do not add a table.
 
-## Database contract
+## Deterministic appointment decision
 
-### Table: `public.appointment_slots`
+In `src/appointmentFlow.ts`, add a pure parser that:
 
-Create one table with exactly these responsibilities:
+- accepts only a string;
+- applies NFKC, trims, collapses internal whitespace, and Turkish lowercase;
+- returns `confirm` only for the entire normalized message `evet`;
+- returns `decline` only for the entire normalized message `hayır` or `hayir`;
+- returns `repeat` for everything else;
+- never extracts an ID, token, time, date, or action from model output;
+- never mutates or logs input.
 
-- `id uuid primary key default gen_random_uuid()`;
-- `clinic_id uuid not null` with clinic erasure cascade;
-- `starts_at timestamptz not null`, `ends_at timestamptz not null`;
-- `status text not null default 'available'`, closed to
-  `available | held | confirmed`;
-- nullable `conversation_id`, `owner_id`, `pet_id`, `booking_token`,
-  `hold_until`, and `confirmed_at`;
-- `created_at` and `updated_at` non-null timestamps using existing project
-  conventions.
+Add a pure routing decision over current context plus the already-produced
+`PlanResult`:
 
-Add the minimum supporting unique key to `public.conversations` needed for a
-composite FK that proves the slot's `owner_id` is the conversation's owner.
-Use composite foreign keys so any non-available row proves all of the
-following structurally:
+- safety/human-handoff outcomes return no appointment action and continue
+  through the existing finalizer/reply path;
+- when the planned result is safe, has a matched pet, carries persisted
+  `intent = 'appointment_request'`, and reaches/holds `ready_for_triage` or
+  `appointment_offer`, choose `offer`;
+- at `appointment_selection`, choose the exact parsed
+  `confirm | decline | repeat` decision;
+- all other stages choose no appointment action;
+- `completed` and `human_handoff` remain terminal.
 
-- the conversation belongs to the slot's clinic and owner;
-- the pet belongs to that owner and clinic;
-- owner, pet, conversation, and slot cannot be mixed across tenants.
+Do not call the appointment RPC clients directly from this pure planner.
 
-Booked/held rows must cascade with clinic, owner, pet, or conversation erasure.
-Deleting such a source may delete the slot row; KVKK erasure takes precedence
-over preserving an availability hole or immutable appointment history.
+## Database migration contract
 
-Named checks must enforce exactly:
+### Reply categories
 
-- `ends_at = starts_at + interval '30 minutes'`;
-- `starts_at` is aligned to a whole or half hour (minute `0 | 30`, second and
-  fractional second zero);
-- `available`: all routing/token/hold/confirmation fields are null;
-- `held`: conversation/owner/pet/token/hold are non-null and confirmation is
-  null;
-- `confirmed`: conversation/owner/pet/token/confirmation are non-null and
-  hold is null.
+Replace only the named outbox reply-category CHECK so it preserves the six
+existing values and adds exactly:
 
-Add:
+- `appointment_offer`;
+- `appointment_confirmed`;
+- `appointment_declined`;
+- `appointment_unavailable`.
 
-- one unique `(clinic_id, starts_at)` key; fixed aligned 30-minute slots then
-  cannot overlap;
-- one partial unique key allowing at most one `held | confirmed` slot per
-  conversation;
-- the smallest index needed by clinic/time availability listing;
-- the existing `vetai_private.set_updated_at()` trigger.
+No table privilege, RLS, delivery-state, index, routing, or erasure behavior
+may change.
 
-Enable RLS. Revoke all table privileges from `PUBLIC`, `anon`, and
-`authenticated`; grant table access only to `service_role`. Add no
-authenticated policy or browser access in this task. The table must not store
-phone numbers, owner/pet names, message text, complaint/safety data, provider
-IDs, or raw external payloads.
+### Shared boundaries for both finalizers
 
-### RPC 1: list availability
+Create exactly two new RPCs. Both must be `SECURITY INVOKER`, `VOLATILE`,
+`SET search_path = ''`, revoked from `PUBLIC`/`anon`/`authenticated`, and
+executable only by `service_role`.
 
-Create exactly:
+Both functions must:
 
-```text
-public.list_available_appointment_slots(
-  p_conversation_id uuid,
-  p_from timestamptz,
-  p_to timestamptz,
-  p_limit integer default 5
-)
-returns table(slot_id uuid, starts_at timestamptz, ends_at timestamptz)
-```
+- reject null/invalid identifiers, claim tokens, versions, stages/decisions,
+  pet IDs, and non-object/empty intake data before mutation;
+- resolve and lock the exact inbound message/webhook-event pair using the
+  existing tenant-safe `(conversation_id, provider_message_id)` path;
+- return `already_completed` for an already-completed event, `stale_claim` for
+  an absent/non-current claim, and `stale_state` for optimistic version drift;
+- derive clinic, WhatsApp account, owner, recipient, conversation, pet, slot,
+  token, and times from persisted rows; callers supply none of those routing
+  values except the already-validated conversation/event/claim identifiers;
+- insert at most one reply for the inbound event using the existing outbox
+  uniqueness and no `ON CONFLICT DO NOTHING`;
+- call the existing lease completion operation last;
+- raise on any impossible nested result so PostgreSQL rolls back conversation,
+  appointment, outbox, and lease changes together;
+- never store/log phone numbers or message text outside the existing outbox
+  operation and never expose them in a return row.
 
-It must be `SECURITY INVOKER`, `STABLE`, `SET search_path = ''`, revoked from
-`PUBLIC`/`anon`/`authenticated`, and executable only by `service_role`.
+Copy the smallest local finalization code necessary; do not create a generic
+SQL execution framework or weaken existing RPCs.
 
-Reject null/invalid inputs. Require `1 <= p_limit <= 10`, `p_to > p_from`, and
-a window no longer than 31 days. Resolve the conversation internally. Return
-zero rows unless it is `active`, has a selected pet, and is currently in
-`appointment_offer | appointment_selection | appointment_confirmation`.
+### RPC 1: offer earliest slot atomically
 
-Return only that conversation's clinic slots which:
-
-- start no earlier than both `p_from` and database `now()` and before `p_to`;
-- are `available` or have an expired `held` lease;
-- are ordered by `starts_at`, then `id`, limited by `p_limit`.
-
-This read is advisory: a listed slot is not reserved and may lose a race to
-the hold RPC.
-
-### RPC 2: hold/switch a slot
-
-Create exactly:
+Create:
 
 ```text
-public.hold_appointment_slot(
+public.finalize_appointment_offer_queue_job(
   p_conversation_id uuid,
-  p_slot_id uuid
+  p_provider_message_id text,
+  p_claim_token uuid,
+  p_expected_version integer,
+  p_planned_next_stage text,
+  p_pet_id uuid,
+  p_intake_data jsonb
 )
-returns table(
-  result text,
-  booking_token uuid,
-  starts_at timestamptz,
-  ends_at timestamptz
-)
+returns table(result text, intake_stage text, state_version integer)
 ```
 
-It must be `SECURITY INVOKER`, `VOLATILE`, empty-search-path, service-role-only.
+`p_planned_next_stage` is closed to `ready_for_triage | appointment_offer`.
+Using the existing `advance_conversation_intake`, listing, and hold RPCs inside
+one transaction:
 
-Behavior:
+1. Apply the planner's validated next stage/data/pet using the expected
+   version.
+2. Advance one step at a time until `appointment_offer` (never skip by direct
+   conversation update).
+3. Select only the earliest eligible slot for the conversation's clinic in
+   the next 31 days and attempt to hold it through the reviewed hold RPC.
+4. On `held`, advance to `appointment_selection`, persist one
+   `appointment_offer` outbox row containing the exact held slot time rendered
+   with `Europe/Istanbul`, then complete the claim.
+5. If no eligible slot exists, advance to `human_handoff`, persist one
+   `appointment_unavailable` reply, and complete the claim.
+6. If an advisory-list race loses before hold, raise so the transaction rolls
+   back and Queue retry can select again; do not commit a stage without a
+   matching hold/reply.
 
-- reject null identifiers before lookup;
-- lock the conversation, then lock the target and any active slot belonging to
-  that conversation in deterministic slot-ID order;
-- derive clinic, owner, and pet only from the locked conversation;
-- return `not_found` for an absent conversation or target outside its clinic;
-- return `not_ready` unless the conversation is active, has a selected pet,
-  and is in one of the three appointment stages;
-- return `conflict` when that conversation already has a confirmed slot;
-- return `unavailable` when the target is confirmed, held by another
-  conversation with an unexpired lease, or no longer starts in the future;
-- if the same conversation already holds the same target with an unexpired
-  lease, return `held` with the existing token/times without extending it;
-- otherwise atomically release any different held slot for that conversation,
-  reclaim an expired target hold if necessary, and hold the target until
-  `pg_catalog.now() + interval '10 minutes'` with a fresh UUID token;
-- return `held` with non-null token/times; every other result returns null
-  token/times.
+Closed results:
 
-An unavailable target must not destroy the conversation's current valid hold.
-The partial unique key is the final defense against two active slots for one
-conversation.
+- `offered` with `appointment_selection` and the final state version;
+- `unavailable` with `human_handoff` and the final state version;
+- `already_completed | stale_claim | stale_state` with null stage/version.
 
-### RPC 3: confirm the current hold
+### RPC 2: decide the current hold atomically
 
-Create exactly:
+Create:
 
 ```text
-public.confirm_appointment_slot(
+public.finalize_appointment_decision_queue_job(
   p_conversation_id uuid,
-  p_slot_id uuid,
-  p_booking_token uuid
+  p_provider_message_id text,
+  p_claim_token uuid,
+  p_expected_version integer,
+  p_decision text,
+  p_pet_id uuid,
+  p_intake_data jsonb
 )
-returns table(result text, starts_at timestamptz, ends_at timestamptz)
+returns table(result text, intake_stage text, state_version integer)
 ```
 
-It must be `SECURITY INVOKER`, `VOLATILE`, empty-search-path, service-role-only.
+`p_decision` is closed to `confirm | decline | repeat`. Require the locked
+conversation to be active at `appointment_selection` with the expected state
+version. Lock its single current `held | confirmed` appointment row after the
+conversation, preserving Task 022's conversation→slot lock order.
 
-Behavior:
+- `confirm`: require a non-expired held row whose start is still future; use
+  its persisted token with `confirm_appointment_slot`. Advance
+  `appointment_selection -> appointment_confirmation -> completed` only
+  through existing one-step RPC calls. Insert `appointment_confirmed` copy
+  with the confirmed `Europe/Istanbul` time, then complete the claim.
+- `decline`: release a held row back to the exact coherent `available` shape
+  (if the hold already expired it is still safe to release), create no
+  confirmed slot, advance one step at a time to `completed`, insert
+  `appointment_declined` copy, then complete the claim.
+- `repeat`: never mutate the slot/token/lease. Same-stage advance only to
+  persist the validated intake snapshot, repeat the exact held-slot prompt,
+  then complete the claim.
+- For `confirm | repeat`, if no current unexpired future hold exists, advance
+  to `human_handoff`, insert `appointment_unavailable` copy, complete the
+  claim, and return `stale_hold`. Never confirm a replacement slot silently.
+- A pre-existing confirmed row outside an exact completed replay is an
+  impossible/corrupt state: raise and roll back rather than invent success.
 
-- reject null identifiers/token before lookup;
-- lock the conversation, then the exact same-clinic slot;
-- return `not_found` for an absent conversation or a target outside its
-  clinic;
-- an exact replay of a slot already confirmed for the same conversation and
-  retained token returns `already_confirmed` with the same times, even if the
-  conversation later advanced;
-- otherwise return `not_ready` unless the conversation is active and currently
-  at `appointment_confirmation`;
-- change `held -> confirmed` only when conversation, slot, token, and an
-  unexpired `hold_until` all match; clear `hold_until`, retain the token for
-  replay identity, set `confirmed_at = pg_catalog.now()`, and return
-  `confirmed` with times;
-- any expired, released, reclaimed, wrong-token, wrong-conversation, or
-  otherwise non-current hold returns `stale` with null times and no mutation.
+Closed results:
 
-No RPC accepts a clinic, owner, pet, start time, end time, status, or arbitrary
-data document from the caller. None advances conversation state or writes a
-message/outbox row.
+- `confirmed | declined` with `completed` and the final state version;
+- `repeated` with `appointment_selection` and the final state version;
+- `stale_hold` with `human_handoff` and the final state version;
+- `already_completed | stale_claim | stale_state` with null stage/version.
 
-## TypeScript client contract
+### Exact appointment copy
 
-`src/appointmentEngine.ts` exposes only:
+Generate these database-owned replies from trusted slot rows. The placeholder
+`{TIME}` is `DD.MM.YYYY HH24:MI` in `Europe/Istanbul`:
 
-- `listAvailableAppointmentSlots(...)`;
-- `holdAppointmentSlot(...)`;
-- `confirmAppointmentSlot(...)`;
-- the minimal input/result/slot types needed by those functions.
+- offer/repeat:
+  `En erken uygun randevu saati: {TIME}. Bu saat geçici olarak ayrıldı; randevu henüz kesinleşmedi. Onaylamak için yalnızca EVET, vazgeçmek için HAYIR yazın.`
+- confirmed:
+  `Randevunuz {TIME} için oluşturuldu.`
+- declined:
+  `Randevu oluşturulmadı.`
+- no slot:
+  `Şu anda bot üzerinden sunabileceğim uygun randevu saati yok. Lütfen kliniğimizi telefonla arayın.`
+- expired/missing hold:
+  `Ayırılan randevu saati artık kullanılamıyor. Lütfen kliniğimizi telefonla arayın.`
 
-Follow the existing native-fetch service-role client rules without changing or
-refactoring the older clients:
+Do not claim staff notification, response time, general clinic availability,
+or appointment confirmation before the confirmed branch commits.
 
-- require nonblank Supabase URL/key and allow HTTPS or loopback HTTP only;
-- validate UUIDs, limit, and date-window inputs before any fetch;
-- POST only to the three fixed RPC names;
-- never log inputs, tokens, URLs, response bodies, or errors;
-- treat network, non-2xx, JSON, row-count, extra/missing-key, result-set,
-  timestamp, token, and null-coherence failures as closed `failed` outcomes;
-- preserve database timestamps as validated strings; do not format local time;
-- return fresh result objects and never mutate caller input.
+## TypeScript RPC clients and consumer wiring
 
-Closed TypeScript outcomes:
+`src/appointmentFlow.ts` also exposes minimal native-`fetch` clients for the
+two RPCs, following the existing service-role rules:
 
-- list: `{ kind: 'listed'; slots } | { kind: 'failed' }`;
-- hold: `held` with token/slot, or `not_found | not_ready | unavailable |
-  conflict | failed` with no token/slot;
-- confirm: `confirmed | already_confirmed` with slot, or `not_found |
-  not_ready | stale | failed` with no slot.
+- HTTPS or loopback HTTP only, existing Supabase bindings only;
+- strict local input validation before fetch;
+- exact fixed RPC paths and closed request bodies;
+- strict one-row/result/stage/version/null-coherence parsing;
+- network/non-2xx/JSON/shape errors collapse to fresh `failed` results;
+- never throw, mutate input, or log URL/body/token/identifier/error data.
 
-Do not import or wire this module from `src/index.ts` or any existing runtime
-module in this task.
+Wire `processIntakeQueueMessage` after extraction and `planIntakeTurn`:
+
+1. Preserve the existing safety-consistency guard and poison fallback.
+2. Compute the pure appointment action.
+3. For `offer`, call only the appointment-offer finalizer.
+4. For `confirm | decline | repeat`, call only the decision finalizer.
+5. For no appointment action, preserve the current reply planner and existing
+   finalizer byte-for-byte in behavior.
+
+Disposition:
+
+- appointment `offered | unavailable | confirmed | declined | repeated |
+  stale_hold | already_completed | stale_claim` → `ack`;
+- `stale_state | failed` → `retry`.
+
+Never call the LLM a second time. Never call Meta directly. Replies continue
+through the existing outbox/Cron sender. A safety/human signal in the same
+message as `EVET` must take the existing handoff path and must not call either
+appointment finalizer.
 
 ## Required tests
 
@@ -281,62 +312,56 @@ module in this task.
 
 Prove at least:
 
-- all local input rejection paths perform zero fetches;
-- HTTPS and the three loopback HTTP hosts are accepted; other HTTP/malformed
-  configuration fails closed;
-- each RPC uses its exact path, headers, method, and closed body;
-- list ordering is preserved and exact slot rows are required;
-- each allowed hold/confirm result is parsed with correct null coherence;
-- UUID/token/timestamp, extra-key, wrong-row-count, malformed JSON, non-2xx,
-  and network failures return `failed`;
-- no input/result is mutated and no `console` method is called;
-- no real Supabase request occurs.
+- exact normalization/acceptance/rejection for `EVET`, `HAYIR`, and unknown
+  text; `evet lütfen`, embedded words, model fields, IDs, dates, and times
+  never confirm;
+- appointment routing only after a safe matched-pet appointment request and
+  only at the specified stages;
+- every safety/human precedence case bypasses appointment RPCs;
+- both clients validate input/config/request/response shapes, return fresh
+  failures, never mutate/log, and make no real request;
+- consumer offer/confirm/decline/repeat/no-slot/stale-hold/stale-state/failure
+  dispositions and exact RPC bodies;
+- existing poison, safety, ordinary intake, Queue, outbox, and sender tests
+  remain unchanged in behavior.
 
 ### Rollback SQL fixture
 
-`supabase/tests/022_appointment_booking_engine.sql` runs inside
-`BEGIN`/`ROLLBACK` and proves at least:
+Inside one `BEGIN`/`ROLLBACK`, prove at least:
 
-- table columns/checks, fixed duration/alignment, unique keys, composite FKs,
-  RLS/grants, trigger, and all three function shapes;
-- invalid duration, alignment, duplicate start, incoherent state, and
-  cross-tenant owner/pet/conversation combinations fail with zero partial
-  mutation;
-- listing is same-clinic, future/window bounded, ordered/limited, includes an
-  expired hold, and excludes other-clinic/unexpired-held/confirmed slots;
-- hold success derives the exact conversation clinic/owner/pet, creates a
-  10-minute token lease, and exact replay does not extend it;
-- switching slots is atomic; an unavailable target leaves the previous valid
-  hold unchanged;
-- a confirmed slot conflicts, while an expired target can be reclaimed with a
-  new token and no old-conversation authority;
-- confirm succeeds only for the exact current token at
-  `appointment_confirmation`, exact replay is idempotent, and wrong/expired/
-  released/reclaimed/cross-conversation tokens cannot confirm;
-- unknown/cross-clinic inputs do not reveal or mutate another tenant;
-- `PUBLIC`, `anon`, and `authenticated` cannot access the table or execute the
-  RPCs; `service_role` exercises the successful write path;
-- owner/pet/conversation/clinic erasure cascades related held/confirmed rows;
-- single-session tests do not claim to prove real lock blocking, while stored
-  definitions and deterministic lock order are asserted;
-- rollback leaves zero fixture clinics, users, owners, pets, conversations,
-  or slots.
+- exact category CHECK, both function signatures/security/grants, and no new
+  anon/authenticated table access;
+- service-role offer chooses only the earliest same-clinic future slot,
+  creates a current 10-minute hold, advances one step at a time to selection,
+  writes exact Istanbul copy, and completes the exact claim atomically;
+- no-slot routes to handoff with exact copy and no appointment mutation;
+- list/hold race failure, stale version, stale claim, invalid input, and
+  cross-tenant attempts leave state/slot/outbox/lease unchanged;
+- exact confirm produces one confirmed slot, completed conversation, exact
+  confirmation copy, and completed claim in one transaction;
+- decline releases the hold, produces no confirmed slot, completes the
+  conversation, writes decline copy, and completes the claim;
+- repeat preserves slot/token/hold time exactly and writes the same offer copy;
+- expired/missing hold never confirms, routes to handoff, and writes exact
+  unavailable copy;
+- duplicate/replayed events remain idempotent and cannot create a second
+  outbox row or confirmation;
+- owner/account/source/clinic erasure cascades remain intact;
+- rollback leaves zero fixture rows.
 
 Sonnet must not apply the migration or SQL fixture. Codex alone validates them
 on disposable `vetai-test`.
 
 ## Documentation
 
-Create `docs/appointment-booking-engine.md` describing the one-table state
-machine, 30-minute slot assumption, 10-minute hold, advisory listing,
-hold/switch/confirm semantics, current-token idempotency, tenant derivation,
-RLS/grants, erasure behavior, UTC storage/Europe-Istanbul display boundary,
-and every omitted feature.
+Create `docs/whatsapp-appointment-flow.md` describing the exact single-slot
+journey, deterministic command grammar, safety precedence, atomic boundaries,
+Istanbul rendering, truthful hold/confirm semantics, failure/handoff behavior,
+and every omitted appointment feature. Update the three allowed existing docs
+narrowly. Mark migration/fixture `NOT APPLIED` until Codex validates them.
 
-Update `docs/database-schema.md` narrowly. Mark migration and SQL test
-`NOT APPLIED` until Codex validates them. Never claim a randevu is confirmed
-by a hold, that a user was notified, or that clinic availability is generated
-automatically.
+State plainly that the staff item is durable visibility, not notification;
+the user is told to call when automation cannot safely finish.
 
 ## Verification
 
@@ -356,189 +381,17 @@ service.
 
 ## Review gate
 
-After Sonnet delivers, Codex reviews the full schema/RPC/client path, runs all
-checks, applies the migration and rollback fixture only to disposable
-`vetai-test`, and makes minimum fixes. Then Claude Opus performs one read-only
-review focused on tenant/composite-FK isolation, booking state coherence,
-double-booking/switch/expiry concurrency, current-token confirmation,
-service-role boundaries, KVKK erasure, and truthful claims. PASS closes the
-task; only a material blocking fix requires a narrow re-check.
+After Sonnet delivers, Codex reviews the complete consumer→RPC→slot→state→
+outbox→lease path, runs all checks, and applies the new migration/fixture only
+to disposable `vetai-test`. Claude Opus then performs one read-only review
+limited to the new atomic finalizers, explicit-confirmation proof, safety
+precedence, tenant/KVKK boundaries, and truthful copy. This is the final
+appointment review; only a material blocking fix gets a narrow recheck.
 
 ## Observed context — Sonnet fills before coding
 
-Studied `supabase/migrations/20260806000000_core_tenant_schema.sql` and
-`20260806000200_conversation_intake_state.sql` before writing anything:
-
-- `conversations` has `unique (id, owner_id, clinic_id)` available to add a
-  matching composite unique key on top of, and its existing foreign key to
-  `pets` is `(pet_id, owner_id, clinic_id) references pets (id, owner_id,
-  clinic_id) on delete no action` — not cascade. This matters for erasure
-  fixtures: a conversation that still points at a pet blocks that pet's
-  direct deletion, unlike `appointment_slots`' own pet FK, which this task
-  defines as `on delete cascade`.
-- `conversations.status` check constraint allows exactly `'active'`,
-  `'handoff'`, `'completed'`.
-- `conversations.intake_stage` check constraint allows exactly
-  `'pet_identification'`, `'complaint_collection'`, `'safety_check'`,
-  `'ready_for_triage'`, `'appointment_offer'`, `'appointment_selection'`,
-  `'appointment_confirmation'`, `'human_handoff'`, `'completed'`, default
-  `'pet_identification'`.
-- `pets` already has `unique (id, owner_id, clinic_id)` and cascades from
-  `owners`, so a matching composite FK from `appointment_slots` to `pets`
-  needed no schema change elsewhere.
-
-Reused the existing `SECURITY DEFINER`/invoker hardening pattern (`set
-search_path = ''`, fully-qualified `pg_catalog.now()` /
-`pg_catalog.gen_random_uuid()`), the `role_table_grants` /
-`routine_privileges` grantee-assertion style, and the
-`set local role ...; exception when insufficient_privilege then null; reset
-role;` denial-proof pattern from `supabase/tests/021_staff_workflow.sql`.
-Picked a fresh `998xxxxx-...` fixture UUID prefix family, distinct from the
-`997xxxxx`/`180000...`/`600000...` families already used by other fixtures
-in `supabase/tests/`.
+Pending.
 
 ## Delivery record — Sonnet fills after coding
 
-Delivered, not applied to any database:
-
-- `supabase/migrations/20260810000100_appointment_booking_engine.sql` — one
-  table `public.appointment_slots` (available/held/confirmed state machine,
-  two composite tenant-consistency foreign keys, a partial unique index
-  capping one active slot per conversation, RLS enabled with no policy) and
-  exactly three `service_role`-only RPCs: `list_available_appointment_slots`,
-  `hold_appointment_slot`, `confirm_appointment_slot`.
-- `supabase/tests/022_appointment_booking_engine.sql` — a single
-  `begin ... rollback` proof fixture covering role denial for `anon`/
-  `authenticated`, catalog-level shape assertions (RLS, grants, constraint
-  counts, function security/volatility/search-path, deterministic
-  ascending-id lock order in the function source), every listing/hold/
-  confirm branch (not_found, not_ready, conflict, unavailable, held,
-  exact-replay, switching, reclaiming an expired hold, stale in all four
-  of its collapsed forms, confirmed, already_confirmed idempotent replay
-  after the conversation advances), and all four KVKK erasure-cascade
-  paths (pet, conversation, owner, clinic). Never executed against any
-  database by Sonnet — verified only by manual line-by-line re-review
-  against the migration source, since running it was out of scope for this
-  role. Three logic bugs were found and fixed during that review before
-  delivery: two cases where a staleness/cross-conversation-token sub-test
-  used a conversation not at the `appointment_confirmation` stage (so the
-  RPC would return `not_ready` before ever reaching the staleness check),
-  fixed by routing those sub-tests through a dedicated eligible-but-
-  non-holding conversation; and one case comparing `pg_constraint.conkey`
-  directly against an attnum array without sorting both sides, which is
-  unsound because `conkey` reflects constraint declaration order, not
-  ascending attribute order.
-- `src/appointmentEngine.ts` — dependency-free native-`fetch` client for
-  the three RPCs, defensive on both input and response shape, collapses
-  all transport/shape failures to `{ kind: "failed" }`, never logs
-  request/response contents. Not imported by `src/index.ts` or any other
-  runtime module.
-- `test/appointmentEngine.test.ts` — 78 tests covering input validation,
-  response-shape validation, and the `failed`/success branches of all
-  three exported functions via mocked `fetch`.
-- `docs/appointment-booking-engine.md` (new) and a narrow "Appointment
-  booking engine" section appended to `docs/database-schema.md`, both
-  marked **NOT APPLIED to any database** pending Codex's disposable-
-  `vetai-test` run and the mandatory read-only Claude Opus review.
-
-Verification:
-
-```text
-pnpm install --frozen-lockfile   -> PASS (already up to date, unchanged lock)
-pnpm typecheck                   -> PASS
-pnpm test                        -> PASS (754/754, 23 files, incl. 78/78 in appointmentEngine.test.ts)
-pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
-                                  -> PASS (82.42 KiB / gzip 18.85 KiB, no deployment)
-git diff --check                 -> PASS (also checked the new untracked files
-                                     via a reversible `git add -N` / `git reset`,
-                                     no trailing-whitespace or conflict-marker issues)
-```
-
-No migration or SQL test was applied to any database. No commit, push, or
-deploy was made. No real Meta/OpenAI/Supabase call, resource creation,
-dependency install, or external mutation occurred. Working tree now
-contains exactly the files in "Allowed changes" above, plus this
-CURRENT_TASK.md update.
-
-Sonnet decision: **delivery complete, ready for Codex review.**
-
-## Codex review record
-
-Codex reviewed the full migration/RPC/client/test/documentation path on
-2026-08-10. The allowed-change boundary remains intact: no dependency, Env,
-Wrangler, Worker-runtime, intake, webhook, Queue, Cron, outbox, staff, prompt,
-or existing-migration drift was found.
-
-Minimum fixes made during review:
-
-- replaced shared mutable TypeScript `failed` sentinels with fresh result
-  objects and made an absent runtime Supabase binding fail closed instead of
-  throwing; two regression tests were added;
-- repaired SQL-fixture proof defects: granted `service_role` access to its
-  temporary time table, accounted for unavoidable table/function-owner
-  privileges, required all three RPCs to exist, removed false-positive
-  `when others` assertions, gave simultaneous open conversations distinct
-  owners, isolated rejected inserts from seeded slot times, and bounded the
-  exact listing assertion to the intended three rows;
-- closed a real expired-hold reclaim race in `hold_appointment_slot`: after
-  waiting for a previously observed active-slot row lock, the function now
-  revalidates that the row still belongs to the requesting conversation
-  before it can release it. Without that check, a former holder switching to
-  another slot could release a fresh hold concurrently reclaimed by another
-  conversation. The stored-definition fixture now locks this invariant.
-
-Verification after the fixes:
-
-```text
-pnpm install --frozen-lockfile   -> PASS (unchanged lock)
-pnpm typecheck                   -> PASS
-pnpm test                        -> PASS (756/756, 23 files; appointment client 80/80)
-pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
-                                  -> PASS (no deployment)
-git diff --check                 -> PASS for tracked changes; final staged
-                                    check remains part of the commit gate
-```
-
-Codex applied the migration only to disposable PostgreSQL 17 `vetai-test`.
-The corrected rollback fixture returned `PASS` with
-`remaining_clinics = 0`, `remaining_owners = 0`, `remaining_pets = 0`,
-`remaining_conversations = 0`, and `remaining_slots = 0`. Earlier fixture
-runs stopped inside their transaction on invalid fixture assumptions and
-left no residue. No production database, migration history, real slot/user,
-external provider, deployment, or production configuration was touched.
-
-Codex decision: **PASS, pending the single mandatory read-only Claude Opus
-architecture/RLS/KVKK/concurrency review.** No commit is made before that
-review passes.
-
-## Claude Opus review record
-
-Claude Opus returned `CHANGES_REQUIRED` on 2026-08-10 with one narrow
-concurrency-correctness defect and documentation follow-ups. The same-target
-branch of `hold_appointment_slot` trusted a slot row after waiting for its lock;
-if another conversation reclaimed and confirmed that expired slot meanwhile,
-the former holder could receive the untruthful `conflict` result instead of
-`unavailable`. Codex added the same post-lock conversation/status ownership
-check already used by the distinct-slot branches and added a stored-definition
-fixture assertion for that branch.
-
-Codex also chose the safer resolution for Opus's started-slot note:
-`confirm_appointment_slot` now returns `stale` without mutation after
-`starts_at`, with a rollback-fixture regression case. Documentation now states
-the UTC-storage/`Europe/Istanbul` display boundary, complete omitted-feature
-list, replay-capable token semantics, and the intentional booking-time pet
-snapshot. `PROJECT_CONTEXT.md` records the pet/time decisions and the honest
-single-session concurrency-test boundary.
-
-Codex replaced only the two affected function definitions on disposable
-PostgreSQL 17 `vetai-test`; the updated rollback fixture returned `PASS` with
-all five residue counts equal to zero. Production and migration history were
-not touched. Frozen install, typecheck, 756/756 tests, Wrangler dry-run, and
-tracked-file diff check also passed after the changes. At that point, status
-remained `IN_REVIEW` pending only Opus's requested narrow recheck.
-
-Claude Opus completed that narrow recheck on 2026-08-10 and returned `PASS`
-with no remaining finding. It independently reran all 756 tests and confirmed
-the same-target ownership guard, its stored-definition regression assertion,
-the already-started-slot `stale` path with zero mutation, and the corrected
-time/pet/token documentation. Codex decision: **PASS and COMPLETE.**
+Pending.
