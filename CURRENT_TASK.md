@@ -1,6 +1,6 @@
 # Current task — 022 appointment booking database engine
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -366,8 +366,179 @@ task; only a material blocking fix requires a narrow re-check.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+Studied `supabase/migrations/20260806000000_core_tenant_schema.sql` and
+`20260806000200_conversation_intake_state.sql` before writing anything:
+
+- `conversations` has `unique (id, owner_id, clinic_id)` available to add a
+  matching composite unique key on top of, and its existing foreign key to
+  `pets` is `(pet_id, owner_id, clinic_id) references pets (id, owner_id,
+  clinic_id) on delete no action` — not cascade. This matters for erasure
+  fixtures: a conversation that still points at a pet blocks that pet's
+  direct deletion, unlike `appointment_slots`' own pet FK, which this task
+  defines as `on delete cascade`.
+- `conversations.status` check constraint allows exactly `'active'`,
+  `'handoff'`, `'completed'`.
+- `conversations.intake_stage` check constraint allows exactly
+  `'pet_identification'`, `'complaint_collection'`, `'safety_check'`,
+  `'ready_for_triage'`, `'appointment_offer'`, `'appointment_selection'`,
+  `'appointment_confirmation'`, `'human_handoff'`, `'completed'`, default
+  `'pet_identification'`.
+- `pets` already has `unique (id, owner_id, clinic_id)` and cascades from
+  `owners`, so a matching composite FK from `appointment_slots` to `pets`
+  needed no schema change elsewhere.
+
+Reused the existing `SECURITY DEFINER`/invoker hardening pattern (`set
+search_path = ''`, fully-qualified `pg_catalog.now()` /
+`pg_catalog.gen_random_uuid()`), the `role_table_grants` /
+`routine_privileges` grantee-assertion style, and the
+`set local role ...; exception when insufficient_privilege then null; reset
+role;` denial-proof pattern from `supabase/tests/021_staff_workflow.sql`.
+Picked a fresh `998xxxxx-...` fixture UUID prefix family, distinct from the
+`997xxxxx`/`180000...`/`600000...` families already used by other fixtures
+in `supabase/tests/`.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+Delivered, not applied to any database:
+
+- `supabase/migrations/20260810000100_appointment_booking_engine.sql` — one
+  table `public.appointment_slots` (available/held/confirmed state machine,
+  two composite tenant-consistency foreign keys, a partial unique index
+  capping one active slot per conversation, RLS enabled with no policy) and
+  exactly three `service_role`-only RPCs: `list_available_appointment_slots`,
+  `hold_appointment_slot`, `confirm_appointment_slot`.
+- `supabase/tests/022_appointment_booking_engine.sql` — a single
+  `begin ... rollback` proof fixture covering role denial for `anon`/
+  `authenticated`, catalog-level shape assertions (RLS, grants, constraint
+  counts, function security/volatility/search-path, deterministic
+  ascending-id lock order in the function source), every listing/hold/
+  confirm branch (not_found, not_ready, conflict, unavailable, held,
+  exact-replay, switching, reclaiming an expired hold, stale in all four
+  of its collapsed forms, confirmed, already_confirmed idempotent replay
+  after the conversation advances), and all four KVKK erasure-cascade
+  paths (pet, conversation, owner, clinic). Never executed against any
+  database by Sonnet — verified only by manual line-by-line re-review
+  against the migration source, since running it was out of scope for this
+  role. Three logic bugs were found and fixed during that review before
+  delivery: two cases where a staleness/cross-conversation-token sub-test
+  used a conversation not at the `appointment_confirmation` stage (so the
+  RPC would return `not_ready` before ever reaching the staleness check),
+  fixed by routing those sub-tests through a dedicated eligible-but-
+  non-holding conversation; and one case comparing `pg_constraint.conkey`
+  directly against an attnum array without sorting both sides, which is
+  unsound because `conkey` reflects constraint declaration order, not
+  ascending attribute order.
+- `src/appointmentEngine.ts` — dependency-free native-`fetch` client for
+  the three RPCs, defensive on both input and response shape, collapses
+  all transport/shape failures to `{ kind: "failed" }`, never logs
+  request/response contents. Not imported by `src/index.ts` or any other
+  runtime module.
+- `test/appointmentEngine.test.ts` — 78 tests covering input validation,
+  response-shape validation, and the `failed`/success branches of all
+  three exported functions via mocked `fetch`.
+- `docs/appointment-booking-engine.md` (new) and a narrow "Appointment
+  booking engine" section appended to `docs/database-schema.md`, both
+  marked **NOT APPLIED to any database** pending Codex's disposable-
+  `vetai-test` run and the mandatory read-only Claude Opus review.
+
+Verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS (already up to date, unchanged lock)
+pnpm typecheck                   -> PASS
+pnpm test                        -> PASS (754/754, 23 files, incl. 78/78 in appointmentEngine.test.ts)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS (82.42 KiB / gzip 18.85 KiB, no deployment)
+git diff --check                 -> PASS (also checked the new untracked files
+                                     via a reversible `git add -N` / `git reset`,
+                                     no trailing-whitespace or conflict-marker issues)
+```
+
+No migration or SQL test was applied to any database. No commit, push, or
+deploy was made. No real Meta/OpenAI/Supabase call, resource creation,
+dependency install, or external mutation occurred. Working tree now
+contains exactly the files in "Allowed changes" above, plus this
+CURRENT_TASK.md update.
+
+Sonnet decision: **delivery complete, ready for Codex review.**
+
+## Codex review record
+
+Codex reviewed the full migration/RPC/client/test/documentation path on
+2026-08-10. The allowed-change boundary remains intact: no dependency, Env,
+Wrangler, Worker-runtime, intake, webhook, Queue, Cron, outbox, staff, prompt,
+or existing-migration drift was found.
+
+Minimum fixes made during review:
+
+- replaced shared mutable TypeScript `failed` sentinels with fresh result
+  objects and made an absent runtime Supabase binding fail closed instead of
+  throwing; two regression tests were added;
+- repaired SQL-fixture proof defects: granted `service_role` access to its
+  temporary time table, accounted for unavoidable table/function-owner
+  privileges, required all three RPCs to exist, removed false-positive
+  `when others` assertions, gave simultaneous open conversations distinct
+  owners, isolated rejected inserts from seeded slot times, and bounded the
+  exact listing assertion to the intended three rows;
+- closed a real expired-hold reclaim race in `hold_appointment_slot`: after
+  waiting for a previously observed active-slot row lock, the function now
+  revalidates that the row still belongs to the requesting conversation
+  before it can release it. Without that check, a former holder switching to
+  another slot could release a fresh hold concurrently reclaimed by another
+  conversation. The stored-definition fixture now locks this invariant.
+
+Verification after the fixes:
+
+```text
+pnpm install --frozen-lockfile   -> PASS (unchanged lock)
+pnpm typecheck                   -> PASS
+pnpm test                        -> PASS (756/756, 23 files; appointment client 80/80)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS (no deployment)
+git diff --check                 -> PASS for tracked changes; final staged
+                                    check remains part of the commit gate
+```
+
+Codex applied the migration only to disposable PostgreSQL 17 `vetai-test`.
+The corrected rollback fixture returned `PASS` with
+`remaining_clinics = 0`, `remaining_owners = 0`, `remaining_pets = 0`,
+`remaining_conversations = 0`, and `remaining_slots = 0`. Earlier fixture
+runs stopped inside their transaction on invalid fixture assumptions and
+left no residue. No production database, migration history, real slot/user,
+external provider, deployment, or production configuration was touched.
+
+Codex decision: **PASS, pending the single mandatory read-only Claude Opus
+architecture/RLS/KVKK/concurrency review.** No commit is made before that
+review passes.
+
+## Claude Opus review record
+
+Claude Opus returned `CHANGES_REQUIRED` on 2026-08-10 with one narrow
+concurrency-correctness defect and documentation follow-ups. The same-target
+branch of `hold_appointment_slot` trusted a slot row after waiting for its lock;
+if another conversation reclaimed and confirmed that expired slot meanwhile,
+the former holder could receive the untruthful `conflict` result instead of
+`unavailable`. Codex added the same post-lock conversation/status ownership
+check already used by the distinct-slot branches and added a stored-definition
+fixture assertion for that branch.
+
+Codex also chose the safer resolution for Opus's started-slot note:
+`confirm_appointment_slot` now returns `stale` without mutation after
+`starts_at`, with a rollback-fixture regression case. Documentation now states
+the UTC-storage/`Europe/Istanbul` display boundary, complete omitted-feature
+list, replay-capable token semantics, and the intentional booking-time pet
+snapshot. `PROJECT_CONTEXT.md` records the pet/time decisions and the honest
+single-session concurrency-test boundary.
+
+Codex replaced only the two affected function definitions on disposable
+PostgreSQL 17 `vetai-test`; the updated rollback fixture returned `PASS` with
+all five residue counts equal to zero. Production and migration history were
+not touched. Frozen install, typecheck, 756/756 tests, Wrangler dry-run, and
+tracked-file diff check also passed after the changes. At that point, status
+remained `IN_REVIEW` pending only Opus's requested narrow recheck.
+
+Claude Opus completed that narrow recheck on 2026-08-10 and returned `PASS`
+with no remaining finding. It independently reran all 756 tests and confirmed
+the same-target ownership guard, its stored-definition regression assertion,
+the already-started-slot `stale` path with zero mutation, and the corrected
+time/pet/token documentation. Codex decision: **PASS and COMPLETE.**

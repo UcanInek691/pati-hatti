@@ -426,3 +426,26 @@ for the full login/list/detail/resolve flow. The migration and rollback SQL
 fixture passed on disposable `vetai-test` on 2026-08-09 with zero fixture
 residue; they have not been applied to production or recorded in Supabase
 migration history.
+
+## Appointment booking engine
+
+Defined in `supabase/migrations/20260810000100_appointment_booking_engine.sql`:
+one table, `public.appointment_slots` (pre-provisioned 30-minute clinic
+slots moving through `available -> held -> confirmed`, with composite
+tenant-consistency foreign keys to `conversations` and `pets`, a partial
+unique index enforcing at most one active slot per conversation, and RLS
+with no policy — `service_role` only), plus exactly three `SECURITY
+INVOKER`, `SET search_path = ''` RPCs granted only to `service_role`:
+`list_available_appointment_slots`, `hold_appointment_slot` (10-minute
+hold, deterministic ascending-id lock order to avoid cross-conversation
+deadlocks), and `confirm_appointment_slot` (idempotent replay via exact
+token match, refusing an already-started slot, and collapsing every other
+failure mode to `stale`). Slot times are UTC-aligned `timestamptz` instants
+rendered as `Europe/Istanbul` by future user-facing flows; the slot's `pet_id`
+is a booking-time snapshot and is not rewritten by later conversation changes. See
+[`docs/appointment-booking-engine.md`](appointment-booking-engine.md) for
+the full state-machine contract. The migration and rollback fixture were
+validated only on disposable PostgreSQL 17 `vetai-test` on 2026-08-10; the
+fixture returned `PASS` with zero residue. They have not been applied to
+production or recorded in migration history. The read-only Claude Opus review
+and its narrow recheck of the corrected same-target lock branch both passed.

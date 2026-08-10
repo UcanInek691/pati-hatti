@@ -213,6 +213,17 @@ The secure Worker baseline is committed on `main`:
   typecheck, frozen install, Worker dry-run, local route smoke testing, and
   Codex review and the required final Claude Opus privacy/RLS review passed;
   nothing was deployed or applied to production.
+- A backend-only appointment engine now lists pre-provisioned, same-clinic
+  30-minute slots, holds one slot per conversation for ten minutes, switches
+  holds atomically, and confirms only the current unexpired token before the
+  slot starts. Composite foreign keys bind conversation, owner, pet, and
+  clinic; RLS exposes the table and three fixed RPCs only to `service_role`.
+- Task 022's migration and rollback fixture passed on disposable `vetai-test`
+  with zero residue. Frozen install, typecheck, 756/756 tests, Worker dry-run,
+  Codex review, and Claude Opus architecture/RLS/KVKK/concurrency review all
+  passed after post-lock ownership and started-slot guards were added. The
+  client is intentionally not wired into the WhatsApp runtime yet, and no
+  production migration or deployment occurred.
 
 Verified evidence before the context-system change:
 
@@ -232,7 +243,8 @@ Verified evidence before the context-system change:
   or clinic management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
-- Appointment operations.
+- WhatsApp appointment listing, selection, hold, and explicit-confirmation
+  flow; the reviewed appointment engine is not wired into runtime yet.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
 - Production deployment and real external-service configuration.
@@ -246,11 +258,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 021 is complete with Codex implementation/RLS validation and Claude Opus
-privacy/security approval. The fixed MVP roadmap now has three main
-implementation tasks: appointment database engine, WhatsApp appointment
-confirmation flow, and production readiness. No real notification,
-Cron/Queue/DLQ resource creation, or production deployment has occurred.
+Task 022 is complete with disposable-database validation plus Codex and Claude
+Opus approval. The fixed MVP roadmap now has two main implementation tasks:
+the WhatsApp appointment confirmation flow and production readiness. No real
+notification, Cron/Queue/DLQ resource creation, or production deployment has
+occurred.
 
 ## Durable safety invariants
 
@@ -308,6 +320,16 @@ Cron/Queue/DLQ resource creation, or production deployment has occurred.
   outbox CHECK that makes exhausted-send and provider-failed states mutually
   exclusive. A future relaxation of that CHECK must revisit the partial unique
   key and trigger conflict behavior together.
+- Appointment slot times are absolute `timestamptz` instants aligned on UTC
+  half-hours and must be rendered in `Europe/Istanbul` by user-facing flows.
+  A current hold cannot be confirmed after its slot has started.
+- An appointment slot's `pet_id` is the booking-time snapshot copied from its
+  conversation. Later conversation pet changes do not rewrite a held or
+  confirmed slot; a flow changing the selected pet must explicitly re-hold.
+- The appointment engine's deterministic row-lock order and ownership
+  revalidation were reviewed from PostgreSQL semantics and stored function
+  definitions. The rollback fixture is single-session and does not claim a
+  real two-session blocking test.
 
 ## Context maintenance
 
