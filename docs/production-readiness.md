@@ -17,12 +17,13 @@ itself.
       their name/role and contact path here before go-live.
 - [ ] A veterinarian at the operating clinic has read and approved every
       Turkish safety-check and appointment-flow message string the Worker can
-      send (see `src/intakeReply.ts`,
-      [`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md)).
+      send using the Turkish
+      [`veteriner-hekim-onay-paketi.md`](veteriner-hekim-onay-paketi.md).
       Approval must be recorded (who, date, which copy revision) before any
       real send.
 - [ ] Turkish legal/KVKK (Kişisel Verilerin Korunması Kanunu) review and
-      approval, covering at minimum:
+      approval using the Turkish
+      [`kvkk-inceleme-paketi.md`](kvkk-inceleme-paketi.md), covering at minimum:
   - the data-subject notice text and how/when it is shown,
   - the lawful basis relied on for processing pet-owner and pet-health data,
   - which roles (clinic staff, clinic owner, platform operator) may access

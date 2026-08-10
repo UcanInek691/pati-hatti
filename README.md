@@ -2,6 +2,12 @@
 
 WhatsApp üzerinden çalışan dijital resepsiyon ve randevu sisteminin Cloudflare Worker temeli.
 
+## İnsan onay paketleri
+
+- [Veteriner hekim inceleme ve onay paketi](docs/veteriner-hekim-onay-paketi.md)
+- [Türk hukuku ve KVKK inceleme paketi](docs/kvkk-inceleme-paketi.md)
+- [Üretime hazırlık kontrol listesi](docs/production-readiness.md)
+
 ## Gereksinimler
 
 - Node.js 20+
