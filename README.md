@@ -5,7 +5,9 @@ WhatsApp üzerinden çalışan dijital resepsiyon ve randevu sisteminin Cloudfla
 ## İnsan onay paketleri
 
 - [Veteriner hekim inceleme ve onay paketi](docs/veteriner-hekim-onay-paketi.md)
+  ([PDF](output/pdf/veteriner-hekim-onay-paketi.pdf))
 - [Türk hukuku ve KVKK inceleme paketi](docs/kvkk-inceleme-paketi.md)
+  ([PDF](output/pdf/kvkk-inceleme-paketi.pdf))
 - [Üretime hazırlık kontrol listesi](docs/production-readiness.md)
 
 ## Gereksinimler

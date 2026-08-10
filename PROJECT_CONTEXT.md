@@ -246,6 +246,11 @@ The secure Worker baseline is committed on `main`:
   inventory, erasure behavior, and blank legal/retention decisions. They are
   review worksheets, not clinical or legal approval, and signed copies must
   remain outside the repository.
+- Print-ready PDFs of both human-review packs are available under
+  `output/pdf/`. The veterinarian version is five-page portrait A4 with a
+  dedicated approval page; the KVKK version is nine-page landscape A4 for
+  readable decision tables. Both preserve the source content, include plain-
+  language technical glossaries, and were text-verified and visually reviewed.
 
 Verified evidence before the context-system change:
 
@@ -282,9 +287,9 @@ Task 024 is complete with disposable-database validation plus Codex and Claude
 Opus approval. The code-level MVP scope is closed. Production release remains
 blocked on the human approvals and operational setup in
 `docs/production-readiness.md`. Turkish veterinarian and KVKK review packs are
-ready for those human decisions; no real notification, Queue/DLQ resource
-creation, secret configuration, production migration, or deployment has
-occurred.
+ready in Markdown and PDF for those human decisions; no real notification,
+Queue/DLQ resource creation, secret configuration, production migration, or
+deployment has occurred.
 
 ## Durable safety invariants
 

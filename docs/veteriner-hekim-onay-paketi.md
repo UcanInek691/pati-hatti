@@ -14,10 +14,23 @@ Bu bir tıbbi protokol değildir. Bot teşhis koymaz, hastalık olasılığı sa
 ilaç/doz veya tedavi önermez. Bu belgeyi hazırlayan yazılım ekibinin ya da bir
 yapay zekânın değerlendirmesi veteriner hekim onayının yerine geçmez.
 
+## Kısa sözlük
+
+- **İnsan desteği kaydı (`human_handoff`)**: Bot konuşmayı kendi başına
+  sürdürmez; konu personel ekranındaki iş listesine girer. Bu kayıt personele
+  otomatik telefon, SMS veya bildirim göndermez.
+- **Güvenlik sinyali**: Sahibin açıkça bildirdiği nefes güçlüğü, bilinç kaybı,
+  nöbet, ağır kanama, ciddi travma, olası zehirlenme, yabancı cisim veya idrar
+  yapamama durumlarından biri.
+- **Geçici randevu ayırma**: Saat kısa süreli tutulur; kullanıcı `EVET` yazıp
+  sistem onaylayana kadar kesin randevu değildir.
+- **Ürün metni sürümü**: İncelenen cümlelerin hangi yazılım sürümüne ait
+  olduğunu gösteren kayıt kodudur. Veterinerin kodu incelemesi gerekmez.
+
 ## Sistemin bilinmesi gereken sınırları
 
 - Acil veya belirsiz güvenlik durumları normal randevu akışını durdurur.
-- `human_handoff` oluşması personelin ekranında iş kaydı oluşturur; personele
+- İnsan desteği kaydı oluşması personelin ekranında iş kaydı oluşturur; personele
   telefon, SMS, e-posta veya anlık bildirim gönderildiği anlamına gelmez.
 - Bu nedenle insan desteği gereken metinler kullanıcıya kliniği telefonla
   aramasını söyler.

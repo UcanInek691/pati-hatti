@@ -16,6 +16,27 @@ Teknik ekip ve yapay zekâ, “KVKK'ya uygundur” onayı veremez. Üretime geç
 tamamlanmalı; gerekli aydınlatma, sözleşme ve politika metinleri ayrıca
 hazırlanmalıdır.
 
+## Teknik terimler için kısa sözlük
+
+- **Tenant / klinik sınırı**: Her kliniğin kayıtlarının diğer kliniklerden
+  veritabanı seviyesinde ayrılması.
+- **Webhook**: WhatsApp/Meta'nın yeni mesaj veya teslimat olayı olduğunda
+  sisteme gönderdiği imzalı teknik bildirim.
+- **Worker**: Webhook'u karşılayan ve doğrulayan Cloudflare üzerindeki sunucu
+  kodu; kullanıcının telefonunda çalışmaz.
+- **Queue**: İşin daha sonra güvenli biçimde işlenmesi için tutulan sıra.
+  **DLQ** ise birkaç denemede işlenemeyen işi kaybetmeden bekleten hata sırasıdır.
+- **Outbox**: Kullanıcıya gönderilmesi planlanan mesajın, gönderimden önce ve
+  gönderim sonucu kaydedilirken tutulduğu veritabanı bölümü.
+- **RLS (satır düzeyi güvenlik)**: Personelin yalnız yetkili olduğu kliniğin
+  satırlarını görebilmesini sağlayan veritabanı kuralı.
+- **Service role**: Yalnız sunucu tarafında bulunan, son kullanıcıya veya
+  tarayıcıya verilmeyen yüksek yetkili teknik kimlik.
+- **Hash**: İçeriğin kendisini saklamadan aynı olayın tekrar gelip gelmediğini
+  kontrol etmeye yarayan tek yönlü özet değer.
+- **API secret / token**: Servislerin birbirini doğruladığı gizli anahtar;
+  mesaj veya kullanıcı verisi değildir ve istemciye gösterilmez.
+
 ## 1. Önce belirlenmesi gereken taraflar
 
 | Karar | Uzmanın dolduracağı alan |

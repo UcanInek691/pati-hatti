@@ -1,4 +1,4 @@
-# Current task — 025 Türkçe insan onay paketleri
+# Current task — 026 Türkçe onay paketlerini PDF'e dönüştürme
 
 Status: `COMPLETE`
 
@@ -6,75 +6,68 @@ Owner: Codex
 
 ## Goal
 
-Create two plain-Turkish, non-technical review documents:
-
-1. one veterinarian review pack containing every current user-facing safety
-   and appointment message, its trigger, system limitations, and an approval
-   record;
-2. one KVKK/legal review worksheet containing the verified data flow,
-   inventory, access boundaries, erasure behavior, vendor-transfer questions,
-   retention-decision blanks, and an approval record.
-
-The documents must help human experts review the actual MVP without reading
-source code. They must not invent clinical guidance, choose a legal basis,
-set retention periods, or claim that AI review replaces professional approval.
+Turn the two reviewed Turkish Markdown approval packs into polished,
+print-ready PDFs that a veterinarian and a Turkish law/KVKK specialist can
+understand without reading source code.
 
 ## Scope
 
 Allowed changes:
 
-- `docs/veteriner-hekim-onay-paketi.md` (new)
-- `docs/kvkk-inceleme-paketi.md` (new)
-- `docs/production-readiness.md` (links only)
-- `README.md` (links only)
-- `PROJECT_CONTEXT.md` (durable documentation fact only)
+- `docs/veteriner-hekim-onay-paketi.md` (plain-language glossary only)
+- `docs/kvkk-inceleme-paketi.md` (plain-language glossary only)
+- `output/pdf/veteriner-hekim-onay-paketi.pdf` (new)
+- `output/pdf/kvkk-inceleme-paketi.pdf` (new)
+- `README.md` (PDF links only)
+- `PROJECT_CONTEXT.md` (durable artifact fact only)
 - `CURRENT_TASK.md`
 
 No runtime, prompt, migration, dependency, infrastructure, secret, database,
-deployment, or external-service change.
+deployment, legal decision, clinical decision, or external-service change.
 
 ## Acceptance criteria
 
-- All fixed Turkish intake and appointment copy matches reviewed source at
-  commit `0a3e13d`; dynamic appointment time is shown as a placeholder.
-- The veterinarian pack explains emergency/handoff behavior, safety-question
-  precedence, temporary appointment holds, and that staff visibility is not a
-  notification.
-- The KVKK pack distinguishes verified technical facts from decisions the
-  legal reviewer must make, including controller/processor roles, legal bases,
-  notice timing, overseas transfers, retention, erasure/export, and provider
-  agreements.
-- The KVKK pack links only to current official KVKK resources for legal
-  reference and makes no compliance claim.
-- Both packs contain reviewer identity/date/version/decision fields and state
-  that signed copies should be stored outside the public repository.
-- Markdown is Turkish, readable without engineering knowledge, and passes
-  `git diff --check`.
+- Both PDFs preserve the complete approved-source text and blank decision
+  fields from their Markdown sources.
+- The veterinarian PDF is portrait A4 and explains every technical term needed
+  for review in plain Turkish.
+- The KVKK PDF uses a readable page orientation and explains technical system
+  terms without choosing legal bases or retention periods.
+- Turkish glyphs render correctly; tables, checkboxes, links, headings,
+  headers, footers, and page numbers are not clipped or overlapping.
+- PDFs are reopened, text-extracted, rendered to PNG, and visually inspected.
+- `git diff --check` passes and only allowed files remain changed.
 
 ## Verification
 
-- Compare every quoted product message to source.
-- Check links and headings manually.
-- Run `git diff --check` and verify the worktree contains only allowed files.
+- Compare PDF text against both Markdown sources with normalized whitespace.
+- Use `pdfinfo`, `pypdf`/`pdfplumber`, and Poppler rendering.
+- Inspect every rendered page at contact-sheet scale and representative pages
+  at full readable size.
 
 ## Delivery record
 
 Completed by Codex on 2026-08-10.
 
-- Added `docs/veteriner-hekim-onay-paketi.md` with all 11 current reply
-  situations, the eight exact safety questions, plain-language runtime
-  boundaries, per-message decision fields, and a versioned sign-off record.
-- Added `docs/kvkk-inceleme-paketi.md` with the verified data flow and
-  inventory, blank processing/legal-basis and retention tables, overseas
-  transfer/provider checks, data-subject request workflow, security facts,
-  official KVKK reference links, and a sign-off record.
-- Linked both packs from `README.md` and the production human-gate checklist.
-- Updated durable project context without changing any runtime, prompt,
-  migration, dependency, infrastructure, secret, or external system.
-- Compared every fixed quoted message and all eight safety questions against
-  source at `0a3e13d`: `COPY_AND_LINK_CHECK_PASS`.
-- Official KVKK pages for notice requirements, processing inventory,
-  deletion/destruction, data-subject applications, controller/processor
-  roles, and overseas transfers were checked on 2026-08-10.
-- `git diff --check` passed. No production approval is claimed; the packs are
-  ready for the named human experts to complete outside the repository.
+- Added plain-Turkish glossaries to both Markdown sources without changing
+  clinical copy, legal decisions, retention decisions, or runtime behavior.
+- Created `output/pdf/veteriner-hekim-onay-paketi.pdf`: portrait A4, five
+  pages, dedicated approval page.
+- Created `output/pdf/kvkk-inceleme-paketi.pdf`: landscape A4, nine pages,
+  six verified clickable official-KVKK links.
+- Used embedded Arial/Arial Bold fonts for complete Turkish glyph support,
+  consistent teal/navy hierarchy, repeating table headers, printable blank
+  decision fields, headers, footers, and page numbers.
+- Reopened both PDFs with `pypdf` and `pdfplumber`; every normalized Markdown
+  source segment was present in extracted PDF text, every page contained text,
+  and no replacement glyph was found.
+- Rendered every page through Poppler. Contact-sheet inspection covered all
+  14 pages; full-size inspection covered the veterinarian safety-question
+  page, a representative KVKK table page, and the KVKK approval page. No
+  clipping, overlap, broken table, black box, or unreadable Turkish glyph was
+  found.
+- Final verification: veterinarian PDF `PASS` (5 pages, 8052 normalized text
+  characters); KVKK PDF `PASS` (9 pages, 6 links, 14866 normalized text
+  characters); `git diff --check` passed.
+- PDFs are static print/annotation forms, not interactive AcroForms. Signed or
+  personally identifying completed copies must remain outside this repository.
