@@ -449,3 +449,40 @@ validated only on disposable PostgreSQL 17 `vetai-test` on 2026-08-10; the
 fixture returned `PASS` with zero residue. They have not been applied to
 production or recorded in migration history. The read-only Claude Opus review
 and its narrow recheck of the corrected same-target lock branch both passed.
+
+## WhatsApp appointment flow
+
+Defined in
+`supabase/migrations/20260810000200_whatsapp_appointment_flow.sql`
+(**validated only on disposable `vetai-test` on 2026-08-10**; the rollback
+fixture returned `PASS` with zero residue; not applied to production; see
+[`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md) for the
+full contract). Adds no new table. Extends
+`outbound_message_outbox_reply_category_check` with four values —
+`appointment_offer`, `appointment_confirmed`, `appointment_declined`,
+`appointment_unavailable` — alongside the existing categories from
+[`docs/intake-replies.md`](intake-replies.md), so `finalize_intake_queue_job`
+above continues to accept the widened set unchanged. Adds exactly two new
+`SECURITY INVOKER`, `VOLATILE`, `SET search_path = ''` RPCs granted only to
+`service_role`:
+
+- `finalize_appointment_offer_queue_job(p_conversation_id,
+  p_provider_message_id, p_claim_token, p_expected_version,
+  p_planned_next_stage, p_pet_id, p_intake_data)` — composes the existing
+  `advance_conversation_intake`, `list_available_appointment_slots`,
+  `hold_appointment_slot`, and `complete_intake_queue_job` (none of which are
+  modified) in one transaction to hold the single earliest eligible slot and
+  write its offer reply, or to hand off to a human with a no-slot reply.
+- `finalize_appointment_decision_queue_job(p_conversation_id,
+  p_provider_message_id, p_claim_token, p_expected_version, p_decision,
+  p_pet_id, p_intake_data)` — composes the same primitives plus
+  `confirm_appointment_slot` (also unmodified) to confirm, decline, repeat,
+  or hand off a `EVET`/`HAYIR`-style decision on the currently held slot.
+
+Both follow `finalize_intake_queue_job`'s own boundary exactly: current claim
+token and expected state version are re-checked under lock, every mutation
+(conversation stage, slot state, outbox row, lease completion) happens in the
+same transaction, and any unreachable/inconsistent state raises rather than
+returning a false success row. Neither RPC changes
+`public.appointment_slots`'s columns, constraints, or the three Task 022 RPCs
+themselves.

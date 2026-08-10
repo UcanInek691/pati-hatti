@@ -177,9 +177,16 @@ logs request or response contents (inputs, tokens, URLs, bodies, or
 errors).
 
 **Not wired into any runtime path in this task.** It is not imported by
-`src/index.ts` or any other runtime module; conversation-flow integration
-(when to list/hold/confirm, and how a reply advances `intake_stage`) is
-future work.
+`src/index.ts` or any other runtime module.
+
+Task 023 (see
+[`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md),
+**validated only on disposable `vetai-test`; not production**) composes these same three RPCs from two new SQL
+functions, `finalize_appointment_offer_queue_job` and
+`finalize_appointment_decision_queue_job`, to wire list/hold/confirm into the
+intake Queue consumer's `EVET`/`HAYIR` flow. This file's three RPCs, this
+migration, and `src/appointmentEngine.ts` itself are unmodified by that task;
+`src/appointmentEngine.ts` remains unwired into any runtime path.
 
 ## Verification
 

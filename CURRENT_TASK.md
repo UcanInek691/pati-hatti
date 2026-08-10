@@ -1,6 +1,6 @@
 # Current task — 023 single-slot WhatsApp appointment confirmation flow
 
-Status: `READY`
+Status: `COMPLETE`
 
 Primary implementer: Claude Sonnet
 
@@ -390,8 +390,177 @@ appointment review; only a material blocking fix gets a narrow recheck.
 
 ## Observed context — Sonnet fills before coding
 
-Pending.
+Confirmed the starting state matched this contract's "Starting context"
+section before writing any code: worktree was clean at HEAD `deec7c8` on
+`main` (this session later observed later docs-only commits land on `main`
+ahead of that as work proceeded; no uncommitted change from any other source
+was present at any point). Task 022's migration
+(`20260810000100_appointment_booking_engine.sql`) and its three RPCs
+(`list_available_appointment_slots`, `hold_appointment_slot`,
+`confirm_appointment_slot`) were present, committed, and reviewed, but
+`src/appointmentEngine.ts` was not imported anywhere outside its own test —
+confirmed by reading `src/appointmentEngine.ts` and `docs/appointment-booking-engine.md`
+in full. Read `src/intakeConsumer.ts`, `src/intakeTurn.ts`,
+`src/conversationState.ts`, `src/intakeReply.ts`, and `src/intakeJobLease.ts`
+in full: the consumer's existing parse -> claim -> context -> extract -> plan
+-> finalize pipeline, `planIntakeTurn`'s stage machine (which already holds a
+conversation at `appointment_offer` / `appointment_selection` /
+`appointment_confirmation` unless a handoff-grade safety decision fires —
+confirmed via `decideNextStage`'s fall-through `return currentStage` for
+those three stages), `advance_conversation_intake`'s same-stage /
+one-step-forward / any-non-terminal-to-human_handoff transition rule, and the
+existing `outbound_message_outbox_reply_category_check` / `finalize_intake_queue_job`
+atomic-finalization boundary all matched the contract's description exactly,
+with no undocumented divergence found. `APP_TIMEZONE=Europe/Istanbul` was
+confirmed as the project's existing time-zone convention (already used by
+Task 022's own slot-rendering boundary). No RPC client convention in this
+codebase (`appointmentEngine.ts`, `conversationState.ts`, `intakeJobLease.ts`)
+is shared through an imported helper; each duplicates its own
+`isLoopbackHttpUrl`/`buildEndpoint`/`callRpc`/plain-record-check, so
+`src/appointmentFlow.ts` follows that same duplication convention rather than
+introducing a new shared module, which this contract does not list as an
+allowed new file.
 
 ## Delivery record — Sonnet fills after coding
 
-Pending.
+**Scope discipline.** Touched only files inside this contract's "Allowed
+changes" list. New files: `supabase/migrations/20260810000200_whatsapp_appointment_flow.sql`,
+`supabase/tests/023_whatsapp_appointment_flow.sql`, `src/appointmentFlow.ts`,
+`test/appointmentFlow.test.ts`, `docs/whatsapp-appointment-flow.md`. Narrow
+edits: `src/intakeConsumer.ts` (five-step appointment wiring inserted between
+the existing `planIntakeTurn` call and the existing `planIntakeReply` call,
+no other line touched), `test/intakeConsumer.test.ts` (two new `describe`
+blocks plus two new route helpers, all existing tests byte-for-byte
+unaffected since new route overrides default to `undefined`),
+`src/intakeReply.ts` (four-value union widening only, no copy/precedence
+change), `test/intakeReply.test.ts` (one new coverage test), and narrow
+additions to `docs/database-schema.md`, `docs/inbound-queue.md`,
+`docs/appointment-booking-engine.md`. `CURRENT_TASK.md` itself: only this
+section and "Observed context" were filled in. No dependency, lockfile, Env
+binding, `wrangler.toml`, Worker route/handler, webhook, Queue message shape,
+prompt/extraction, safety-rule, staff-UI, outbound-sender, or Task 022
+migration/RPC file was touched.
+
+**What was built.** `src/appointmentFlow.ts` exports a pure deterministic
+`EVET`/`HAYIR` parser (`parseAppointmentDecision`), a pure safety-first
+router (`planAppointmentAction`), and two native-`fetch` service-role RPC
+clients (`finalizeAppointmentOfferQueueJob`,
+`finalizeAppointmentDecisionQueueJob`) matching this project's existing RPC
+client conventions exactly (strict local validation, exact-key-count row
+checks, `{ kind: "failed" }` on any transport/shape failure, no
+throw/no log). `src/intakeConsumer.ts` now calls `planAppointmentAction`
+right after `planIntakeTurn` and routes an `"offer"`/`"decision"` action to
+the matching new finalizer instead of the existing
+`planIntakeReply`/`finalize_intake_queue_job` path; a `"none"` action is
+unchanged from before this task. The new migration
+(`20260810000200_whatsapp_appointment_flow.sql`) extends
+`outbound_message_outbox_reply_category_check` with four values and adds the
+two new `SECURITY INVOKER` / `SET search_path = ''` /
+`service_role`-only RPCs the client module calls, composing Task 022's three
+unmodified RPCs plus `advance_conversation_intake` /
+`complete_intake_queue_job` inside single transactions. Full behavioral
+contract, safety precedence, atomic boundaries, Istanbul rendering, and every
+omitted feature are documented in
+`docs/whatsapp-appointment-flow.md`, which is marked **NOT APPLIED to any
+database** throughout, as are the narrow additions in
+`docs/database-schema.md`, `docs/inbound-queue.md`, and
+`docs/appointment-booking-engine.md`.
+
+**Constraints honored throughout.** The new migration
+(`20260810000200_whatsapp_appointment_flow.sql`) and its rollback fixture
+(`supabase/tests/023_whatsapp_appointment_flow.sql`) were never applied,
+executed, or run against any database, disposable or otherwise — Codex alone
+validates them on `vetai-test`. No real Meta, OpenAI, or Supabase API call
+was made; every test exercises the pure functions directly or stubs `fetch`.
+No git commit, push, or deploy was performed; `wrangler deploy --dry-run`
+below only validated configuration and did not create any Cloudflare
+resource.
+
+**Verification (all run locally, no database/network side effects).**
+
+- `pnpm install --frozen-lockfile` — already up to date, no lockfile change.
+- `pnpm typecheck` (`tsc --noEmit`) — zero errors.
+- `pnpm test` (`vitest run`, full suite, no path filter) — **895/895 tests
+  passed across 24 test files**, including the 115 new tests in
+  `test/appointmentFlow.test.ts`, the 50 tests in the extended
+  `test/intakeConsumer.test.ts`, and the 32 tests in the extended
+  `test/intakeReply.test.ts`.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — built
+  and validated bindings only (`INTAKE_QUEUE`, `APP_TIMEZONE`,
+  `WHATSAPP_GRAPH_API_VERSION`); exited at `--dry-run: exiting now.` with no
+  deployment.
+- `git diff --check` — no whitespace errors reported against tracked file
+  changes. This command diffs only tracked files already known to git, so it
+  did not (and by its own nature cannot) cover the five new untracked files
+  listed above; those were reviewed by hand instead.
+
+**Deviation from user instructions (environment-forced, disclosed
+plainly).** The user's global `~/.claude/CLAUDE.md` instructs every shell
+command to be prefixed with `rtk` (Rust Token Killer). `rtk` is not installed
+in this environment: `rtk pnpm install --frozen-lockfile` failed with
+`rtk: command not found` (confirmed again just before this verification
+pass, via Bash). Every command in this delivery record was therefore run
+unprefixed via plain `pnpm`/`git`/`wrangler`. This is a deviation forced by
+the environment, not a choice, and no `rtk`-branded token-savings figures are
+claimed anywhere in this record.
+
+**Known open item (unchanged from Task 022, not in this task's scope).** The
+"true two-session lock blocking" behavior of the underlying `hold_appointment_slot`
+row-lock ordering remains reviewed from PostgreSQL semantics rather than
+proven by a single-session SQL fixture, exactly as already stated in
+`docs/appointment-booking-engine.md`; this task's own new rollback fixture
+inherits the same single-session limitation and does not claim otherwise.
+
+## Codex review record — 2026-08-10
+
+**Decision: PASS.** Codex
+traced the consumer -> deterministic appointment action -> service-role RPC ->
+conversation/slot -> outbox -> Queue lease path and kept Task 022's reviewed
+engine unchanged. Scope matches the allowed list; no dependency, Env,
+Wrangler, route, webhook, prompt, extraction, safety-rule, staff-UI, sender,
+or Task 022 migration drift was found.
+
+Targeted fixes made during review:
+
+- `planAppointmentAction` now treats `needs_safety_check` as non-safe and
+  bypasses appointment RPCs, so only `continue_intake` may offer or decide;
+- both Data API clients enforce exact result/stage coherence and return fresh
+  failure objects, with strict plain non-empty `intakeData` validation;
+- both SQL finalizers reject a null `p_pet_id` before mutation, matching the
+  shared contract;
+- the rollback fixture was corrected for Supabase's two valid empty
+  `search_path` catalog encodings, service-role access to its temporary time
+  table, valid-pet replay inputs, and isolated account-erasure cascade proof;
+- documentation now accurately states that the existing extraction/safety
+  pass still runs once before raw-text appointment decision parsing.
+
+Verification after fixes:
+
+- `pnpm install --frozen-lockfile` — passed, no dependency/lockfile change;
+- `pnpm typecheck` — passed;
+- `pnpm test` — **904/904 passed across 24 files**;
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed,
+  no deployment and bindings unchanged;
+- `git diff --check` — passed (only existing LF/CRLF notices);
+- migration `20260810000200_whatsapp_appointment_flow.sql` — applied
+  successfully only to disposable `vetai-test`;
+- rollback fixture `023_whatsapp_appointment_flow.sql` — returned `PASS` with
+  remaining clinics/accounts/owners/pets/conversations/slots/outbox all `0`.
+
+Production, Meta, OpenAI, Cloudflare deployment, and real clinic data remain
+untouched.
+
+## Claude Opus review record — 2026-08-10
+
+**Decision: PASS.** The required read-only review found no blocking issue in
+the two atomic finalizers, exact raw-text `EVET` confirmation proof,
+deterministic safety precedence, tenant/RLS/KVKK boundaries, or truthful user
+copy. It independently confirmed that LLM output cannot confirm an
+appointment or provide a slot/token, outbox insertion remains in the same
+transaction as confirmation, and failed finalization rolls back the entire
+operation.
+
+Two non-blocking lifecycle notes were promoted to durable project invariants:
+LLM-inferred intent may create only a reversible ten-minute offer, and a hold
+interrupted by safety/handoff precedence may remain only until its fixed
+expiry. No additional implementation was justified for this task.

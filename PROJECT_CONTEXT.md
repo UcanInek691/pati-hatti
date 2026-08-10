@@ -221,9 +221,15 @@ The secure Worker baseline is committed on `main`:
 - Task 022's migration and rollback fixture passed on disposable `vetai-test`
   with zero residue. Frozen install, typecheck, 756/756 tests, Worker dry-run,
   Codex review, and Claude Opus architecture/RLS/KVKK/concurrency review all
-  passed after post-lock ownership and started-slot guards were added. The
-  client is intentionally not wired into the WhatsApp runtime yet, and no
-  production migration or deployment occurred.
+  passed after post-lock ownership and started-slot guards were added.
+- The WhatsApp intake consumer now offers the earliest eligible appointment
+  slot and accepts only exact normalized `EVET` or `HAYIR` decisions. An
+  appointment is confirmed only by the current unexpired database token;
+  deterministic safety and handoff decisions bypass all appointment RPCs.
+- Task 023's migration and rollback fixture passed on disposable `vetai-test`
+  with zero residue. Frozen install, typecheck, 904/904 tests, Worker dry-run,
+  Codex review, and the required Claude Opus atomicity/confirmation/tenant/
+  KVKK/copy review all passed. No production migration or deployment occurred.
 
 Verified evidence before the context-system change:
 
@@ -243,8 +249,6 @@ Verified evidence before the context-system change:
   or clinic management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
-- WhatsApp appointment listing, selection, hold, and explicit-confirmation
-  flow; the reviewed appointment engine is not wired into runtime yet.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
 - Production deployment and real external-service configuration.
@@ -258,11 +262,10 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 022 is complete with disposable-database validation plus Codex and Claude
-Opus approval. The fixed MVP roadmap now has two main implementation tasks:
-the WhatsApp appointment confirmation flow and production readiness. No real
-notification, Cron/Queue/DLQ resource creation, or production deployment has
-occurred.
+Task 023 is complete with disposable-database validation plus Codex and Claude
+Opus approval. The fixed MVP roadmap now has one main task: production
+readiness. No real notification, Cron/Queue/DLQ resource creation, or
+production deployment has occurred.
 
 ## Durable safety invariants
 
@@ -330,6 +333,14 @@ occurred.
   revalidation were reviewed from PostgreSQL semantics and stored function
   definitions. The rollback fixture is single-session and does not claim a
   real two-session blocking test.
+- LLM-extracted appointment intent may start only a reversible ten-minute slot
+  offer. It cannot select a slot identifier, supply a booking token, or confirm
+  an appointment; confirmation requires exact normalized raw-text `EVET` after
+  the deterministic safety gate permits normal intake.
+- If safety or handoff precedence interrupts appointment confirmation, the
+  existing hold is not released or extended by that path. It may remain until
+  its fixed expiry and is then reclaimable; a started slot with a still-live
+  hold follows the same bounded self-healing behavior.
 
 ## Context maintenance
 

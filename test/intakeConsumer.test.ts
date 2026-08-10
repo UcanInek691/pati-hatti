@@ -111,11 +111,36 @@ function finalizeRow(
   return jsonResponse([{ result, intake_stage: null, state_version: null }]);
 }
 
+function offerRow(
+  result: "offered" | "unavailable" | "already_completed" | "stale_claim" | "stale_state",
+  extra: { intake_stage?: string; state_version?: number } = {},
+): Response {
+  if (result === "offered" || result === "unavailable") {
+    const intakeStage = result === "offered" ? "appointment_selection" : "human_handoff";
+    return jsonResponse([{ result, intake_stage: extra.intake_stage ?? intakeStage, state_version: extra.state_version ?? 2 }]);
+  }
+  return jsonResponse([{ result, intake_stage: null, state_version: null }]);
+}
+
+function decisionRow(
+  result: "confirmed" | "declined" | "repeated" | "stale_hold" | "already_completed" | "stale_claim" | "stale_state",
+  extra: { intake_stage?: string; state_version?: number } = {},
+): Response {
+  if (result === "confirmed" || result === "declined" || result === "repeated" || result === "stale_hold") {
+    const intakeStage =
+      result === "repeated" ? "appointment_selection" : result === "stale_hold" ? "human_handoff" : "completed";
+    return jsonResponse([{ result, intake_stage: extra.intake_stage ?? intakeStage, state_version: extra.state_version ?? 2 }]);
+  }
+  return jsonResponse([{ result, intake_stage: null, state_version: null }]);
+}
+
 type Routes = {
   claim?: () => Response;
   context?: () => Response;
   openai?: () => Response;
   finalize?: () => Response;
+  appointmentOffer?: () => Response;
+  appointmentDecision?: () => Response;
 };
 
 function routedFetch(routes: Routes) {
@@ -124,6 +149,12 @@ function routedFetch(routes: Routes) {
     if (url.includes("/rpc/claim_intake_queue_job")) return routes.claim ? routes.claim() : new Response("", { status: 500 });
     if (url.includes("/rpc/get_conversation_intake_context")) return routes.context ? routes.context() : new Response("", { status: 500 });
     if (url.includes("api.openai.com")) return routes.openai ? routes.openai() : new Response("", { status: 500 });
+    if (url.includes("/rpc/finalize_appointment_offer_queue_job")) {
+      return routes.appointmentOffer ? routes.appointmentOffer() : new Response("", { status: 500 });
+    }
+    if (url.includes("/rpc/finalize_appointment_decision_queue_job")) {
+      return routes.appointmentDecision ? routes.appointmentDecision() : new Response("", { status: 500 });
+    }
     if (url.includes("/rpc/finalize_intake_queue_job")) return routes.finalize ? routes.finalize() : new Response("", { status: 500 });
     return new Response("", { status: 500 });
   });
@@ -135,6 +166,8 @@ function happyRoutes(overrides: Partial<Routes> & { extraction?: Record<string, 
     context: overrides.context !== undefined ? overrides.context : () => contextRow(),
     openai: overrides.openai ?? (() => openAiResponse(overrides.extraction ?? extractionJson())),
     finalize: overrides.finalize ?? (() => finalizeRow("applied")),
+    appointmentOffer: overrides.appointmentOffer,
+    appointmentDecision: overrides.appointmentDecision,
   });
 }
 
@@ -467,6 +500,193 @@ describe("processIntakeQueueMessage: finalization disposition mapping", () => {
 
     expect(result).toBe(expected);
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("processIntakeQueueMessage: appointment offer routing", () => {
+  it("a matched pet with an appointment_request intent reaching ready_for_triage calls the offer RPC instead of finalize_intake_queue_job", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "appointment_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+      appointmentOffer: () => offerRow("offered", { intake_stage: "appointment_selection", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(true);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
+
+    const offerBody = bodyOf(fetchMock, 3);
+    expect(offerBody.p_conversation_id).toBe(CONVERSATION_ID);
+    expect(offerBody.p_provider_message_id).toBe(PROVIDER_MESSAGE_ID);
+    expect(offerBody.p_claim_token).toBe(CLAIM_TOKEN);
+    expect(offerBody.p_expected_version).toBe(1);
+    expect(offerBody.p_planned_next_stage).toBe("ready_for_triage");
+    expect(offerBody.p_pet_id).toBe(PET_ID);
+  });
+
+  it.each([
+    { label: "offered", response: offerRow("offered"), expected: "ack" as QueueDisposition },
+    { label: "unavailable", response: offerRow("unavailable"), expected: "ack" as QueueDisposition },
+    { label: "already_completed", response: offerRow("already_completed"), expected: "ack" as QueueDisposition },
+    { label: "stale_claim", response: offerRow("stale_claim"), expected: "ack" as QueueDisposition },
+    { label: "stale_state", response: offerRow("stale_state"), expected: "retry" as QueueDisposition },
+    { label: "failed (RPC error)", response: new Response("", { status: 500 }), expected: "retry" as QueueDisposition },
+  ])("offer RPC $label -> $expected", async ({ response, expected }) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "appointment_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+      appointmentOffer: () => response,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe(expected);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("a matched-pet appointment_request plan with no resolved pet id retries without calling the offer RPC", async () => {
+    vi.spyOn(intakeTurnModule, "planIntakeTurn").mockReturnValue({
+      kind: "planned",
+      nextStage: "ready_for_triage",
+      petId: null,
+      intakeData: { ...extractionJson({ intent: "appointment_request", reported_safety_signals: ALL_FALSE_SIGNALS }), schema_version: 1 } as never,
+      petResolution: { kind: "matched", petId: PET_ID },
+      safetyDecision: { kind: "continue_intake" },
+    });
+    const fetchMock = happyRoutes({ context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("a report_symptom intent at ready_for_triage still finalizes normally, never calling the offer RPC", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "report_symptom", reported_safety_signals: ALL_FALSE_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(false);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
+  });
+});
+
+describe("processIntakeQueueMessage: appointment decision routing", () => {
+  it("appointment_selection stage calls the decision RPC with EVET normalized to confirm, bypassing finalize_intake_queue_job", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "appointment_selection", pet_id: PET_ID }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "EVET" }),
+      appointmentDecision: () => decisionRow("confirmed", { intake_stage: "completed", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_decision_queue_job"))).toBe(true);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
+
+    const decisionBody = bodyOf(fetchMock, 3);
+    expect(decisionBody.p_decision).toBe("confirm");
+    expect(decisionBody.p_pet_id).toBe(PET_ID);
+    expect(decisionBody.p_claim_token).toBe(CLAIM_TOKEN);
+    expect(decisionBody.p_expected_version).toBe(1);
+  });
+
+  it.each([
+    { text: "HAYIR", decision: "decline" },
+    { text: "hayır", decision: "decline" },
+    { text: "belki", decision: "repeat" },
+  ])("appointment_selection stage maps message text $text to decision $decision", async ({ text, decision }) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "appointment_selection", pet_id: PET_ID }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: text }),
+      appointmentDecision: () => decisionRow("repeated", { intake_stage: "appointment_selection", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const decisionBody = bodyOf(fetchMock, 3);
+    expect(decisionBody.p_decision).toBe(decision);
+  });
+
+  it.each([
+    { label: "confirmed", response: decisionRow("confirmed"), expected: "ack" as QueueDisposition },
+    { label: "declined", response: decisionRow("declined"), expected: "ack" as QueueDisposition },
+    { label: "repeated", response: decisionRow("repeated"), expected: "ack" as QueueDisposition },
+    { label: "stale_hold", response: decisionRow("stale_hold"), expected: "ack" as QueueDisposition },
+    { label: "already_completed", response: decisionRow("already_completed"), expected: "ack" as QueueDisposition },
+    { label: "stale_claim", response: decisionRow("stale_claim"), expected: "ack" as QueueDisposition },
+    { label: "stale_state", response: decisionRow("stale_state"), expected: "retry" as QueueDisposition },
+    { label: "failed (RPC error)", response: new Response("", { status: 500 }), expected: "retry" as QueueDisposition },
+  ])("decision RPC $label -> $expected", async ({ response, expected }) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "appointment_selection", pet_id: PET_ID }),
+      appointmentDecision: () => response,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe(expected);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("appointment_selection stage with no resolved pet id retries without calling the decision RPC", async () => {
+    vi.spyOn(intakeTurnModule, "planIntakeTurn").mockReturnValue({
+      kind: "planned",
+      nextStage: "appointment_selection",
+      petId: null,
+      intakeData: { ...extractionJson({ reported_safety_signals: ALL_FALSE_SIGNALS }), schema_version: 1 } as never,
+      petResolution: { kind: "matched", petId: PET_ID },
+      safetyDecision: { kind: "continue_intake" },
+    });
+    const fetchMock = happyRoutes({ context: () => contextRow({ intake_stage: "appointment_selection", pet_id: PET_ID }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("a handoff-grade safety decision at appointment_selection stage bypasses the decision RPC entirely and finalizes to human_handoff", async () => {
+    vi.spyOn(intakeTurnModule, "planIntakeTurn").mockReturnValue({
+      kind: "planned",
+      nextStage: "human_handoff",
+      petId: PET_ID,
+      intakeData: { ...extractionJson({ reported_safety_signals: ALL_FALSE_SIGNALS }), schema_version: 1 } as never,
+      petResolution: { kind: "matched", petId: PET_ID },
+      safetyDecision: { kind: "human_handoff", reason: "user_requested_human" },
+    });
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "appointment_selection", pet_id: PET_ID }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_decision_queue_job"))).toBe(false);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
   });
 });
 

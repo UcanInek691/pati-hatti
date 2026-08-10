@@ -8,7 +8,11 @@ export type IntakeReplyCategory =
   | "safety_questions"
   | "pet_identity"
   | "complaint"
-  | "intake_received";
+  | "intake_received"
+  | "appointment_offer"
+  | "appointment_confirmed"
+  | "appointment_declined"
+  | "appointment_unavailable";
 
 export type IntakeReplyPlan = { kind: "none" } | { kind: "send"; category: IntakeReplyCategory; text: string };
 

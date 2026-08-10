@@ -130,8 +130,18 @@ in order:
    message text and the hashed identifier.
 6. `planIntakeTurn` — deterministic merge, pet resolution, safety
    evaluation, and next-stage selection.
-7. `finalizeIntakeQueueJob` — exactly one atomic state-advance + lease
-   completion, using the planned (or poison-fallback) stage/pet/data.
+7. `planAppointmentAction` (`src/appointmentFlow.ts`) — a pure, safety-first
+   check of whether this turn is an appointment slot offer, an
+   `EVET`/`HAYIR` decision, or neither. See
+   [`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md)
+   (**validated only on disposable `vetai-test`; not production**) for the
+   full single-slot contract; a
+   safety/handoff decision always takes step 8 instead, at any stage.
+8. `finalizeIntakeQueueJob`, or — only for an `"offer"`/`"decision"`
+   appointment action — `finalizeAppointmentOfferQueueJob` /
+   `finalizeAppointmentDecisionQueueJob`: exactly one atomic state-advance +
+   lease completion per attempt, using the planned (or poison-fallback)
+   stage/pet/data.
 
 No step is retried in-process; a later Queue delivery re-claims, re-fetches,
 re-extracts, and re-plans from whatever is currently persisted.
@@ -150,8 +160,13 @@ re-extracts, and re-plans from whatever is currently persisted.
 | finalize    | `stale_state` / `failed`              | `retry`     |
 | (any)       | unexpected thrown exception           | `retry`     |
 
-`completeIntakeQueueJob` is never called from the consumer; `finalizeIntakeQueueJob`
-is the only state-mutating call, and it runs at most once per attempt.
+`completeIntakeQueueJob` is never called from the consumer; exactly one of
+`finalizeIntakeQueueJob`, `finalizeAppointmentOfferQueueJob`, or
+`finalizeAppointmentDecisionQueueJob` is the state-mutating call for a given
+attempt, and it runs at most once per attempt. See
+[`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md) for the
+two appointment finalizers' own disposition table (**validated only on
+disposable `vetai-test`; not production**).
 
 ### Data minimization
 
@@ -217,8 +232,13 @@ current claim token and expected state version.
 
 ## Not implemented in this step
 
-- No outbound WhatsApp response, deterministic triage action, or appointment
-  mutation happens from this consumer.
+- No outbound WhatsApp response or deterministic triage action happens from
+  this consumer. A single-slot appointment offer/confirm/decline mutation
+  does happen from this consumer (see
+  [`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md)), but
+  its migration is **validated only on disposable `vetai-test` and not applied
+  to production**; no real WhatsApp send occurs anywhere in this project yet —
+  only outbox rows are written.
 - No real Cloudflare Queue or dead-letter-queue resource has been created,
   and the Worker has not been deployed.
 - No production credentials are used and this task is not production

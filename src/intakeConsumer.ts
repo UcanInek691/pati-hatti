@@ -10,6 +10,7 @@ import type { PersistedIntakeData } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
 import type { SafetyDecision } from "./safetyDecision";
 import { planIntakeReply } from "./intakeReply";
+import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
 
 export type QueueDisposition = "ack" | "retry";
 
@@ -102,6 +103,62 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       nextStage = fallback.nextStage;
       petId = null;
       intakeData = fallback.intakeData;
+    }
+
+    const appointmentAction = planAppointmentAction(context, plan, claim.messageText);
+
+    if (appointmentAction.kind === "offer") {
+      if (petId === null || (nextStage !== "ready_for_triage" && nextStage !== "appointment_offer")) return "retry";
+
+      const offerResult = await finalizeAppointmentOfferQueueJob(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          plannedNextStage: nextStage,
+          petId,
+          intakeData: intakeData as unknown as Record<string, unknown>,
+        },
+        env,
+      );
+      if (
+        offerResult.kind === "offered" ||
+        offerResult.kind === "unavailable" ||
+        offerResult.kind === "already_completed" ||
+        offerResult.kind === "stale_claim"
+      ) {
+        return "ack";
+      }
+      return "retry";
+    }
+
+    if (appointmentAction.kind === "decision") {
+      if (petId === null) return "retry";
+
+      const decisionResult = await finalizeAppointmentDecisionQueueJob(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          decision: appointmentAction.decision,
+          petId,
+          intakeData: intakeData as unknown as Record<string, unknown>,
+        },
+        env,
+      );
+      if (
+        decisionResult.kind === "confirmed" ||
+        decisionResult.kind === "declined" ||
+        decisionResult.kind === "repeated" ||
+        decisionResult.kind === "stale_hold" ||
+        decisionResult.kind === "already_completed" ||
+        decisionResult.kind === "stale_claim"
+      ) {
+        return "ack";
+      }
+      return "retry";
     }
 
     const replyPlan = planIntakeReply(context.intakeStage, plan);

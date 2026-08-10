@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { planIntakeReply } from "../src/intakeReply";
+import type { IntakeReplyCategory } from "../src/intakeReply";
 import type { IntakeStage } from "../src/conversationState";
 import type { PetResolution } from "../src/intakeExtraction";
 import type { PersistedIntakeData, PlanResult } from "../src/intakeTurn";
@@ -260,6 +261,34 @@ describe("planIntakeReply", () => {
       expect(plan.text).not.toContain("Tarçın");
       expect(plan.text).not.toContain("topallıyor");
       expect(plan.text).not.toContain("topallama");
+    }
+  });
+
+  it("the widened appointment categories type-check as IntakeReplyCategory but are never produced by planIntakeReply itself", () => {
+    const appointmentCategories: IntakeReplyCategory[] = [
+      "appointment_offer",
+      "appointment_confirmed",
+      "appointment_declined",
+      "appointment_unavailable",
+    ];
+    const stages: IntakeStage[] = [
+      "pet_identification",
+      "complaint_collection",
+      "safety_check",
+      "ready_for_triage",
+      "appointment_offer",
+      "appointment_selection",
+      "appointment_confirmation",
+      "human_handoff",
+      "completed",
+    ];
+    for (const stage of stages) {
+      for (const result of [planned({ nextStage: stage }), FAILED]) {
+        const plan = planIntakeReply(stage, result);
+        if (plan.kind === "send") {
+          expect(appointmentCategories).not.toContain(plan.category);
+        }
+      }
     }
   });
 });
