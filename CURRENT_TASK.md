@@ -1,222 +1,191 @@
-# Current task — 027 Yerel Türkçe kullanıcı test ekranı
+# Current task — 028 Gerçek OpenAI yerel sohbet ve model eval temeli
 
-Status: `COMPLETE`
+Status: `READY`
 
 Owner: Claude Sonnet
 
 ## Goal
 
-Create a local-only Turkish demo surface that lets a non-technical product
-owner exercise the reviewed deterministic intake, safety, reply, and
-appointment-decision behavior without WhatsApp, OpenAI, Supabase, Cloudflare
-Queues, real credentials, or production data.
+Add an isolated, local-only Turkish chat surface that sends synthetic free-text
+messages to the real OpenAI Responses API, feeds the validated extraction into
+the existing deterministic planners, and displays the result without WhatsApp,
+Supabase, Queue, production data, or production mutation.
 
-This is a product-behavior simulator, not an integration test and not a
-production route.
+Also add the smallest reusable live-evaluation harness needed to compare
+`gpt-5.6-luna` and `gpt-5.6-terra` on a reviewed synthetic corpus. This task
+creates evidence; it does not approve a model for production.
 
 ## Scope
 
 Allowed changes:
 
-- `src/localDemo.ts` (new, separate Worker entry)
-- `test/localDemo.test.ts` (new)
-- `wrangler.demo.toml` (new, local-only config with no bindings or triggers)
-- `package.json` (`demo` script only; no dependency changes)
-- `docs/local-demo.md` (new)
-- `README.md` (one local-demo link/command only)
-- `CURRENT_TASK.md` (implementer fills only Observed context and Delivery record)
+- `src/openaiIntake.ts` — only a fail-closed request timeout and a closed,
+  evaluation-only way to call the same request/parser path with Luna or Terra;
+  the production default and existing caller behavior must remain Luna.
+- `test/openaiIntake.test.ts` — timeout/model-boundary regression tests.
+- `src/liveAiDemo.ts` (new, separate Worker entry).
+- `test/liveAiDemo.test.ts` (new; all OpenAI fetches mocked).
+- `test/liveOpenAiEval.test.ts` (new, explicitly opt-in live integration test).
+- `evals/intake-live-cases.json` (new, synthetic cases only).
+- `wrangler.live-ai.toml` (new, local-only; OpenAI key only).
+- `.dev.vars.live-ai.example` (new placeholder only).
+- `.gitignore` (ignore the matching real local secret file only).
+- `package.json` (`live-demo` and `eval:openai` scripts only; no dependency
+  changes).
+- `docs/live-ai-demo.md` (new).
+- `docs/product-roadmap.md` (status/cross-reference only if evidence requires a
+  narrow correction; do not rewrite the roadmap).
+- `README.md` (one short local-live-demo link/command only).
+- `CURRENT_TASK.md` (implementer fills only Observed context and Delivery
+  record).
 
 Do not change:
 
-- `src/index.ts`, `src/env.ts`, production `wrangler.toml`, migrations, prompts,
-  safety rules, Turkish reply copy, existing runtime modules, dependencies, or
-  lockfiles;
-- production routes, Queue/Cron configuration, database state, secrets, or
-  external services.
+- `src/index.ts`, `src/intakeConsumer.ts`, `src/env.ts`, production
+  `wrangler.toml`, migrations, database functions, Queue/Cron wiring, WhatsApp
+  code, prompts, extraction schema, deterministic safety rules, Turkish reply
+  copy, staff UI, appointment logic, dependencies, or lockfiles;
+- the production model constant (`OPENAI_INTAKE_MODEL`) or its current Luna
+  behavior;
+- any real external resource, secret, production configuration, database, or
+  deployment.
 
-## Required behavior
+## Required design
 
-### Local isolation
+### Reuse one provider path
 
-- `src/localDemo.ts` is a separate Worker entry and is never imported by
-  `src/index.ts` or any production runtime module.
-- `wrangler.demo.toml` has no Supabase, OpenAI, Meta, Queue, Cron, or secret
-  bindings and defines no production resource.
-- The demo performs no outbound `fetch`, database mutation, Queue operation,
-  logging of user-entered text, or persistence. Refreshing the page resets it.
-- The page and API responses use `Cache-Control: no-store` and a restrictive
-  CSP. Remote/user-controlled text must be rendered with `textContent`, never
-  inserted with `innerHTML`.
+- Do not duplicate the OpenAI prompt, JSON Schema, response parser, or
+  `parseIntakeExtraction` boundary.
+- Refactor only as much as needed so the production wrapper still calls Luna
+  exactly as today while the isolated demo/eval path may choose only the closed
+  set `gpt-5.6-luna | gpt-5.6-terra`.
+- Any missing/blank key, unsupported model, timeout, network failure, non-2xx,
+  refusal, incomplete response, malformed body, or invalid extraction fails
+  closed without logging message/provider content. Evaluation metadata is
+  optional and must never weaken the production extraction boundary.
+- Add a fixed 30-second `AbortSignal.timeout` to the shared provider fetch.
+  Production behavior changes only by becoming bounded and returning the
+  existing `{ ok: false }` result on timeout.
 
-### Turkish tester experience
+### Isolated live chat
 
-- `GET /` serves one dependency-free Turkish page with a prominent banner:
-  "Yerel simülasyon — gerçek WhatsApp, yapay zekâ ve veritabanı kullanılmaz."
-- The page explains in plain Turkish what is and is not being tested.
-- It includes one-click synthetic scenarios for at least:
-  1. known pet + ordinary complaint;
-  2. pet identity clarification;
-  3. unknown safety facts;
-  4. one explicit emergency signal;
-  5. explicit human request;
-  6. medical-advice request;
-  7. appointment request reaching an offer;
-  8. exact `EVET`, exact `HAYIR`, and unrecognized appointment reply.
-- Every scenario uses obviously synthetic identifiers and content; no real
-  person, phone number, clinic, pet, or provider identifier.
-- The visible result shows, in Turkish-friendly labels, the actual planner
-  result, next stage, safety outcome, reply category/text, and appointment
-  action where applicable. It must not claim that a message was sent, a staff
-  member was notified, a database row changed, or an appointment was booked.
-- The user can reset the screen and can rerun scenarios deterministically.
+- `src/liveAiDemo.ts` is a separate Worker entry and is never imported by
+  `src/index.ts` or another production runtime module.
+- It may import the existing OpenAI adapter and pure planners. It must not
+  import Supabase, Queue, WhatsApp send/ingest, staff, outbox, or production
+  Worker entry modules.
+- Routes are limited to `GET /`, `GET /app.js`, and
+  `POST /api/message`; everything else fails generically.
+- The page is Turkish, dependency-free, and visibly says:
+  - this path really sends the entered text to OpenAI;
+  - no real person, clinic, phone, pet, or patient data may be entered;
+  - it does not send WhatsApp, notify staff, mutate a database, or book an
+    appointment;
+  - refresh/reset clears the local session.
+- Render user-controlled/provider-derived fields with `textContent`, never
+  HTML sinks. Apply `Cache-Control: no-store`, a restrictive CSP, no logging,
+  exact JSON media type, a small byte limit, strict UTF-8, exact request keys,
+  and a maximum 2,000 Unicode-code-point message.
+- The browser presents a chat-like message composer and visible reset. It may
+  choose Luna or Terra only from a fixed select. Model choice is for local
+  comparison and never becomes a production environment variable.
+- Use an obviously synthetic fixed clinic/owner/pet context. Return and display
+  the real validated extraction, planner result, next stage, safety decision,
+  reply, appointment action, selected model, elapsed time, and token usage when
+  present. Never claim a real side effect.
+- Keep session state only in browser memory and return a new strictly validated
+  state after each turn so planner merge behavior can be exercised. The model
+  still sees only the current inbound text in this task; label that limitation
+  clearly because Task 029 owns contextual short-answer interpretation.
+- Cap a browser session at 20 live calls and disable further send actions until
+  reset. Document that the authoritative cost ceiling is the OpenAI project
+  budget, not a browser control.
 
-### Reuse the reviewed product logic
+### Local secret isolation
 
-- Scenario inputs may be fixed local fixtures, but results must be computed by
-  the existing exported production functions rather than copied rules:
-  `planIntakeTurn`, `planIntakeReply`, and where applicable
-  `planAppointmentAction` / `parseAppointmentDecision`.
-- Do not duplicate the safety precedence, reply strings, stage logic, or
-  EVET/HAYIR grammar in the demo.
-- Invalid scenario IDs and malformed API requests fail closed with a generic
-  400/404 response and no echo of request content.
+- `wrangler.live-ai.toml` has no production binding, Queue, Cron, Supabase,
+  Meta, staff, or other secret. It exposes only `OPENAI_API_KEY` from the
+  untracked environment-specific local vars file.
+- The committed example contains only a placeholder. The real file is ignored.
+- Documentation must never ask the user to paste a key into a command, URL,
+  browser form, source file, or committed config. Use an untracked local vars
+  file and recommend a dedicated OpenAI project with a small budget.
 
-### Local run command
+### Live eval harness
 
-- Add exactly one script:
-  `"demo": "wrangler dev --config wrangler.demo.toml --local --port 8790"`.
-- `docs/local-demo.md` gives non-technical Windows instructions:
-  `pnpm.cmd demo`, open `http://127.0.0.1:8790`, stop with `Ctrl+C`.
-- Document the limitation that this demo does not validate real OpenAI
-  extraction, Meta webhook/delivery, Supabase RLS/migrations, Queue/DLQ, Cron,
-  staff login, or production configuration.
+- `evals/intake-live-cases.json` contains at least 60 clearly synthetic Turkish
+  cases with stable IDs and expected structured facts. Cover ordinary intake,
+  missing/unknown safety facts, all eight explicit true safety signals,
+  explicit false facts, human request, medical-advice request, appointment
+  request, spelling/spacing noise, prompt injection, and short-answer cases
+  whose current-turn-only limitation is explicitly expected.
+- Do not fabricate a veterinarian approval label. Mark cases as synthetic
+  engineering expectations until a named veterinarian reviews them.
+- `test/liveOpenAiEval.test.ts` is skipped unless an explicit live-eval flag and
+  key are present. Normal `pnpm test` performs zero real call.
+- The opt-in test runs the same cases against Luna and Terra with a bounded
+  concurrency of one, repeats each case only when an explicit repeat count is
+  supplied, and has a hard maximum of 2,000 provider calls per run.
+- It prints or writes only aggregate metrics and failing synthetic case IDs:
+  schema success, expected-field match, per-signal true/false/null counts,
+  human/medical/appointment intent match, latency percentiles, provider failure
+  count, missing-usage count, input/output token totals when reported, and
+  estimated model cost. Never print keys, full prompts, full messages, raw
+  provider bodies, or model output.
+- A live run is evidence only. The production model remains Luna regardless of
+  results; changing it requires a later reviewed task and the thresholds in
+  `docs/product-roadmap.md`.
 
 ## Acceptance criteria
 
-- A non-technical Turkish reader can launch and use the demo without entering
-  credentials or editing JSON.
-- All required scenarios render a deterministic result through the existing
-  reviewed pure functions.
-- Emergency, human-handoff, unknown-safety, ordinary-intake, appointment
-  offer, EVET, HAYIR, and repeat paths are visibly distinguishable.
-- No production entry/config file changes and no real external call occurs.
-- Tests cover routing, headers/CSP, all scenario outcomes, malformed/unknown
-  requests, deterministic reruns, Turkish disclaimer, and the absence of
-  production imports/bindings.
-- Existing tests remain unchanged and passing.
+- The existing deterministic demo remains unchanged and still makes no
+  external call.
+- Production `extractIntakeViaOpenAi(message, safetyIdentifier, env)` keeps the
+  same signature, same Luna default, same strict schema/parser, and same closed
+  result, with only the new timeout behavior.
+- The live demo uses the real adapter path with mocked fetch in automated
+  tests, carries no production binding, and cannot accept an arbitrary model.
+- A non-technical Turkish tester can enter synthetic free text, see a
+  conversation-like sequence and reset it, while the current-turn-only model
+  limitation remains visible and truthful.
+- No user/provider content or secret is logged or persisted.
+- The normal suite performs no network call. Live API execution is separately
+  opt-in, bounded, synthetic-only, and cost-aware.
+- No dependency, production route/config, database, Queue, WhatsApp, safety
+  rule/copy, or appointment mutation change occurs.
 
 ## Required verification
 
-Run:
+Run without a real key:
 
 ```text
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
+pnpm exec wrangler deploy --dry-run --config wrangler.live-ai.toml --outdir .wrangler/live-ai-dry-run
 pnpm exec wrangler deploy --dry-run --config wrangler.demo.toml --outdir .wrangler/demo-dry-run
 pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-Also start `pnpm demo` and perform a local smoke test of `/` plus every scenario
-API. If the known Windows `workerd` native crash recurs before a request is
-handled, record the smoke test as `NOT RUN` with the exact failure; do not
-weaken the implementation or add a dependency as a workaround.
+Start the live demo with mocked/no key only to verify missing configuration
+fails closed and no production binding appears. Do not make a real OpenAI call
+as the implementing agent.
 
-No Opus review is required unless Codex finds a change to production runtime,
-safety logic/copy, privacy behavior, or external-service boundaries.
+After Codex review, Codex or the user may perform the opt-in live run with a
+dedicated local OpenAI project/key and a confirmed small budget. If no key or
+budget is available, report the real live run as `NOT RUN`; never substitute a
+mock result for live evidence.
+
+No Opus review is required unless Codex finds a change to production model
+selection, prompt/schema semantics, deterministic safety behavior, privacy
+claims, or another production external-service boundary beyond the fixed
+fail-closed timeout.
 
 ## Observed context
 
-- Reused pure planners without modification: `planIntakeTurn` (`src/intakeTurn.ts`),
-  `planIntakeReply` (`src/intakeReply.ts`), `planAppointmentAction` and
-  `parseAppointmentDecision` (`src/appointmentFlow.ts`), plus their types from
-  `src/conversationState.ts` and `src/intakeExtraction.ts`.
-- `src/intakeConsumer.ts` shows the real production routing order: `planIntakeTurn` →
-  `planAppointmentAction`; a reply is only planned via `planIntakeReply` when
-  `appointmentAction.kind === "none"`. `src/localDemo.ts`'s `runScenario` mirrors this
-  exact order so the demo never diverges from production control flow.
-- `IntakeReplyCategory` on `IntakeReplyPlan` nominally includes
-  `appointment_offer|appointment_confirmed|appointment_declined|appointment_unavailable`,
-  but `planIntakeReply` never returns them — the real appointment-reply text is produced
-  inside Supabase RPCs (`finalize_appointment_offer_queue_job`,
-  `finalize_appointment_decision_queue_job`), not by any reusable pure TypeScript
-  function. The demo therefore never fabricates that text: whenever
-  `appointmentAction.kind !== "none"`, the UI shows only the appointment action and
-  displays `reply: null` with a note that the real message is generated in the database.
-- `src/staffPage.ts` was read only as a reference pattern (dependency-free HTML/JS,
-  security headers, `textContent`-only rendering) and is not imported by
-  `src/localDemo.ts`, which defines its own local `SECURITY_HEADERS`/CSP constants to
-  stay fully self-contained.
-- Discovered during the local smoke test (not the documented Windows `workerd` native
-  crash): `wrangler dev --local` treats every *named* export of the Worker entry module
-  as a potential entrypoint and rejects non-function values with
-  `Uncaught TypeError: Incorrect type for map entry '<name>': the provided value is not
-  of type 'function or ExportedHandler'`. `src/localDemo.ts` originally exported the
-  `LOCAL_DEMO_HTML`/`LOCAL_DEMO_APP_JS` string constants (and `runScenario`,
-  `ScenarioResult`) for direct test import. Fixed by making them module-private and
-  having `test/localDemo.test.ts` assert against the actual HTTP responses
-  (`worker.fetch(...)`) instead of importing the constants — no dependency added, no
-  production file touched.
+To be filled by the implementer from repository evidence.
 
 ## Delivery record
 
-Implemented by: Claude (Sonnet 5 / Opus 5 session), 2026-08-11.
-
-Files added: `src/localDemo.ts`, `wrangler.demo.toml`, `test/localDemo.test.ts`,
-`docs/local-demo.md`.
-Files edited (within allowed scope only): `package.json` (`demo` script only),
-`README.md` (one local-demo link/command), `CURRENT_TASK.md` (this section).
-No production file (`src/index.ts`, `src/env.ts`, production `wrangler.toml`,
-migrations, prompts, safety rules, Turkish reply copy, existing runtime modules) was
-changed. No dependency was added; `package.json`'s `devDependencies` are unchanged.
-
-Verification results (run from repo root, `C:\Users\mehme\Documents\weosa all\vetai`):
-
-- `pnpm install --frozen-lockfile` — OK, "Already up to date".
-- `pnpm typecheck` (`tsc --noEmit`) — OK, no errors.
-- `pnpm test` (`vitest run`) — OK, 27 test files / 1046 tests passed, including the new
-  33 tests in `test/localDemo.test.ts` (routing, security headers, CSP, all 10 required
-  scenario outcomes, malformed/unknown-request handling, deterministic reruns, the
-  exact Turkish banner text, and the absence of production imports/bindings). All
-  pre-existing tests remain unchanged and passing.
-- `pnpm exec wrangler deploy --dry-run --config wrangler.demo.toml --outdir
-  .wrangler/demo-dry-run` — OK: "No bindings found." Confirms the demo config defines
-  no Supabase/OpenAI/Meta/Queue/Cron/secret binding.
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — OK: production
-  Worker still resolves its real bindings unchanged (`env.INTAKE_QUEUE`,
-  `env.APP_TIMEZONE`, `env.WHATSAPP_GRAPH_API_VERSION`), confirming `src/index.ts` and
-  the production `wrangler.toml` were not altered.
-- `git diff --check` — exit 0 (only benign CRLF/LF autocrlf warnings on
-  `CURRENT_TASK.md`, `README.md`, `package.json`; no whitespace errors).
-- Local smoke test: ran `pnpm demo` (port 8790). Initial run hit a real startup crash
-  (see Observed context) that was root-caused and fixed, not worked around. After the
-  fix, the server started cleanly and every route was exercised manually:
-  `GET /` → 200 HTML with banner text; `GET /app.js` → 200 JS; `GET /api/scenarios` →
-  200 with all 10 scenario ids/labels; `POST /api/scenario` → 200 for all 10 scenario
-  ids, response bodies inspected and match expected `plan`/`safetyDecision`/
-  `appointmentAction`/`reply` shapes (e.g. the emergency scenario returned
-  `safetyDecision: { kind: "emergency_handoff", positiveSignals: ["breathing_difficulty"] }`,
-  `reply.category: "emergency_handoff"`); malformed JSON → 400; unknown scenario id →
-  404; wrong content-type → 400; unknown path → 404. Server process was then stopped
-  (`Stop-Process`) and confirmed no longer listening on port 8790.
-
-No real WhatsApp, OpenAI, Supabase, or Cloudflare Queue call occurred at any point.
-No commit, push, or deploy was performed.
-
-Codex review, 2026-08-11:
-
-- Confirmed the diff is limited to the local demo contract and does not alter
-  the production entry, environment, Wrangler configuration, dependencies,
-  migrations, prompts, safety rules, or reply copy.
-- Tightened the local request boundary to reject extra JSON fields and applied
-  the restrictive CSP to every HTML, script, API, and error response.
-- Re-ran frozen install, typecheck, the full 1,047-test suite, both demo and
-  production Worker dry-runs, and `git diff --check`; all passed. The demo
-  dry-run has no bindings and the production binding list is unchanged.
-- Opened the live local page in the in-app browser and verified the emergency
-  and exact-EVET interactions through the rendered UI. The demo made no claim
-  that it sent a message, notified staff, changed a database, or booked an
-  appointment.
-- Decision: PASS. Opus review is not required because no production, safety,
-  privacy, or external-service boundary changed.
+To be filled by the implementer from repository evidence.

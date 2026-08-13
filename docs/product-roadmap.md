@@ -1,0 +1,344 @@
+# VetAI ürün, doğrulama ve ticarileştirme yol haritası
+
+Son karar tarihi: 2026-08-13.
+
+Bu belge ürün geliştirme sırasını, gerçek servis doğrulamalarını, personel
+operasyonu kararını, model seçim kapısını, maliyet varsayımlarını ve ilk fiyat
+hipotezini tek yerde tutar. Bir üretim onayı veya hukuk/veteriner onayı değildir.
+Aktif uygulama sözleşmesi her zaman kökteki `CURRENT_TASK.md` dosyasıdır.
+
+## 1. Hedef ürün
+
+VetAI, veteriner kliniği için WhatsApp tabanlı dijital resepsiyondur. Sahibi ve
+hayvanı tanır, açıkça bildirilen bilgileri yapılandırır, veteriner tarafından
+onaylanmış deterministik kurallarla güvenlik önceliği verir, sınırlı randevu
+akışını yürütür ve otomasyonun durduğu işi personele görünür kılar.
+
+VetAI veteriner değildir. Tanı, olası hastalık listesi, ilaç/doz, tedavi planı
+ve bakımın geciktirilmesine yol açabilecek tıbbi tavsiye üretmez. Yapay zeka
+yalnız yapılandırılmış bilgi çıkarır; güvenlik ve veri mutasyonları doğrulanmış
+kod ve veritabanı işlemlerinin yetkisindedir.
+
+## 2. Bugünkü doğrulanmış durum
+
+Mevcut kod tabanı şunları içerir:
+
+- imzalı WhatsApp webhook alma ve tekrar teslim güvenliği;
+- çok kiracılı Supabase şeması, composite tenant ilişkileri ve RLS;
+- OpenAI Structured Outputs tabanlı tek-mesaj bilgi çıkarımı;
+- deterministik güvenlik kapısı ve Türkçe sabit yanıtlar;
+- Queue, lease, retry, DLQ ve atomik intake finalizasyonu;
+- WhatsApp outbox gönderimi ve teslim durum takibi;
+- insan devri/teslim hatası için personel iş kuyruğu;
+- giriş, iş listesi, sahip/hayvan/son mesaj detayı ve çözme işlemi sunan minimal
+  `/staff` ekranı;
+- tek saatlik geçici ayırma ve kesin `EVET`/`HAYIR` randevu akışı;
+- dış servissiz deterministik yerel ürün demosu.
+
+Henüz yoktur veya üretimde çalışmıyordur:
+
+- gerçek üretim deployment ve gerçek servis yapılandırması;
+- gerçek OpenAI/Meta/Queue/Supabase uçtan uca staging kanıtı;
+- gerçek klinik personel hesapları ve canlı personel ekranı;
+- personelin işi zamanında gördüğünü kanıtlayan bildirim;
+- çok turlu kısa cevapları önceki soruyla birlikte yorumlama;
+- yeni hayvan kayıt akışı;
+- görsel/sesli mesajlarda kullanıcıya verilen güvenli desteklenmiyor yanıtı;
+- klinik çalışma saati, adres, telefon ve mesai dışı davranış kaydı;
+- randevu iptal/değiştirme/hatırlatma ve birden fazla saat seçimi;
+- hukuk/KVKK ve klinik veterineri üretim onayı.
+
+## 3. Ürün kararları
+
+### 3.1 Personel/hekim arayüzü
+
+Tam kapsamlı bir hekim veya klinik yönetim paneli pilot için gerekli değildir.
+Ancak otomasyon insan devri ve acil iş üretiyorsa minimal bir personel operasyon
+ekranı gereklidir. Mevcut `/staff` ekranı yeniden yazılmayacak; pilot için şu
+dar geliştirmelerle kullanılacaktır:
+
+- otomatik yenileme ve görünür/sesli yeni iş uyarısı;
+- `open -> seen -> in_progress -> resolved` iş durumu;
+- işi alan ve çözen personel ile zaman kaydı;
+- acil işlerin her zaman önce gösterilmesi;
+- mesai dışı durumun bot yanıtında ve operasyon prosedüründe açık olması.
+
+Pilot sırasında tek bir isimlendirilmiş sorumlu ekranı çalışma saatlerinde açık
+tutabilir. Genel satış öncesinde ekran kapalıyken de çalışan, PII içermeyen bir
+e-posta/push/CRM bildirimi gerekir. Bildirim yalnız "yeni acil iş var" ve güvenli
+bir panel bağlantısı taşır; sahip, telefon, hayvan adı veya mesaj içeriği taşımaz.
+
+Sadece e-posta/Slack bildirimi ekranın yerine geçmez; iş detayı, RLS erişimi ve
+çözme kaydı yine `/staff` içinde kalır. Supabase Studio personele verilmeyecek,
+pilot öncesi büyük bir yönetim paneli veya UI framework'ü eklenmeyecektir.
+
+### 3.2 Model seçimi
+
+Başlangıç birincil modeli `gpt-5.6-luna`, `reasoning: none`, Structured Outputs
+ve `store: false` olarak kalır. Gerekçe: görev serbest tıbbi muhakeme değil,
+kapalı JSON şemasına yapılandırılmış çıkarımdır; güvenlik kararı modele ait
+değildir. OpenAI'nin güncel konumlandırmasına göre Luna maliyet duyarlı yüksek
+hacimli işler, Terra ise zeka/maliyet dengesi içindir.
+
+Bu seçim koşulludur. Luna ve `gpt-5.6-terra` aynı veteriner-onaylı Türkçe eval
+korpusunda ölçülmeden üretim modeli onaylanmaz. Luna bütün zorunlu eşikleri
+karşılarsa daha pahalı model seçilmez; karşılamazsa bütün trafik Terra'ya alınır.
+Modelin kendi güven beyanına göre dinamik yönlendirme veya geçerli görünen bir
+çıktıyı ikinci modele kontrol ettirme ilk pilotta kullanılmaz.
+
+Güncel resmi kaynaklar:
+
+- https://developers.openai.com/api/docs/models/gpt-5.6-luna
+- https://developers.openai.com/api/docs/models/gpt-5.6-terra
+- https://platform.openai.com/docs/models/default-usage-policies-by-endpoint
+
+`store: false`, varsayılan kötüye kullanım izleme saklamasını tek başına sıfıra
+indirmez. Varsayılan saklama ve olası Zero Data Retention başvurusu KVKK karar
+paketinin açık maddesidir.
+
+### 3.3 Medya
+
+Pilot öncesi hedef görüntü veya ses üzerinden klinik yorum üretmek değildir.
+Metin dışı bir mesaj sessizce kaybolmayacak; kullanıcıya bu içeriğin bot
+tarafından değerlendirilemediği, metinle açıklama yapması veya kliniği araması
+gerektiği dürüstçe söylenecektir. Görüntü/ses analizi ancak ayrı veteriner ve
+KVKK değerlendirmesinden sonra pilot-sonrası adaydır.
+
+### 3.4 Klinik bilgisi
+
+Saat, telefon, adres ve temel hizmet bilgisi için ilk çözüm RAG/embedding
+değildir. Tenant'a bağlı doğrulanmış yapılandırılmış klinik alanları kullanılır.
+Geniş klinik bilgi tabanı ve doküman araması gerçek kullanım ihtiyacı ölçülürse
+pilot sonrasına alınır.
+
+## 4. Aşamalı teslim planı
+
+### Aşama 0 - doğrulanmış temeli kapat
+
+Durum: tamamlandı.
+
+- Task 027 deterministik yerel demo doğrulandı ve commit edildi.
+- Bu demo regresyon ve ürün davranışı açıklama aracı olarak korunur.
+
+### Aşama 1 - gerçek AI staging ve model değerlendirmesi
+
+Amaç: WhatsApp, Supabase ve Queue olmadan sentetik serbest Türkçe mesajı gerçek
+OpenAI API'ye gönderip aynı extraction/planner/reply zincirini gözlemlemek.
+
+Teslimler:
+
+- ayrı, local-only gerçek AI demo entry/config'i;
+- gerçek anahtarın yalnız yerel secret olarak kullanılması;
+- açık "mesaj OpenAI'ye gönderilir, gerçek veri girmeyin" uyarısı;
+- istek sayısı ve mesaj uzunluğu tavanı;
+- OpenAI timeout ve genel hata yanıtı;
+- Luna/Terra karşılaştırmalı, sentetik JSONL eval çalıştırıcısı;
+- şema başarısı, semantik eşleşme, güvenlik sinyali recall, latency ve token
+  maliyeti raporu;
+- model/prompt/eval sürüm kaydı.
+
+Çıkış kapısı:
+
+- şema geçerliliği >= %99,5;
+- açık kırmızı sinyal recall = %100;
+- belirtilmeyen güvenlik bilgisini `false` saymama >= %99,5;
+- tanı/ilaç/tedavi üretimi = 0;
+- insan ve tıbbi tavsiye isteği recall >= %99;
+- P95 hedefi <= 5 saniye;
+- sağlayıcı/bozuk çıktı <= %0,5.
+
+İlk teknik korpus sentetik olur. Gerçek veya gerçekçi klinik mesajların
+etiketlenmesi ancak KVKK kararı ve veteriner gözetimiyle yapılır.
+
+### Aşama 2 - konuşma bütünlüğü ve güvenli fallback
+
+Teslimler:
+
+- önceki bot sorusunu veya küçük güvenilir state özetini taşıyan çok turlu
+  çıkarım; tüm konuşma geçmişini modele körlemesine göndermeme;
+- "ilkine evet, diğerlerine hayır" gibi kısa cevap eval'leri;
+- art arda anlaşılamayan mesaj sayacı ve bounded insan devri;
+- yeni hayvan için açık kullanıcı onaylı kayıt ya da güvenli personel devri;
+- metin dışı mesajlarda sessiz ignore yerine sabit desteklenmiyor yanıtı;
+- ilk temas bot kimliği ve tıbbi sınır açıklaması;
+- OpenAI çağrı oranı, aylık harcama ve timeout korumaları.
+
+Çıkış kapısı: bütün fallback yolları sonlu, dürüst ve kullanıcıyı acil bakım
+beklemeye yönlendirmeyen davranış üretir.
+
+### Aşama 3 - klinik ve personel operasyonu
+
+Teslimler:
+
+- tenant-scoped klinik telefon/adres/saat yapılandırması;
+- Europe/Istanbul mesai içi/dışı deterministik davranış;
+- minimal `/staff` durum/sahiplenme/audit iyileştirmesi;
+- pilot için otomatik yenileme ve tarayıcı uyarısı;
+- genel satış öncesi PII'siz dış bildirim;
+- personel ve veteriner sorumluluk prosedürü.
+
+Çıkış kapısı: her insan devri ve teslim hatasının isimlendirilmiş bir operasyon
+sahibi, görünür durumu ve ölçülen tepki süresi vardır.
+
+### Aşama 4 - gerçek entegrasyon staging'i
+
+Üretimden ayrı sentetik ortamda:
+
+- migration-history üzerinden staging Supabase kurulumu ve katalog/RLS kontrolü;
+- gerçek Cloudflare Worker, üç Queue, iki consumer, DLQ ve Cron;
+- gerçek OpenAI çağrısı ve harcama limiti;
+- Meta test işletme numarasıyla gerçek imzalı webhook;
+- outbound gönderim ve teslim/read callback'i;
+- randevu teklif -> `EVET` ve teklif -> `HAYIR` akışı;
+- gerçek Supabase Auth personel hesabı ve iki tenant erişim deneyi;
+- OpenAI timeout, Supabase 5xx, Meta 429/5xx ve DLQ hata enjeksiyonu;
+- appointment için gerçek iki-oturum lock/concurrency testi;
+- beklenen ani yükün 10 katı kısa yük testi.
+
+Çıkış kapısı: `docs/production-readiness.md` kontrollü smoke journey'si sentetik
+veriyle eksiksiz geçer; başarısız iş kaybolmaz ve hiçbir hata gerçek kullanıcıya
+yanlış başarı iddiası üretmez.
+
+### Aşama 5 - insan onayları ve kontrollü pilot
+
+Teknik geliştirmeyle paralel tamamlanır:
+
+- klinik veterinerinin safety copy/decision tablosu onayı;
+- KVKK aydınlatma, hukuki sebep, rol/yetki, saklama, silme/ihracat ve veri
+  işleyen sözleşmeleri;
+- OpenAI/Meta/Cloudflare/Supabase veri akışı kararı;
+- backup/rollback ve incident sahipleri;
+- bir klinik, bir numara, sentetik smoke ve sonra sınırlı gerçek pilot;
+- iki-dört haftalık ölçüm ve go/no-go toplantısı.
+
+Pilot metrikleri:
+
+- kırmızı sinyal ve insan talebi kaçırma sayısı;
+- model parse/retry/DLQ oranı;
+- personel ilk görme ve çözme süresi;
+- botta tamamlanan intake oranı;
+- randevu teklif/teyit/ret oranı;
+- kullanıcı başına mesaj ve model maliyeti;
+- yanlış veya yanıltıcı yanıt bildirimi;
+- kullanıcıdan gelen "insan istiyorum" oranı.
+
+### Aşama 6 - pilot sonrası ürün
+
+Yalnız pilot verisi ihtiyaç gösterirse:
+
+- randevu iptal ve yeniden planlama;
+- birden fazla saat ve WhatsApp interactive list/button;
+- pencere dışı utility-template hatırlatma;
+- veteriner/oda/hizmet ve harici takvim;
+- klinik bilgi tabanı;
+- analitik ve raporlama;
+- çok şube ve kurumsal rol yönetimi;
+- mevcut helpdesk/CRM entegrasyonları;
+- veteriner-onaylı görüntü/ses intake yardımcıları.
+
+## 5. Gerçek API test sırası
+
+1. OpenAI: yalnız sentetik mesaj, düşük proje bütçesi, Luna/Terra eval.
+2. Supabase staging: migration apply, RLS, grants, rollback dışı read-only katalog.
+3. Cloudflare staging: Worker, Queue/DLQ/Cron ve `/ready`.
+4. Meta test numarası: webhook challenge, imza, inbound, outbound, status.
+5. Staff: gerçek Auth, aynı klinik erişimi ve çapraz klinik reddi.
+6. Appointment: iki oturum yarış testi ve gerçek EVET/HAYIR journey.
+7. Failure injection: provider timeout/429/5xx, Queue retry ve terminal DLQ.
+8. Canary: tüm zincir sentetik veriyle; sonra insan onaylarıyla kontrollü pilot.
+
+Gerçek hasta/sahip verisi Aşama 5 kapıları kapanmadan hiçbir eval, staging veya
+log sistemine girmez.
+
+## 6. Ortalama teknik maliyet tabanı
+
+Araştırma tarihi 2026-08-13. Fiyatlar değişebilir; satın alma öncesi resmi
+sayfalar yeniden kontrol edilir.
+
+Varsayım:
+
+- görüşme başına 6 inbound/model çağrısı;
+- çağrı başına yaklaşık 1.800 input + 250 output token;
+- Luna $0,20 input / $1,20 output, milyon token başına;
+- planlama kuru 1 USD = 48 TL;
+- KDV, banka kur farkı, destek, hukuk/veteriner hizmeti dahil değil.
+
+Sabit taban:
+
+- Supabase Pro: $25/ay;
+- Cloudflare Workers Paid: $5/ay;
+- mevcut ölçeklerde Workers ve Queue aşım: $0;
+- kullanıcı başlatmalı 24 saatlik servis penceresindeki mevcut WhatsApp
+  cevapları: $0; gelecekteki template/reminder mesajları maliyetine yansıtılır.
+
+| Aylık kullanım | AI çağrısı | Luna | Toplam teknik | 48 TL/USD |
+|---|---:|---:|---:|---:|
+| 300 görüşme | 1.800 | $1,19 | $31,19 | yaklaşık 1.500 TL |
+| 1.000 görüşme | 6.000 | $3,96 | $33,96 | yaklaşık 1.630 TL |
+| 3.000 görüşme | 18.000 | $11,88 | $41,88 | yaklaşık 2.010 TL |
+
+Kur/vergi/beklenmeyen kullanım için %20 teknik tamponla planlama değerleri
+yaklaşık 1.800 TL, 1.950 TL ve 2.400 TL/aydır. Bu çok kiracılı platformun
+toplamıdır; klinik sayısı arttıkça $30 sabit taban kliniklere bölünür. Destek,
+satış, onboarding, hukuk, veteriner değerlendirmesi ve dış bildirim sağlayıcısı
+ayrıca fiyatlanır.
+
+Resmi fiyat kaynakları:
+
+- https://supabase.com/pricing
+- https://developers.cloudflare.com/workers/platform/pricing/
+- https://developers.cloudflare.com/queues/platform/pricing/
+- https://whatsappbusiness.com/products/platform-pricing/
+
+## 7. Tarife fiyat hipotezi
+
+Müşteriye token satılmaz. Şeffaf paket birimi aylık görüşme, WhatsApp numarası,
+şube, personel hesabı ve özellik/destek seviyesidir. Kullanılabilir olmayan
+özellik paket adı altında satılmaz.
+
+| Paket | Aylık, KDV hariç | Dahil kullanım | Satış koşulu |
+|---|---:|---|---|
+| Kurucu pilot | 990 TL | 300 görüşme, 1 numara, 3 personel | en fazla 2 ay, sübvansiyonlu, SLA yok |
+| Başlangıç | 2.490 TL | 500 görüşme, 1 numara, 5 personel | Aşama 5 pilotu geçince |
+| Klinik+ | 4.490 TL | 1.500 görüşme, 1 numara, 15 personel | dış bildirim ve gelişmiş randevu hazırsa |
+| Çok şube | 7.990 TL'den başlayan | 4.000 görüşme, 3 şubeye kadar | çok şube gerçekten tamamlanınca |
+
+İlk ticari varsayımlar:
+
+- ek 500 görüşme: 750 TL;
+- Meta template/hatırlatma bedeli: maliyetine pass-through;
+- kurulum: Başlangıç 3.500 TL, Klinik+ 5.000 TL, çok şube teklif;
+- yıllık peşin ödeme: 10 aylık bedelle 12 ay;
+- yıllık sözleşme süresince fiyat sabit, yenilemede yeni TL tarife;
+- ilk 5-10 klinikten sonra gerçek destek süresi, dönüşüm ve willingness-to-pay
+  verisiyle fiyatlar yeniden değerlendirilir.
+
+990 TL kalıcı Starter fiyatı değildir. Tek klinikte teknik tabanın altında
+kalabilir; yalnız sınırlı kurucu pilot ve öğrenme yatırımı olarak kullanılır.
+
+## 8. Görev haritası ve sabit kapsam
+
+Kontrollü pilot öncesi planlanan teknik görevler:
+
+1. Task 028 - gerçek OpenAI local staging ve Luna/Terra eval temeli.
+2. Task 029 - çok turlu bağlam, timeout/rate/spend/fallback sertleştirmesi.
+3. Task 030 - yeni hayvan ve desteklenmeyen medya güvenli davranışı.
+4. Task 031 - klinik profil/saat/mesai dışı kararları.
+5. Task 032 - minimal staff durum/sahiplenme/bildirim operasyonu.
+6. Task 033 - gerçek staging kaynakları ve uçtan uca entegrasyon kanıtı.
+7. Task 034 - canary, failure injection, observability ve kontrollü pilot kapısı.
+
+Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
+hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
+zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una
+gider. Böylece görev sayısı sürekli genişlemez.
+
+## 9. Değişiklik yönetimi
+
+- Her aktif görev yalnız `CURRENT_TASK.md` sözleşmesini uygular.
+- Kritik RLS, tenant, safety veya KVKK değişikliği Opus salt-okunur kapısından
+  geçer; sıradan UI/test/doküman görevinde üçlü review tekrarlanmaz.
+- Model/prompt değişimi aynı eval sürümünde yeniden ölçülmeden üretime çıkmaz.
+- Fiyatlar teknik maliyet kadar destek/satış verisiyle de üç ayda bir gözden
+  geçirilir; mevcut yıllık sözleşme yenilemeye kadar korunur.
+- Yol haritası gerçek pilot verisiyle güncellenir; uygulama sözleşmesi değildir.

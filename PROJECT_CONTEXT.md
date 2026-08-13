@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-11 by Codex.
+Last verified: 2026-08-13 by Codex.
 
 ## Product
 
@@ -290,13 +290,19 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 024 is complete with disposable-database validation plus Codex and Claude
-Opus approval. The code-level MVP scope is closed. Production release remains
-blocked on the human approvals and operational setup in
-`docs/production-readiness.md`. Turkish veterinarian and KVKK review packs are
-ready in Markdown and PDF for those human decisions; no real notification,
-Queue/DLQ resource creation, secret configuration, production migration, or
-deployment has occurred.
+Task 027 is complete and committed: the binding-free deterministic Turkish
+local demo passed 1,047 tests, both Worker dry-runs, Codex review, and a live
+browser smoke test. The reviewed product, integration, model-evaluation,
+operations, cost, and tariff sequence is now recorded in
+`docs/product-roadmap.md`.
+
+Task 028 is ready for Sonnet implementation. It adds an isolated local-only
+real-OpenAI chat/eval surface for synthetic data and a bounded Luna-versus-Terra
+evidence harness. It does not change the production model, WhatsApp/Supabase/
+Queue runtime, safety rules, or production resources. Production release
+remains blocked on the human approvals and operational setup in
+`docs/production-readiness.md`; no real notification, production resource,
+secret configuration, production migration, or deployment has occurred.
 
 ## Durable safety invariants
 
