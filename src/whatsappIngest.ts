@@ -6,6 +6,17 @@ const MAX_TEXT_LENGTH = 65536;
 const MAX_ID_LENGTH = 512;
 const FALLBACK_OWNER_NAME = "WhatsApp user";
 
+/**
+ * Fixed internal stand-in stored instead of any media payload. Contains no
+ * user or provider data. A real text message equal to this exact string is
+ * indistinguishable from media downstream and receives the fixed
+ * unsupported-media reply; that harmless collision is an accepted MVP ceiling.
+ */
+export const UNSUPPORTED_MEDIA_MARKER = "__vetai_unsupported_media__";
+
+/** Owner-sent message types accepted into the durable path but never interpreted. Anything else (reaction, system, unknown) is still ignored. */
+const UNSUPPORTED_MEDIA_TYPES: ReadonlySet<string> = new Set(["audio", "contacts", "document", "image", "location", "sticker", "video"]);
+
 export interface WhatsAppIngestItem {
   phoneNumberId: string;
   providerMessageId: string;
@@ -30,13 +41,15 @@ async function hashEvent(canonicalEvent: string): Promise<string> {
 }
 
 /**
- * Extracts supported inbound text messages from a signed, envelope-validated
- * WhatsApp webhook body. Status/read events and non-text message types are
- * ignored. Returns `{ ok: false }` if any item declaring `type: "text"` has
- * malformed required fields — the caller must reject the whole webhook and
- * persist nothing in that case.
+ * Extracts supported inbound messages from a signed, envelope-validated
+ * WhatsApp webhook body. Text messages carry their own body; the closed set of
+ * unsupported owner media types carries `UNSUPPORTED_MEDIA_MARKER` instead, so
+ * nested media fields are never inspected, hashed, or persisted. Status/read
+ * events and every other message type are ignored. Returns `{ ok: false }` if
+ * any recognized item has malformed required fields — the caller must reject
+ * the whole webhook and persist nothing in that case.
  */
-export async function extractTextMessages(body: { entry: unknown[] }): Promise<ExtractionResult> {
+export async function extractInboundMessages(body: { entry: unknown[] }): Promise<ExtractionResult> {
   const items: WhatsAppIngestItem[] = [];
   const seen = new Map<string, string>();
 
@@ -69,21 +82,31 @@ export async function extractTextMessages(body: { entry: unknown[] }): Promise<E
 
       for (const message of messages) {
         const messageObj = asRecord(message);
-        if (messageObj?.type !== "text") continue;
+        if (messageObj === null) continue;
+        const declaredType = messageObj.type;
+        const isText = declaredType === "text";
+        if (!isText && !(typeof declaredType === "string" && UNSUPPORTED_MEDIA_TYPES.has(declaredType))) continue;
 
         if (typeof phoneNumberId !== "string" || phoneNumberId.length < 1 || phoneNumberId.length > MAX_ID_LENGTH) return { ok: false };
 
         const id = messageObj.id;
         const from = messageObj.from;
         const timestamp = messageObj.timestamp;
-        const text = asRecord(messageObj.text)?.body;
 
         if (typeof id !== "string" || id.length < 1 || id.length > MAX_ID_LENGTH) return { ok: false };
         if (typeof from !== "string" || !SENDER_PATTERN.test(from)) return { ok: false };
         if (typeof timestamp !== "string" || !TIMESTAMP_PATTERN.test(timestamp)) return { ok: false };
-        if (typeof text !== "string") return { ok: false };
-        const textLength = Array.from(text).length;
-        if (textLength < MIN_TEXT_LENGTH || textLength > MAX_TEXT_LENGTH) return { ok: false };
+
+        let messageText: string;
+        if (isText) {
+          const text = asRecord(messageObj.text)?.body;
+          if (typeof text !== "string") return { ok: false };
+          const textLength = Array.from(text).length;
+          if (textLength < MIN_TEXT_LENGTH || textLength > MAX_TEXT_LENGTH) return { ok: false };
+          messageText = text;
+        } else {
+          messageText = UNSUPPORTED_MEDIA_MARKER;
+        }
 
         const timestampSeconds = Number(timestamp);
         if (!Number.isSafeInteger(timestampSeconds)) return { ok: false };
@@ -95,7 +118,9 @@ export async function extractTextMessages(body: { entry: unknown[] }): Promise<E
         const trimmedName = nameByWaId.get(from)?.trim();
         const ownerName = trimmedName ? Array.from(trimmedName).slice(0, MAX_OWNER_NAME_LENGTH).join("") : FALLBACK_OWNER_NAME;
         const providerTimestamp = timestampDate.toISOString();
-        const canonicalEvent = JSON.stringify([phoneNumberId, id, senderE164, timestamp, text]);
+        const canonicalEvent = isText
+          ? JSON.stringify([phoneNumberId, id, senderE164, timestamp, messageText])
+          : JSON.stringify([phoneNumberId, id, senderE164, timestamp, messageText, declaredType]);
         const seenEvent = seen.get(dedupeKey);
         if (seenEvent !== undefined) {
           if (seenEvent !== canonicalEvent) return { ok: false };
@@ -109,7 +134,7 @@ export async function extractTextMessages(body: { entry: unknown[] }): Promise<E
           providerMessageId: id,
           senderE164,
           ownerName,
-          messageText: text,
+          messageText,
           providerTimestamp,
           payloadHash,
         });

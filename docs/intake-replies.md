@@ -44,6 +44,30 @@ applied in this exact order; the first that matches wins:
 8. Merged `complaint` is `null` and merged `symptoms` is empty → fixed `complaint` reply.
 9. Otherwise → fixed `intake_received` reply (a receipt confirmation only; it never claims an appointment was created or that triage was performed, even at an appointment or triage stage).
 
+## Unsupported-media reply (Task 030)
+
+`planUnsupportedMediaReply()` is a separate pure entry point, not a step in the
+precedence list above. The intake consumer calls it only when the claimed
+message is exactly the fixed ingestion marker `__vetai_unsupported_media__`,
+and only when the conversation is neither `completed` nor carrying an
+already-persisted explicit `true` emergency signal — those two cases keep their
+existing behavior (`{ kind: "none" }` and the existing `emergency_handoff`
+copy respectively).
+
+It returns the existing internal `intake_received` category, deliberately
+reusing a neutral informational value so no database category, CHECK, or
+migration changes. Its text is distinct from the generic receipt copy:
+
+```text
+Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın veya kliniğimizi telefonla arayın. Durum acilse bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.
+```
+
+The copy claims no analysis, upload, notification, or staff action, gives no
+diagnosis or treatment, promises no response time, and keeps an immediate
+off-bot emergency escape. Because the category is shared, `intake_received`
+alone is not an analytics-safe discriminator between a normal receipt and an
+unsupported-media reply.
+
 ## Safety and privacy boundaries
 
 - No reply diagnoses, lists possible diseases, or recommends medication,

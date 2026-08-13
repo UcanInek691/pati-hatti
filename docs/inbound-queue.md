@@ -212,6 +212,40 @@ through the same atomic `finalizeIntakeQueueJob` call as a normal plan:
   same question again. A `completed` conversation is exempt and remains
   terminal.
 
+### Unsupported-media marker path (Task 030)
+
+`extractInboundMessages` admits the closed owner-media set `audio, contacts,
+document, image, location, sticker, video` into the same durable path as
+text. Such an item is validated against the identical `phone_number_id`,
+message `id`, `from`, and `timestamp` bounds (malformed recognized media
+rejects the whole webhook with 400 before any persistence), and its
+`messageText` is the fixed ASCII marker `__vetai_unsupported_media__`. The
+canonical hash covers only those validated envelope identifiers, the
+timestamp, the marker, and the declared type — the nested media payload is
+never inspected or extracted, so a caption, media id, MIME type, or coordinate
+change cannot alter the hash, and none of it is logged or persisted. A conflicting declared
+type or text body for the same `(phone_number_id, message.id)` key still fails
+closed. Everything downstream — ingest RPC, Queue job shape, lease, retry/DLQ,
+outbox, and delivery — is unchanged, so exact webhook and Queue redelivery
+still produce at most one reply.
+
+The consumer checks for the exact marker immediately after claim and context
+load, before previous-question selection, safety-identifier hashing, and any
+OpenAI call, so a media message consumes zero paid model work. It reads
+`context.intakeData` through `readCanonicalPersistedSnapshot` (malformed state
+retries and is never finalized as success), preserves the current pet and
+canonical snapshot, and finalizes through the same atomic
+`finalizeIntakeQueueJob` call with the fixed unsupported-media reply, normally
+keeping the current stage. Two exceptions preserve existing behavior: an
+already-persisted explicit `true` emergency signal routes a non-completed
+conversation to `human_handoff` with the existing emergency copy; an existing
+`human_handoff` stage or state version 12+ uses the truthful handoff reply so
+media-only input cannot bypass the finite-work ceiling; and a `completed`
+conversation stays completed with no reply (a defensive branch —
+ingestion does not reuse completed conversations). The
+`applied | already_completed | stale_claim` ack and `stale_state`/failure retry
+dispositions are unchanged.
+
 ### Poison snapshot -> atomic handoff
 
 If `planIntakeTurn` returns `failed` (a corrupt persisted snapshot, or a

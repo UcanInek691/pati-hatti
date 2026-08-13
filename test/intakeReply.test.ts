@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { planIntakeReply } from "../src/intakeReply";
+import { planIntakeReply, planUnsupportedMediaReply } from "../src/intakeReply";
 import type { IntakeReplyCategory } from "../src/intakeReply";
 import type { IntakeStage } from "../src/conversationState";
 import type { PetResolution } from "../src/intakeExtraction";
@@ -290,5 +290,37 @@ describe("planIntakeReply", () => {
         }
       }
     }
+  });
+});
+
+describe("planUnsupportedMediaReply (Task 030)", () => {
+  it("returns the exact fixed Turkish copy under the existing intake_received category", () => {
+    expect(planUnsupportedMediaReply()).toEqual({
+      kind: "send",
+      category: "intake_received",
+      text: "Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın veya kliniğimizi telefonla arayın. Durum acilse bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.",
+    });
+  });
+
+  it("is pure: repeated calls return an equal plan", () => {
+    expect(planUnsupportedMediaReply()).toEqual(planUnsupportedMediaReply());
+  });
+
+  it("claims no analysis, upload, notification, or staff action and keeps an off-bot emergency path", () => {
+    const plan = planUnsupportedMediaReply();
+    expect(plan.kind).toBe("send");
+    if (plan.kind !== "send") return;
+    for (const forbidden of ["inceledim", "aldım", "yükle", "ilet", "bildir", "personel", "en kısa sürede", "dakika"]) {
+      expect(plan.text.toLowerCase()).not.toContain(forbidden);
+    }
+    expect(plan.text).toContain("en yakın açık veteriner kliniğine başvurun");
+  });
+
+  it("is distinct from the generic intake_received copy so the two cannot be confused", () => {
+    const generic = planIntakeReply("ready_for_triage", planned({ data: { complaint: "kusma" } }));
+    expect(generic.kind).toBe("send");
+    if (generic.kind !== "send") return;
+    expect(generic.category).toBe("intake_received");
+    expect(planUnsupportedMediaReply()).not.toEqual(generic);
   });
 });

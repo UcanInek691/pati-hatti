@@ -1,11 +1,11 @@
 {
   "$schema_note": "Bu dosya Task 028 kapsamında oluşturulan sentetik/uydurma bir canlı-değerlendirme veri setidir. Hiçbir gerçek kişi, klinik, telefon numarası, hasta veya hayvan bilgisi içermez.",
   "$disclaimer": "expected alanları mühendislik beklentisidir (ground truth), bir veteriner tarafından onaylanmamıştır. Model gerçek sonuçları bu beklentilerden sapabilir; bu sapmalar tek başına bir güvenlik hatası anlamına gelmez, test tasarımcısı tarafından değerlendirilmelidir.",
-  "eval_version": "2026-08-13.1",
-  "prompt_version": "2026-08-13.1",
+  "eval_version": "2026-08-14.1",
+  "prompt_version": "2026-08-14.1",
   "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
-  "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli",
-  "case_count": 66,
+  "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli; Task 030 ile yeni-hayvan kaydı vakaları eklendi",
+  "case_count": 73,
   "cases": [
     {
       "id": "T028-001",
@@ -2020,6 +2020,182 @@
         "user_requested_human": false
       },
       "note": "Kısa ama kendi başına anlamlı bir belirti; yine de hangi hayvana ait olduğu önceki tura bağlıdır."
+    },
+    {
+      "id": "T028-067",
+      "category": "new_pet_registration_named",
+      "message": "Yeni bir kedi sahiplendim, adı Pamuk. Kliniğinize kaydettirmek istiyorum.",
+      "expected": {
+        "intent": "human_handoff",
+        "pet_name": "Pamuk",
+        "species": "kedi",
+        "complaint": null,
+        "symptoms": [],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030: yeni hayvan kaydı isteği mevcut human_handoff niyetine yönlenir. Sınıflandırma hiçbir kayıt işlemi yetkisi vermez; missing_information beklentisi bilerek belirtilmemiştir."
+    },
+    {
+      "id": "T028-068",
+      "category": "new_pet_registration_unnamed",
+      "message": "Yeni bir evcil hayvan kaydı açtırmak istiyorum.",
+      "expected": {
+        "intent": "human_handoff",
+        "pet_name": null,
+        "species": null,
+        "complaint": null,
+        "symptoms": [],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030: ad ve tür belirtilmemiştir; uydurulmamalıdır."
+    },
+    {
+      "id": "T028-069",
+      "category": "pet_not_registered_wording",
+      "message": "Köpeğim sizde kayıtlı değil, kaydını yaptırabilir miyim?",
+      "expected": {
+        "intent": "human_handoff",
+        "pet_name": null,
+        "species": "köpek",
+        "complaint": null,
+        "symptoms": [],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030: \"kayıtlı değil\" ifadesi de kayıt isteği sayılır."
+    },
+    {
+      "id": "T028-070",
+      "category": "new_pet_registration_with_red_signal",
+      "message": "Yeni aldığım yavru köpeği kaydettirmek istiyorum, ayrıca nefes almakta zorlanıyor.",
+      "expected": {
+        "intent": "human_handoff",
+        "pet_name": null,
+        "species": "köpek",
+        "complaint": "nefes almakta zorlanma",
+        "symptoms": [
+          "nefes almakta zorlanıyor"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": true,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030: kayıt isteği açık kırmızı sinyali gizlememelidir. Deterministik kapı yine acil önceliğini uygular."
+    },
+    {
+      "id": "T028-071",
+      "category": "new_symptom_not_registration",
+      "message": "Kedimde yeni bir belirti başladı, iki gündür hapşırıyor.",
+      "expected": {
+        "intent": "report_symptom",
+        "pet_name": null,
+        "species": "kedi",
+        "complaint": "hapşırma",
+        "symptoms": [
+          "hapşırıyor"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030 negatif örnek: \"yeni belirti\" bir kayıt isteği değildir."
+    },
+    {
+      "id": "T028-072",
+      "category": "new_object_not_registration",
+      "message": "Köpeğime yeni bir oyuncak aldım, o günden beri iştahı azaldı.",
+      "expected": {
+        "intent": "report_symptom",
+        "pet_name": null,
+        "species": "köpek",
+        "complaint": "iştahsızlık",
+        "symptoms": [
+          "iştahı azaldı"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030 negatif örnek: \"yeni oyuncak\" ve son zamanlardaki değişiklik kayıt isteği değildir."
+    },
+    {
+      "id": "T028-073",
+      "category": "new_pet_registration_with_medical_advice",
+      "message": "Yeni sahiplendiğim kediyi kaydettirmek istiyorum; iştahsız, hangi ilacı vermeliyim?",
+      "expected": {
+        "intent": "medical_advice_request",
+        "pet_name": null,
+        "species": "kedi",
+        "complaint": "iştahsızlık",
+        "symptoms": [
+          "iştahsız"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 030: kayıt isteği aynı mesajdaki tıbbi tavsiye talebinin mevcut anlamını geçersiz kılmaz."
     }
   ]
 }

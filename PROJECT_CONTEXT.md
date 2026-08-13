@@ -307,6 +307,27 @@ The secure Worker baseline is committed on `main`:
   Luna mismatch was complaint-follow-up case `T029-027`, not a safety signal.
   This is a new `2026-08-13.1` engineering baseline, not veterinarian-approved
   clinical evidence and not directly comparable to the earlier prompt version.
+  Task 030 later advanced the active prompt to `2026-08-14.1`; these recorded
+  numbers are not evidence for that revision.
+- Task 030 is complete. Explicit new/unregistered-pet registration requests
+  reuse the truthful staff-handoff path without creating a pet or claiming an
+  action occurred. Human-handled turns preserve only an already-selected
+  conversation pet; current-turn names and the one-pet fallback cannot create
+  an association. This boundary depends on correct model classification because
+  the closed extraction schema has no registration flag.
+- Signed WhatsApp `audio | contacts | document | image | location | sticker |
+  video` messages now enter the existing durable ingest/Queue/finalizer/outbox
+  path as a fixed internal marker. Nested media fields are not inspected,
+  extracted, hashed, logged, persisted, or sent to OpenAI. Normal media gets a
+  fixed Turkish unsupported-media reply with zero model work; persisted
+  emergency signals retain emergency precedence, completed stays terminal,
+  and an existing handoff stage or state version 12+ uses the finite truthful
+  handoff path instead of repeating indefinitely.
+- Task 030 passed frozen install, strict typecheck, 1,204 tests with 2 opt-in
+  live tests skipped, production and live-AI Worker dry-runs, Codex review, and
+  Claude Opus's post-fix read-only safety/privacy review. No live evidence yet
+  covers prompt `2026-08-14.1`; the fixed Turkish copy and clinical routing
+  still require veterinarian and Turkish legal/KVKK approval before production.
 
 Verified evidence before the context-system change:
 
@@ -339,11 +360,13 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Tasks 028 and 029 are complete, including the authorized synthetic Luna/Terra
-live runs, bounded multi-turn interpretation, no-model budget stops, finite
-no-progress handoff, and the $5 OpenAI hard-limit setup. Luna remains the
-production extractor based on the recorded gates above. The next planned
-technical task is Task 030: safe new-pet and unsupported-media behavior.
+Tasks 028 through 030 are complete, including the authorized synthetic
+Luna/Terra live runs, bounded multi-turn interpretation, no-model budget stops,
+finite no-progress/media handoff, safe new-pet routing, unsupported-media
+handling, and the $5 OpenAI hard-limit setup. Luna remains the production
+extractor based on the recorded gates above, but prompt `2026-08-14.1` still
+needs fresh authorized live evidence. The next planned technical task is Task
+031: clinic profile, hours, and after-hours decisions.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production

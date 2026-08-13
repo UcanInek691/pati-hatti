@@ -5,6 +5,7 @@ import * as intakeReplyModule from "../src/intakeReply";
 import * as intakeTurnModule from "../src/intakeTurn";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
+import { UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
 
 const CONVERSATION_ID = "11111111-1111-1111-1111-111111111111";
 const PROVIDER_MESSAGE_ID = "wamid.ID1";
@@ -341,6 +342,77 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
+  });
+
+  it("new-pet registration does not bind a stated name to an existing same-name pet", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          pet_id: null,
+          pets: [{ id: PET_ID, name: "Pamuk", species: "cat" }],
+        }),
+      extraction: extractionJson({ intent: "human_handoff", pet_name: "Pamuk", species: "kedi", user_requested_human: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_pet_id).toBeNull();
+    expect(finalizeBody.p_intake_data).toMatchObject({ intent: "human_handoff", pet_name: "Pamuk", species: "kedi" });
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  it("unnamed new-pet registration does not fall back to the owner's only existing pet", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ pet_id: null }),
+      extraction: extractionJson({ intent: "human_handoff", pet_name: null, species: "kedi", user_requested_human: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_pet_id).toBeNull();
+  });
+
+  it("an explicit staff request also avoids introducing a new pet association", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ pet_id: null }),
+      extraction: extractionJson({ intent: "human_handoff", pet_name: "Fluffy", user_requested_human: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_pet_id).toBeNull();
+  });
+
+  it("a registration request combined with medical advice cannot bind an existing same-name pet", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          pet_id: null,
+          pets: [{ id: PET_ID, name: "Pamuk", species: "cat" }],
+        }),
+      extraction: extractionJson({ intent: "medical_advice_request", pet_name: "Pamuk", user_requested_human: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_pet_id).toBeNull();
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
   });
 
   it("needs_safety_check plan persists the same stage", async () => {
@@ -1138,5 +1210,176 @@ describe("processIntakeQueueMessage: bounded work per attempt", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("retry");
+  });
+});
+
+describe("processIntakeQueueMessage: Task 030 unsupported-media marker", () => {
+  const MEDIA_REPLY_TEXT =
+    "Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın veya kliniğimizi telefonla arayın. Durum acilse bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.";
+
+  function markerRoutes(overrides: Partial<Routes> = {}) {
+    return happyRoutes({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: UNSUPPORTED_MEDIA_MARKER }),
+      ...overrides,
+    });
+  }
+
+  function urlsOf(fetchMock: ReturnType<typeof vi.fn>): string[] {
+    return fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+  }
+
+  it("makes zero OpenAI calls, keeps the current stage/pet/snapshot, and sends the exact fixed reply", async () => {
+    const snapshot = { schema_version: 1, ...extractionJson({ reported_safety_signals: ALL_FALSE_SIGNALS }) };
+    const fetchMock = markerRoutes({
+      context: () => contextRow({ intake_stage: "complaint_collection", pet_id: PET_ID, state_version: 3, intake_data: snapshot }),
+      finalize: () => finalizeRow("applied", { intake_stage: "complaint_collection", state_version: 4 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("complaint_collection");
+    expect(finalizeBody.p_pet_id).toBe(PET_ID);
+    expect(finalizeBody.p_expected_version).toBe(3);
+    expect(finalizeBody.p_intake_data).toEqual(snapshot);
+    expect(finalizeBody.p_reply_category).toBe("intake_received");
+    expect(finalizeBody.p_reply_text).toBe(MEDIA_REPLY_TEXT);
+  });
+
+  it("never sends the marker, prior question, snapshot, or media information anywhere near OpenAI", async () => {
+    const fetchMock = markerRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          intake_data: {},
+          recent_messages: [
+            { direction: "outbound", content: "Hangi evcil hayvanınız için yazıyorsunuz?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: UNSUPPORTED_MEDIA_MARKER, created_at: "2026-01-01T00:01:00Z" },
+          ],
+        }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = JSON.stringify(bodyOf(fetchMock, 2));
+    expect(finalizeBody).not.toContain(UNSUPPORTED_MEDIA_MARKER);
+    expect(finalizeBody).not.toContain("Hangi evcil hayvanınız için yazıyorsunuz?");
+  });
+
+  it("preserves an already-persisted explicit emergency signal with the existing emergency reply and handoff", async () => {
+    const fetchMock = markerRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          state_version: 3,
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({ reported_safety_signals: { ...ALL_FALSE_SIGNALS, heavy_bleeding: true } }),
+          },
+        }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 4 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("emergency_handoff");
+    expect(finalizeBody.p_reply_text).not.toBe(MEDIA_REPLY_TEXT);
+  });
+
+  it("does not infer a new safety fact from media: an all-false snapshot still gets the media reply", async () => {
+    const fetchMock = markerRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          intake_data: { schema_version: 1, ...extractionJson({ reported_safety_signals: ALL_NULL_SIGNALS }) },
+        }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(bodyOf(fetchMock, 2).p_reply_text).toBe(MEDIA_REPLY_TEXT);
+  });
+
+  it.each([
+    { label: "the no-model state-version ceiling", intake_stage: "safety_check", state_version: 12 },
+    { label: "an existing handoff stage", intake_stage: "human_handoff", state_version: 4 },
+  ])("$label finalizes media to the truthful handoff without OpenAI", async ({ intake_stage, state_version }) => {
+    const fetchMock = markerRoutes({
+      context: () => contextRow({ intake_stage, state_version, intake_data: {} }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: state_version + 1 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).not.toBe(MEDIA_REPLY_TEXT);
+  });
+
+  it("a malformed persisted snapshot retries and never finalizes", async () => {
+    const fetchMock = markerRoutes({ context: () => contextRow({ intake_data: { bogus_field: true } }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a completed conversation stays completed and produces no reply", async () => {
+    const fetchMock = markerRoutes({
+      context: () => contextRow({ intake_stage: "completed", pet_id: PET_ID, state_version: 9, intake_data: {} }),
+      finalize: () => finalizeRow("already_completed"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("completed");
+    expect(finalizeBody.p_reply_category).toBeNull();
+    expect(finalizeBody.p_reply_text).toBeNull();
+  });
+
+  it.each([
+    { label: "applied", row: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 2 }), expected: "ack" as QueueDisposition },
+    { label: "already_completed", row: () => finalizeRow("already_completed"), expected: "ack" as QueueDisposition },
+    { label: "stale_claim", row: () => finalizeRow("stale_claim"), expected: "ack" as QueueDisposition },
+    { label: "stale_state", row: () => finalizeRow("stale_state"), expected: "retry" as QueueDisposition },
+    { label: "RPC failure", row: () => new Response("", { status: 500 }), expected: "retry" as QueueDisposition },
+  ])("finalize $label -> $expected", async ({ row, expected }) => {
+    const fetchMock = markerRoutes({ finalize: row });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe(expected);
+  });
+
+  it("a real text message that is not the exact marker still takes the normal OpenAI path", async () => {
+    const fetchMock = happyRoutes({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: `${UNSUPPORTED_MEDIA_MARKER} ` }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(true);
   });
 });

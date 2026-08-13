@@ -2,7 +2,7 @@ import type { Env } from "./env";
 import { getHealth } from "./health";
 import { verifyWhatsAppChallenge } from "./webhookVerify";
 import { MAX_BODY_BYTES, readRawBodyWithLimit, verifyHmacSignature } from "./webhookSignature";
-import { extractTextMessages } from "./whatsappIngest";
+import { extractInboundMessages } from "./whatsappIngest";
 import { ingestWhatsAppTextMessage } from "./supabaseIngest";
 import { extractOutboundStatuses } from "./whatsappStatus";
 import { recordWhatsAppOutboundStatus } from "./supabaseOutboundStatus";
@@ -54,7 +54,7 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   console.log("whatsapp webhook event received");
 
   const statusExtraction = await extractOutboundStatuses(body);
-  const textExtraction = await extractTextMessages(body);
+  const textExtraction = await extractInboundMessages(body);
   if (!statusExtraction.ok || !textExtraction.ok) {
     return new Response("Bad Request", { status: 400 });
   }

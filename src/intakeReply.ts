@@ -24,6 +24,8 @@ const PET_IDENTITY_TEXT = "Hangi evcil hayvanınız için yazıyorsunuz? Lütfen
 const COMPLAINT_TEXT = "Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?";
 const INTAKE_RECEIVED_TEXT =
   "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun.";
+const UNSUPPORTED_MEDIA_TEXT =
+  "Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın veya kliniğimizi telefonla arayın. Durum acilse bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.";
 const SAFETY_QUESTIONS_PREFIX =
   "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:";
 
@@ -54,6 +56,17 @@ function planSafetyQuestionsReply(unknownSignals: readonly SafetySignal[]): Inta
     text += `\n- ${SAFETY_SIGNAL_QUESTIONS[signal]}`;
   }
   return sendReply("safety_questions", text);
+}
+
+/**
+ * Fixed reply for an inbound message the bot recognized but cannot interpret
+ * (the closed unsupported-media set). Reuses the neutral informational
+ * `intake_received` category so no database category value changes. Claims no
+ * analysis, upload, notification, or staff action, and keeps an immediate
+ * off-bot emergency path.
+ */
+export function planUnsupportedMediaReply(): IntakeReplyPlan {
+  return sendReply("intake_received", UNSUPPORTED_MEDIA_TEXT);
 }
 
 /**

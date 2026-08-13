@@ -2,7 +2,7 @@
   "$schema_note": "Engineering evaluation corpus for Task 029 bounded multi-turn interpretation. Not a database migration or runtime config.",
   "$disclaimer": "Bu korpus bir mühendislik beklentisidir; bir veteriner hekim tarafından onaylanmamıştır. Sonuçlar yalnızca kanıt niteliğindedir ve üretim modelini otomatik olarak değiştirmez.",
   "eval_version": "2026-08-13.1",
-  "prompt_version": "2026-08-13.1",
+  "prompt_version": "2026-08-14.1",
   "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
   "generated_for": "Task 029 bounded multi-turn interpretation synthetic evidence",
   "case_count": 30,

@@ -9,7 +9,9 @@ import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
 import type { PersistedIntakeData, PlanResult } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
 import { evaluateSafetyDecision, type SafetyDecision } from "./safetyDecision";
-import { planIntakeReply } from "./intakeReply";
+import { planIntakeReply, planUnsupportedMediaReply } from "./intakeReply";
+import type { IntakeReplyPlan } from "./intakeReply";
+import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
 
 export type QueueDisposition = "ack" | "retry";
@@ -89,6 +91,23 @@ function buildHandoffPlan(petId: string | null, intakeData: PersistedIntakeData)
   };
 }
 
+/** Human-handled turns preserve only an already-selected pet; the closed schema cannot distinguish a new-pet name from an existing-pet name. */
+function preserveHumanHandledPetBoundary(
+  context: ConversationIntakeContext,
+  extraction: IntakeExtraction,
+  plan: PlanResult,
+): PlanResult {
+  const humanHandled =
+    extraction.user_requested_human || extraction.intent === "human_handoff" || extraction.intent === "medical_advice_request";
+  if (plan.kind !== "planned" || !humanHandled) return plan;
+
+  return {
+    ...plan,
+    petId: context.petId,
+    petResolution: { kind: "needs_clarification" },
+  };
+}
+
 function toHex(bytes: Uint8Array): string {
   let hex = "";
   for (const byte of bytes) {
@@ -149,6 +168,43 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     if (!contextResult.ok) return "retry";
     const context = contextResult.context;
 
+    if (claim.messageText === UNSUPPORTED_MEDIA_MARKER) {
+      const snapshot = readCanonicalPersistedSnapshot(context.intakeData);
+      if (!snapshot.ok) return "retry";
+
+      let nextStage = context.intakeStage;
+      let reply: IntakeReplyPlan = { kind: "none" };
+      if (context.intakeStage !== "completed") {
+        const handoffPlan = buildHandoffPlan(context.petId, snapshot.value);
+        const handoffRequired =
+          context.intakeStage === "human_handoff" || context.stateVersion >= NO_MODEL_STATE_VERSION_CEILING;
+        if (handoffPlan.safetyDecision.kind === "emergency_handoff" || handoffRequired) {
+          nextStage = "human_handoff";
+          reply = planIntakeReply(context.intakeStage, handoffPlan);
+        } else {
+          reply = planUnsupportedMediaReply();
+        }
+      }
+
+      const finalizeResult = await finalizeIntakeQueueJob(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          nextStage,
+          petId: context.petId,
+          intakeData: snapshot.value as unknown as Record<string, unknown>,
+          reply,
+        },
+        env,
+      );
+      if (finalizeResult.kind === "applied" || finalizeResult.kind === "already_completed" || finalizeResult.kind === "stale_claim") {
+        return "ack";
+      }
+      return "retry";
+    }
+
     if (
       context.intakeStage === "human_handoff" ||
       (context.intakeStage !== "completed" && context.stateVersion >= NO_MODEL_STATE_VERSION_CEILING)
@@ -181,7 +237,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     if (!extractionResult.ok) return "retry";
     const extraction = extractionResult.extraction;
 
-    const plan = planIntakeTurn(context, extraction);
+    const plan = preserveHumanHandledPetBoundary(context, extraction, planIntakeTurn(context, extraction));
 
     let nextStage: IntakeStage;
     let petId: string | null;

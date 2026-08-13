@@ -152,3 +152,56 @@ raise the existing staff work item from `normal` to `urgent`. The truthful
 handoff copy still tells the owner to call and not wait when the situation is
 urgent or worsening, but clinic-side urgency for post-handoff messages remains
 a staff-notification/workflow responsibility before pilot launch.
+
+## New/unregistered pets and unsupported media (Task 030)
+
+Scope: `prompts/intake-extraction-prompt.ts`, `src/whatsappIngest.ts`,
+`src/intakeConsumer.ts`, `src/intakeReply.ts`. Prompt version
+`2026-08-14.1`. No schema, intent enum, parser, safety-signal set, or
+deterministic rule changed.
+
+- **New/unregistered pet requests reuse the existing handoff**: the prompt now
+  maps a clear request to add, register, or record a pet that is new to or not
+  yet registered with the clinic onto the existing `human_handoff` intent. The
+  unchanged deterministic gate then produces the existing staff work item and
+  truthful call-the-clinic reply. The classification authorizes nothing: the
+  model must not claim a pet was registered, must not create or output an id,
+  and must not treat the stated name as an existing patient. Explicitly stated
+  names, species, complaints, symptoms, and safety signals are still extracted
+  normally for staff context. Because the closed extraction schema cannot mark
+  a registration request separately when it is combined with an explicit staff
+  or medical-advice request, all human-handled turns conservatively avoid a new
+  name-based association and the single-existing-pet fallback. An already-
+  selected conversation pet remains unchanged because this task does not add a
+  pet reassignment or creation operation. A medical-advice request in the same
+  message keeps the existing `medical_advice_request` intent. Ordinary uses of
+  "new" (a new symptom, a new toy, a recently changed behaviour) are explicitly
+  excluded. No pet-creation feature exists; actual registration remains a human
+  clinic action. This runtime boundary depends on the model producing one of
+  those human-handled classifications; a misclassified registration request
+  cannot be identified independently without a dedicated schema field.
+- **Recognized media never reaches the model**: `extractInboundMessages`
+  accepts the closed set `audio, contacts, document, image, location, sticker,
+  video` and stores the fixed ASCII marker `__vetai_unsupported_media__`
+  instead of the message. Nested media fields are never inspected, extracted,
+  hashed, logged, or persisted — the canonical hash uses only the validated envelope
+  identifiers, timestamp, marker, and declared type. Every other type
+  (reaction, system, unknown, …) is still ignored exactly as before.
+- **Zero paid work for a marker**: the consumer detects the exact marker right
+  after claim and context load — before previous-question selection, safety-
+  identifier hashing, and any OpenAI call. It reads the canonical snapshot
+  through `readCanonicalPersistedSnapshot` (a malformed snapshot retries and
+  is never finalized as success), preserves the current pet and snapshot,
+  normally keeps the current stage, and finalizes through the unchanged atomic
+  RPC with the fixed unsupported-media reply. An already-persisted explicit
+  `true` emergency signal keeps deterministic precedence: a non-completed
+  conversation is routed to `human_handoff` with the existing emergency copy.
+  Media itself asserts no new safety fact. The existing finite-work boundary
+  also remains authoritative: an existing `human_handoff` stage or state
+  version 12+ receives the truthful handoff reply instead of repeating the
+  media reply indefinitely, still with zero model calls.
+
+Accepted MVP ceiling: a real text message whose body is exactly
+`__vetai_unsupported_media__` is indistinguishable downstream and receives the
+fixed unsupported-media reply. This is documented rather than fixed with a
+schema change.

@@ -332,8 +332,17 @@ Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenli
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm
 zorunlu güvenlik/şema/sağlayıcı/gecikme kapılarını geçti ve 51/52 beklenen alanı
 eşledi, Terra 52/52 eşledi ancak yaklaşık on kat pahalıydı. Üretim modeli Luna
-olarak kaldı. Sıradaki teknik görev Task 030'dur: yeni hayvan ve desteklenmeyen
-medya için güvenli davranış.
+olarak kaldı.
+
+Task 030 uygulandı ve Codex/Opus incelemesini bekliyor: yeni/kayıtsız hayvan
+kaydı istekleri mevcut `human_handoff` niyetine yönlendirildi (prompt sürümü
+`2026-08-14.1`), ve kapalı kümedeki desteklenmeyen medya türleri artık sessizce
+yok sayılmak yerine mevcut dayanıklı yola sabit bir dahili işaretle girip tek
+bir sabit Türkçe yanıt alıyor. İç medya alanları incelenmiyor veya
+çıkarılmıyor; içerik özetlenmiyor, modele gönderilmiyor ya da saklanmıyor ve bu yol ücretli model
+çağrısı yapmıyor. Hiçbir hayvan oluşturma özelliği, medya analizi, şema, RPC,
+migration veya dağıtım değişikliği eklenmedi. Canlı model evali çalıştırılmadı;
+klinik veterineri ve KVKK onayları hâlâ gereklidir.
 
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için

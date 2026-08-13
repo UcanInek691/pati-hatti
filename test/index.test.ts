@@ -250,6 +250,37 @@ function textMessageWebhookBody(): unknown {
   };
 }
 
+function mediaMessageWebhookBody(type = "image", overrides: Record<string, unknown> = {}): unknown {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "WABA_ID",
+        changes: [
+          {
+            value: {
+              messaging_product: "whatsapp",
+              metadata: { display_phone_number: "16505551111", phone_number_id: "123456123" },
+              contacts: [{ profile: { name: "Kerry Fisher" }, wa_id: "16315551181" }],
+              messages: [
+                {
+                  from: "16315551181",
+                  id: "wamid.ID1",
+                  timestamp: "1603059201",
+                  type,
+                  [type]: { id: "MEDIA_ID", mime_type: "image/jpeg", sha256: "abc", caption: "kedi fotoğrafı" },
+                  ...overrides,
+                },
+              ],
+            },
+            field: "messages",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -471,6 +502,108 @@ describe("worker whatsapp persistence", () => {
     const queueSend = vi.fn().mockResolvedValue(undefined);
     const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
     const payload = textMessageWebhookBody() as {
+      entry: Array<{ changes: Array<{ value: { messages: unknown[] } }> }>;
+    };
+    const messages = payload.entry[0]?.changes[0]?.value.messages;
+    messages?.push(structuredClone(messages[0]));
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(payload)), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 200 for a signed media webhook using the existing ingest RPC and Queue job, carrying no media data", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("image"))), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toContain("/rest/v1/rpc/ingest_whatsapp_text_message");
+    const rpcBody = init.body as string;
+    expect(JSON.parse(rpcBody).p_message_text).toBe("__vetai_unsupported_media__");
+    for (const leak of ["MEDIA_ID", "image/jpeg", "abc", "kedi fotoğrafı"]) {
+      expect(rpcBody).not.toContain(leak);
+    }
+    expect(queueSend).toHaveBeenCalledWith(
+      { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
+      { contentType: "json" },
+    );
+  });
+
+  it.each(["audio", "contacts", "document", "image", "location", "sticker", "video"])(
+    "returns 200 and enqueues exactly one job for a signed %s webhook",
+    async (type) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }])));
+      const queueSend = vi.fn().mockResolvedValue(undefined);
+      const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+      const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody(type))), testEnv);
+
+      expect(res.status).toBe(200);
+      expect(queueSend).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("returns 200 without persistence or Queue work for a still-unrecognized message type", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("reaction"))), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a media webhook with a malformed sender and performs no persistence or queue calls", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("image", { from: "bad-sender" }))), testEnv);
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 for a media webhook when the ingest RPC reports an unknown account and never calls Queue", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "unknown_account", conversation_id: null }])));
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("audio"))), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 for a media webhook when the Queue send fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }])));
+    const queueSend = vi.fn().mockRejectedValue(new Error("queue down"));
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("video"))), testEnv);
+
+    expect(res.status).toBe(503);
+  });
+
+  it("calls the ingest RPC once and enqueues once for an identical in-payload media duplicate", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "processed", conversation_id: CONVERSATION_ID }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+    const payload = mediaMessageWebhookBody("image") as {
       entry: Array<{ changes: Array<{ value: { messages: unknown[] } }> }>;
     };
     const messages = payload.entry[0]?.changes[0]?.value.messages;
