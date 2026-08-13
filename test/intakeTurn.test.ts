@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planIntakeTurn } from "../src/intakeTurn";
+import { planIntakeTurn, readCanonicalPersistedSnapshot } from "../src/intakeTurn";
 import type { PersistedIntakeData } from "../src/intakeTurn";
 import type { ConversationIntakeContext, IntakePet, IntakeStage } from "../src/conversationState";
 import type { IntakeExtraction, MissingInformationItem, ReportedSafetySignals } from "../src/intakeExtraction";
@@ -134,6 +134,63 @@ describe("planIntakeTurn — persisted snapshot trust boundary", () => {
     );
     const result = planIntakeTurn(context({ intakeData: proxy }), extraction());
     expect(result).toEqual({ kind: "failed" });
+  });
+});
+
+describe("readCanonicalPersistedSnapshot — Task 029 no-model reader", () => {
+  it("accepts an exact empty object as the canonical empty snapshot", () => {
+    const result = readCanonicalPersistedSnapshot({});
+    expect(result).toEqual({
+      ok: true,
+      value: validSnapshot({
+        reported_safety_signals: {
+          breathing_difficulty: null,
+          loss_of_consciousness: null,
+          active_seizure: null,
+          heavy_bleeding: null,
+          major_trauma: null,
+          possible_toxin_exposure: null,
+          possible_foreign_object: null,
+          unable_to_urinate: null,
+        },
+      }),
+    });
+  });
+
+  it("accepts an exact valid snapshot and returns a fresh equal copy", () => {
+    const input = validSnapshot({ complaint: "itchy ear" });
+    const result = readCanonicalPersistedSnapshot(input);
+    expect(result).toEqual({ ok: true, value: input });
+    if (result.ok) {
+      expect(result.value).not.toBe(input);
+      expect(result.value.symptoms).not.toBe(input.symptoms);
+      expect(result.value.missing_information).not.toBe(input.missing_information);
+      expect(result.value.reported_safety_signals).not.toBe(input.reported_safety_signals);
+    }
+  });
+
+  it.each([
+    ["an array", []],
+    ["an exotic prototype", new (class Snapshot {})()],
+    ["a missing key", (() => { const s = validSnapshot(); delete (s as Record<string, unknown>).complaint; return s; })()],
+    ["an extra key", validSnapshot({ extra_field: "nope" } as unknown as Partial<PersistedIntakeData>)],
+    ["an unknown schema version", validSnapshot({ schema_version: 2 as unknown as 1 })],
+    ["malformed nested extraction data", validSnapshot({ reported_safety_signals: [] as unknown as ReportedSafetySignals })],
+  ])("fails closed on %s", (_label, intakeData) => {
+    const result = readCanonicalPersistedSnapshot(intakeData);
+    expect(result).toEqual({ ok: false });
+  });
+
+  it("fails closed when the persisted snapshot throws during inspection", () => {
+    const proxy = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error("trap");
+        },
+      },
+    );
+    expect(readCanonicalPersistedSnapshot(proxy)).toEqual({ ok: false });
   });
 });
 

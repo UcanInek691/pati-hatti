@@ -3,18 +3,91 @@ import { parseIntakeQueueMessage } from "./intakeQueue";
 import { claimIntakeQueueJob, finalizeIntakeQueueJob } from "./intakeJobLease";
 import type { FinalizeIntakeQueueJobInput } from "./intakeJobLease";
 import { getConversationIntakeContext } from "./conversationState";
-import type { IntakeStage } from "./conversationState";
+import type { ConversationIntakeContext, IntakeStage } from "./conversationState";
 import { extractIntakeViaOpenAi } from "./openaiIntake";
-import { planIntakeTurn } from "./intakeTurn";
-import type { PersistedIntakeData } from "./intakeTurn";
+import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
+import type { PersistedIntakeData, PlanResult } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
-import type { SafetyDecision } from "./safetyDecision";
+import { evaluateSafetyDecision, type SafetyDecision } from "./safetyDecision";
 import { planIntakeReply } from "./intakeReply";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
 
 export type QueueDisposition = "ack" | "retry";
 
 const SAFETY_IDENTIFIER_DOMAIN = "vetai-owner:";
+const MAX_PREVIOUS_QUESTION_CODE_POINTS = 4096;
+/** Conservative per-conversation paid-work ceiling (Task 029): at this state version, stop calling OpenAI. */
+const NO_MODEL_STATE_VERSION_CEILING = 12;
+
+function codePointLength(text: string): number {
+  return Array.from(text).length;
+}
+
+/** A prior clinic message is usable as short-answer context only if it reads as an actual question of bounded length. */
+function isEligibleClinicQuestion(text: string): boolean {
+  if (!text.includes("?")) return false;
+  const length = codePointLength(text);
+  return length >= 1 && length <= MAX_PREVIOUS_QUESTION_CODE_POINTS;
+}
+
+/**
+ * Selects at most one previous clinic question to give the extractor bounded
+ * turn context (Task 029). Returns null unless the most recent recorded
+ * message is exactly the current claimed message and the message
+ * immediately preceding it (skipping any non-outbound messages) is a single
+ * eligible outbound question. Never mutates the supplied context.
+ */
+function selectPreviousClinicQuestion(context: ConversationIntakeContext, currentMessage: string): string | null {
+  if (context.intakeStage === "human_handoff" || context.intakeStage === "completed") return null;
+
+  const messages = context.recentMessages;
+  const last = messages[messages.length - 1];
+  if (last === undefined || last.direction !== "inbound" || last.content !== currentMessage) return null;
+
+  for (let i = messages.length - 2; i >= 0; i--) {
+    const item = messages[i]!;
+    if (item.direction !== "outbound") continue;
+    return isEligibleClinicQuestion(item.content) ? item.content : null;
+  }
+  return null;
+}
+
+/** True when the current turn's extraction expresses no explicit actionable fact (Task 029 no-progress fallback). */
+function isNoActionableFact(extraction: IntakeExtraction): boolean {
+  if (extraction.intent !== "unknown") return false;
+  if (extraction.pet_name !== null || extraction.species !== null || extraction.complaint !== null) return false;
+  if (extraction.symptoms.length > 0) return false;
+  if (extraction.user_requested_human) return false;
+  return Object.values(extraction.reported_safety_signals).every((value) => value === null);
+}
+
+/** True when the two most recent outbound messages before the exact current inbound are identical eligible questions. */
+function hasRepeatedNoProgressQuestion(context: ConversationIntakeContext, currentMessage: string): boolean {
+  const messages = context.recentMessages;
+  const last = messages[messages.length - 1];
+  if (last === undefined || last.direction !== "inbound" || last.content !== currentMessage) return false;
+
+  const recentOutbound: string[] = [];
+  for (let i = messages.length - 2; i >= 0 && recentOutbound.length < 2; i--) {
+    const item = messages[i]!;
+    if (item.direction === "outbound") recentOutbound.push(item.content);
+  }
+  if (recentOutbound.length < 2) return false;
+  const [mostRecent, secondMostRecent] = recentOutbound;
+  return mostRecent === secondMostRecent && isEligibleClinicQuestion(mostRecent!);
+}
+
+/** Builds a no-model handoff plan while preserving deterministic safety precedence from the canonical snapshot. */
+function buildHandoffPlan(petId: string | null, intakeData: PersistedIntakeData): Extract<PlanResult, { kind: "planned" }> {
+  return {
+    kind: "planned",
+    nextStage: "human_handoff",
+    petId,
+    intakeData,
+    petResolution: { kind: "needs_clarification" },
+    safetyDecision: evaluateSafetyDecision(intakeData),
+  };
+}
 
 function toHex(bytes: Uint8Array): string {
   let hex = "";
@@ -76,8 +149,35 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     if (!contextResult.ok) return "retry";
     const context = contextResult.context;
 
+    if (
+      context.intakeStage === "human_handoff" ||
+      (context.intakeStage !== "completed" && context.stateVersion >= NO_MODEL_STATE_VERSION_CEILING)
+    ) {
+      const snapshot = readCanonicalPersistedSnapshot(context.intakeData);
+      if (!snapshot.ok) return "retry";
+
+      const handoffPlan = buildHandoffPlan(context.petId, snapshot.value);
+      const replyPlan = planIntakeReply(context.intakeStage, handoffPlan);
+      const finalizeInput: FinalizeIntakeQueueJobInput = {
+        conversationId,
+        providerMessageId,
+        claimToken: claim.claimToken,
+        expectedVersion: context.stateVersion,
+        nextStage: handoffPlan.nextStage,
+        petId: handoffPlan.petId,
+        intakeData: handoffPlan.intakeData as unknown as Record<string, unknown>,
+        reply: replyPlan,
+      };
+      const finalizeResult = await finalizeIntakeQueueJob(finalizeInput, env);
+      if (finalizeResult.kind === "applied" || finalizeResult.kind === "already_completed" || finalizeResult.kind === "stale_claim") {
+        return "ack";
+      }
+      return "retry";
+    }
+
+    const previousQuestion = selectPreviousClinicQuestion(context, claim.messageText);
     const safetyIdentifier = await deriveSafetyIdentifier(context.ownerId);
-    const extractionResult = await extractIntakeViaOpenAi(claim.messageText, safetyIdentifier, env);
+    const extractionResult = await extractIntakeViaOpenAi(claim.messageText, safetyIdentifier, env, previousQuestion);
     if (!extractionResult.ok) return "retry";
     const extraction = extractionResult.extraction;
 
@@ -86,6 +186,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     let nextStage: IntakeStage;
     let petId: string | null;
     let intakeData: PersistedIntakeData;
+    let effectivePlan: PlanResult = plan;
 
     if (plan.kind === "planned") {
       if (!isHandoffConsistent(context.intakeStage, plan.nextStage, plan.safetyDecision)) return "retry";
@@ -94,9 +195,17 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         console.warn("intake consumer: terminal_safety_signal");
       }
 
-      nextStage = plan.nextStage;
-      petId = plan.petId;
-      intakeData = plan.intakeData;
+      const planned =
+        context.intakeStage !== "completed" &&
+        isNoActionableFact(extraction) &&
+        hasRepeatedNoProgressQuestion(context, claim.messageText)
+          ? { ...plan, nextStage: "human_handoff" as const }
+          : plan;
+      effectivePlan = planned;
+
+      nextStage = planned.nextStage;
+      petId = planned.petId;
+      intakeData = planned.intakeData;
     } else {
       console.warn("intake consumer: poison_intake_state");
       const fallback = poisonFallback(context.intakeStage, extraction);
@@ -105,7 +214,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       intakeData = fallback.intakeData;
     }
 
-    const appointmentAction = planAppointmentAction(context, plan, claim.messageText);
+    const appointmentAction = planAppointmentAction(context, effectivePlan, claim.messageText);
 
     if (appointmentAction.kind === "offer") {
       if (petId === null || (nextStage !== "ready_for_triage" && nextStage !== "appointment_offer")) return "retry";
@@ -161,7 +270,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       return "retry";
     }
 
-    const replyPlan = planIntakeReply(context.intakeStage, plan);
+    const replyPlan = planIntakeReply(context.intakeStage, effectivePlan);
 
     const finalizeInput: FinalizeIntakeQueueJobInput = {
       conversationId,

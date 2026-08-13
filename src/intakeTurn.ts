@@ -147,6 +147,21 @@ function mergeSnapshot(stored: PersistedIntakeData, extraction: IntakeExtraction
   };
 }
 
+export type CanonicalSnapshotResult = { ok: true; value: PersistedIntakeData } | { ok: false };
+
+/**
+ * Fail-closed reader for the no-model consumer path (Task 029): returns a
+ * fresh canonical `PersistedIntakeData` for the already-supported empty
+ * object or a valid persisted snapshot, and `{ ok: false }` for every other
+ * shape. Reuses `parsePersistedSnapshot`'s exact-key/schema/parser trust
+ * boundary rather than duplicating it.
+ */
+export function readCanonicalPersistedSnapshot(intakeData: unknown): CanonicalSnapshotResult {
+  const result = parsePersistedSnapshot(intakeData);
+  if (result.kind === "invalid") return { ok: false };
+  return { ok: true, value: result.kind === "snapshot" ? result.value : emptySnapshot() };
+}
+
 type PetOutcome = { petId: string | null; resolution: PetResolution };
 
 /** Retains an already-selected pet as authoritative; only a same-turn explicit conflicting name yields clarification. */

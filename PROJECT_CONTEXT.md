@@ -289,6 +289,24 @@ The secure Worker baseline is committed on `main`:
   limit. The platform warned that enforcement is not instantaneous and a small
   overage is possible; the dashboard showed $0.26 spend immediately after the
   smoke and comparison run.
+- Task 029 is complete. Production now gives Luna only the exact current
+  inbound message plus at most the single immediately preceding eligible bot
+  question, labelled as untrusted context data; it never sends full history.
+  `human_handoff` and non-completed state version 12+ paths make no model call,
+  repeated no-progress questions terminate in the truthful handoff path, and
+  the canonical persisted snapshot preserves deterministic emergency reply
+  precedence. Claude Opus's post-fix read-only safety/privacy review passed.
+- On 2026-08-14 Codex ran the user-authorized 30-case multi-turn corpus once
+  against Luna and Terra (60 sequential calls, synthetic text only). Both
+  returned 30/30 valid schemas, zero provider failures, 12/12 explicit-red
+  recall, 24/24 explicit-false accuracy, 204/204 unspecified-not-false, and
+  zero unexpected explicit-red signals. Luna matched 51/52 expected leaves
+  and 29/30 exact cases for an estimated $0.011948; Terra matched 52/52 and
+  30/30 for $0.119816. Luna remained the production extractor because it met
+  every mandatory gate at roughly one tenth of Terra's model cost. The one
+  Luna mismatch was complaint-follow-up case `T029-027`, not a safety signal.
+  This is a new `2026-08-13.1` engineering baseline, not veterinarian-approved
+  clinical evidence and not directly comparable to the earlier prompt version.
 
 Verified evidence before the context-system change:
 
@@ -321,10 +339,11 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 028 is complete, including the authorized synthetic Luna/Terra live run
-and the $5 OpenAI hard-limit setup. The next planned technical task is Task 029:
-bounded multi-turn interpretation plus timeout/rate/spend/fallback hardening.
-The live evidence does not change the production model automatically.
+Tasks 028 and 029 are complete, including the authorized synthetic Luna/Terra
+live runs, bounded multi-turn interpretation, no-model budget stops, finite
+no-progress handoff, and the $5 OpenAI hard-limit setup. Luna remains the
+production extractor based on the recorded gates above. The next planned
+technical task is Task 030: safe new-pet and unsupported-media behavior.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production

@@ -102,3 +102,48 @@ beklenen yaprak alanları ayrı ayrı sayar; kırmızı sinyal `true` yakalama v
 belirtilmeyen sinyali yanlışlıkla `false` saymama oranları ayrıca raporlanır.
 Bir canlı çalıştırma yalnızca kanıttır; üretim modeli
 sonuçtan bağımsız olarak Luna kalır.
+
+## Çok turlu model karşılaştırma (canlı eval) — opt-in
+
+`evals/intake-multiturn-live-cases.json` içinde 30 sentetik Türkçe çok turlu
+senaryo bulunur (Task 029): her senaryo bir önceki klinik sorusu ve o soruya
+verilen kısa/eliptik bir yanıttan oluşur. Bunlar da mühendislik
+beklentileridir, bir veteriner tarafından onaylanmamıştır.
+
+Normal `pnpm test` bu senaryolar için hiçbir gerçek OpenAI çağrısı yapmaz.
+Bu ayrı bayrak, yukarıdaki `LIVE_OPENAI_EVAL=1` bayrağından bağımsızdır ve
+onu tek başına etkinleştirmez. Gerçek bir karşılaştırma çalıştırmak için
+`.dev.vars.live-ai` dosyasına ayrıca `LIVE_OPENAI_MULTITURN_EVAL=1` satırını
+ekleyin. Ardından yalnızca şu komutu çalıştırın:
+
+```text
+pnpm eval:openai-multiturn
+```
+
+Komut anahtarı bu izlenmeyen yerel dosyadan yükler; anahtar komut satırına
+yazılmaz. Aynı 13 Ağustos 2026 tarihinde doğrulanan resmi fiyatları kullanır.
+Çalışma, Luna ve Terra'yı sıralı (eşzamanlılık 1) olarak dener, tek
+çalıştırmada 30 × 2 = 60 sağlayıcı çağrısı yapar (en fazla 100 çağrıya izin
+verilir) ve yalnızca toplu metrikler ile başarısız senaryo ID'lerini
+yazdırır. Üretimdeki madde imli güvenlik-sorusu biçimini de kapsar ve beklenen
+alanlar dışında uydurulan açık `true` güvenlik sinyallerini ayrı bir
+yanlış-pozitif metriği olarak sayar. Hiçbir zaman anahtar, mesaj metni,
+önceki soru metni, ham
+sağlayıcı yanıtı veya model çıktısı yazdırmaz. Bir canlı çalıştırma yalnızca
+kanıttır; üretim modeli otomatik değişmez.
+
+14 Ağustos 2026'da kullanıcı onayıyla bu kapı bir kez çalıştırıldı. Luna
+30/30 geçerli şema, 51/52 beklenen alan (%98,08), 12/12 açık kırmızı sinyal,
+204/204 belirtilmeyen-sinyali-false-saymama ve sıfır beklenmeyen açık kırmızı
+sinyal üretti; tahmini maliyeti 0,011948 USD idi. Terra 30/30 geçerli şema ve
+52/52 beklenen alanla tam eşleşti, aynı güvenlik metriklerini korudu ve
+0,119816 USD tuttu. Luna bütün zorunlu kapıları geçtiği ve Terra yaklaşık on
+kat pahalı olduğu için üretim çıkarım modeli Luna olarak bırakıldı. Tek Luna
+farkı `T029-027` şikâyet-takibi vakasındaki bir alan eşleşmesiydi; hiçbir
+güvenlik metriği etkilenmedi. Bu sentetik mühendislik kanıtı veteriner onayı
+değildir.
+
+Bu değerlendirme ayrı OpenAI test projesindeki aylık 5 ABD doları sert harcama
+limitiyle çevrelenmiştir. Limit yalnızca operasyonel bir emniyet ağıdır;
+platform uygulamasında kısa bir gecikme olabileceği için kesin çağrı-başı
+muhasebe veya mutlak sıfır-aşım garantisi değildir.

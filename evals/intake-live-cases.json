@@ -2,7 +2,7 @@
   "$schema_note": "Bu dosya Task 028 kapsamında oluşturulan sentetik/uydurma bir canlı-değerlendirme veri setidir. Hiçbir gerçek kişi, klinik, telefon numarası, hasta veya hayvan bilgisi içermez.",
   "$disclaimer": "expected alanları mühendislik beklentisidir (ground truth), bir veteriner tarafından onaylanmamıştır. Model gerçek sonuçları bu beklentilerden sapabilir; bu sapmalar tek başına bir güvenlik hatası anlamına gelmez, test tasarımcısı tarafından değerlendirilmelidir.",
   "eval_version": "2026-08-13.1",
-  "prompt_version": "2026-08-06.1",
+  "prompt_version": "2026-08-13.1",
   "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
   "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli",
   "case_count": 66,

@@ -1,1 +1,6 @@
 OPENAI_API_KEY=[openai-api-key]
+
+# Opt-in live eval flags (leave unset by default; add only when you intend to
+# run a real, paid evaluation call):
+# LIVE_OPENAI_EVAL=1
+# LIVE_OPENAI_MULTITURN_EVAL=1

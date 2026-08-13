@@ -127,7 +127,8 @@ in order:
 4. A native Web Crypto SHA-256 hash of the domain-separated string
    `vetai-owner:<ownerId>`, sent as OpenAI's `safety_identifier`.
 5. `extractIntakeViaOpenAi` — exactly one call, given only the claimed
-   message text and the hashed identifier.
+   message text, the hashed identifier, and — when eligible (Task 029, see
+   below) — one bounded prior clinic question.
 6. `planIntakeTurn` — deterministic merge, pet resolution, safety
    evaluation, and next-stage selection.
 7. `planAppointmentAction` (`src/appointmentFlow.ts`) — a pure, safety-first
@@ -170,14 +171,46 @@ disposable `vetai-test`; not production**).
 
 ### Data minimization
 
-Only the exact claimed message text is sent to OpenAI — not recent message
-history, not the persisted intake snapshot. The `safety_identifier` sent to
-OpenAI is a lowercase 64-character hex SHA-256 digest derived from the owner
-ID; the raw owner ID, conversation ID, clinic ID, owner name, and phone
-number are never sent in that field or logged. No log line or returned value
-contains message text, identifiers, claim tokens, or provider response
-bodies — only fixed, generic warning strings (`terminal_safety_signal`,
-`poison_intake_state`) are ever emitted, with no interpolated values.
+Only the exact claimed message text, plus — when eligible (Task 029, see
+below) — one bounded prior clinic question, is sent to OpenAI: never the full
+recent message history, and never the persisted intake snapshot. The
+`safety_identifier` sent to OpenAI is a lowercase 64-character hex SHA-256
+digest derived from the owner ID; the raw owner ID, conversation ID, clinic
+ID, owner name, and phone number are never sent in that field or logged. No
+log line or returned value contains message text, identifiers, claim tokens,
+or provider response bodies — only fixed, generic warning strings
+(`terminal_safety_signal`, `poison_intake_state`) are ever emitted, with no
+interpolated values.
+
+### Bounded previous-question context (Task 029)
+
+If the conversation's last stored message is the current owner reply and the
+nearest prior outbound message is a single short eligible clinic question
+(contains `?`, at most 4096 code points), the consumer passes that one
+question through to `extractIntakeViaOpenAi` as bounded context. Only the
+most recent outbound item before the matching final inbound is considered;
+no other history is sent or summarized, and context is never sent when the
+conversation is already at `human_handoff` or `completed`.
+
+### No-model terminal/budget path and no-progress fallback (Task 029)
+
+Two consumer-level paths finalize a turn without calling OpenAI at all, both
+through the same atomic `finalizeIntakeQueueJob` call as a normal plan:
+
+- **Terminal/budget short-circuit**: if the conversation is already at
+  `human_handoff`, or has reached `stateVersion >= 12` and is not
+  `completed`, the consumer builds a `human_handoff` plan straight from the
+  last persisted snapshot (`readCanonicalPersistedSnapshot`, which fails
+  closed on any malformed shape exactly like the poison-snapshot path below)
+  and re-runs the deterministic safety gate over that canonical snapshot
+  before finalizing it — no extraction call is made. Persisted explicit danger
+  therefore keeps the emergency reply precedence.
+- **No-progress fallback**: if the two most recent outbound clinic messages
+  are identical and eligible, and the current turn's extraction carries no
+  actionable fact at all, the consumer forces that turn's plan to
+  `human_handoff` instead of finalizing a plan that would just repeat the
+  same question again. A `completed` conversation is exempt and remains
+  terminal.
 
 ### Poison snapshot -> atomic handoff
 

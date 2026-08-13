@@ -690,6 +690,435 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
   });
 });
 
+describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)", () => {
+  it.each(["evet", "hayır", "hiçbiri", "ilkine evet, diğerlerine hayır"])(
+    "threads exactly one labelled question before the exact current answer %s",
+    async (currentMessage) => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          recent_messages: [
+            { direction: "outbound", content: "Nefes almakta güçlük var mı?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: currentMessage, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: currentMessage }),
+      extraction: extractionJson({ reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: true } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const body = bodyOf(fetchMock, 2);
+    const input = body.input as Array<{ role: string; content: string }>;
+    expect(input).toHaveLength(3);
+    expect(input[1]!.role).toBe("user");
+    expect(input[1]!.content).toContain("Nefes almakta güçlük var mı?");
+    expect(input[1]!.content.toLowerCase()).toContain("untrusted");
+    expect(input[2]).toEqual({ role: "user", content: currentMessage });
+    },
+  );
+
+  it("sends only the nearest prior outbound question and excludes history, identifiers, timestamps, and persisted data", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({ complaint: "SNAPSHOT_MUST_NOT_LEAK" }),
+          },
+          recent_messages: [
+            { direction: "outbound", content: "OLD_OUTBOUND_MUST_NOT_LEAK?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "OLD_INBOUND_MUST_NOT_LEAK", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: "Güncel güvenlik sorusu?", created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const serialized = JSON.stringify(bodyOf(fetchMock, 2));
+    expect(serialized).toContain("Güncel güvenlik sorusu?");
+    for (const forbidden of [
+      "OLD_OUTBOUND_MUST_NOT_LEAK",
+      "OLD_INBOUND_MUST_NOT_LEAK",
+      "SNAPSHOT_MUST_NOT_LEAK",
+      CONVERSATION_ID,
+      CLINIC_ID,
+      OWNER_ID,
+      PET_ID,
+      "2026-01-01T00:00:02Z",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("omits the context item when the nearest prior outbound message is not a question", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          recent_messages: [
+            { direction: "outbound", content: "Teşekkürler, bilgi için bekliyoruz.", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const body = bodyOf(fetchMock, 2);
+    const input = body.input as Array<{ role: string; content: string }>;
+    const userMessages = input.filter((item) => item.role === "user");
+    expect(userMessages).toEqual([{ role: "user", content: MESSAGE_TEXT }]);
+  });
+
+  it.each([
+    ["the final inbound does not match the claimed message", "Nefes almakta güçlük var mı?", "different message"],
+    ["the prior question is over 4096 Unicode code points", `${"a".repeat(4096)}?`, MESSAGE_TEXT],
+  ])("omits context when %s", async (_label, priorQuestion, finalInbound) => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          recent_messages: [
+            { direction: "outbound", content: priorQuestion, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: finalInbound, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect((bodyOf(fetchMock, 2).input as unknown[])).toHaveLength(2);
+  });
+});
+
+describe("processIntakeQueueMessage: Task 029 no-model terminal/budget path (Part 2)", () => {
+  it("human_handoff stage finalizes to human_handoff without any OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, state_version: 5, intake_data: {} }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 6 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_pet_id).toBe(PET_ID);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  it("preserves an already-persisted emergency signal and emergency reply without any OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "human_handoff",
+          pet_id: PET_ID,
+          state_version: 5,
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({
+              reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: true },
+            }),
+          },
+        }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 6 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("emergency_handoff");
+  });
+
+  it("stateVersion at or above the ceiling routes a non-completed, non-handoff stage to human_handoff without any OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID, state_version: 12, intake_data: {} }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 13 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+  });
+
+  it("stateVersion just below the ceiling still performs a normal OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID, state_version: 11 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(true);
+  });
+
+  it("a completed stage is exempt from the stateVersion ceiling and still performs a normal OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "completed", pet_id: PET_ID, state_version: 20 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "completed", state_version: 21 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(true);
+  });
+
+  it("a malformed persisted snapshot on the no-model human_handoff path retries and never finalizes", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, intake_data: { bogus_field: true } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", () => {
+  const REPEATED_QUESTION = "Hangi evcil hayvanınız için yazıyorsunuz? Lütfen adını belirtin.";
+
+  it("two identical eligible prior clinic questions with no actionable extracted fact forces human_handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  it("only one prior eligible question does not trigger the fallback", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
+  });
+
+  it("an actionable extracted fact does not trigger the fallback even with two identical prior questions", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({ pet_name: "Pamuk", reported_safety_signals: ALL_NULL_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
+  });
+
+  it("two different prior questions do not trigger the fallback", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: "Soru A nedir?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: "Soru B nedir?", created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
+  });
+
+  it("two identical non-question outbound messages do not trigger the fallback", async () => {
+    const repeatedStatement = "Lütfen evcil hayvanınızın adını yazın.";
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: repeatedStatement, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: repeatedStatement, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(bodyOf(fetchMock, 3).p_next_stage).not.toBe("human_handoff");
+  });
+
+  it("does not trigger from stale history when the final inbound is not the claimed message", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: "later inbound", created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(bodyOf(fetchMock, 3).p_next_stage).not.toBe("human_handoff");
+  });
+
+  it("never overrides a completed conversation even with repeated questions and no actionable fact", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "completed",
+          pet_id: PET_ID,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "anlamadım", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+      finalize: () => finalizeRow("applied", { intake_stage: "completed", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("completed");
+    expect(finalizeBody.p_reply_category).toBeNull();
+  });
+});
+
 describe("processIntakeQueueMessage: bounded work per attempt", () => {
   it("calls claim, context, OpenAI, and finalize exactly once each on the happy path, and never completes separately", async () => {
     const replySpy = vi.spyOn(intakeReplyModule, "planIntakeReply");

@@ -328,6 +328,13 @@ Kontrollü pilot öncesi planlanan teknik görevler:
 6. Task 033 - gerçek staging kaynakları ve uçtan uca entegrasyon kanıtı.
 7. Task 034 - canary, failure injection, observability ve kontrollü pilot kapısı.
 
+Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
+incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm
+zorunlu güvenlik/şema/sağlayıcı/gecikme kapılarını geçti ve 51/52 beklenen alanı
+eşledi, Terra 52/52 eşledi ancak yaklaşık on kat pahalıydı. Üretim modeli Luna
+olarak kaldı. Sıradaki teknik görev Task 030'dur: yeni hayvan ve desteklenmeyen
+medya için güvenli davranış.
+
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
 zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una

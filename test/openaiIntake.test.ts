@@ -197,6 +197,50 @@ describe("extractIntakeViaOpenAi — request shape", () => {
   });
 });
 
+describe("extractIntakeViaOpenAi — optional previous-question context (Task 029)", () => {
+  it("keeps the exact two-item body when no previous question is passed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(completedResponse(JSON.stringify(VALID_EXTRACTION))));
+    globalThis.fetch = fetchMock;
+
+    await extractIntakeViaOpenAi("my cat won't eat", "conv-hash-abc", ENV, null);
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.input).toHaveLength(2);
+    expect(body.input[0]).toEqual({ role: "system", content: INTAKE_EXTRACTION_SYSTEM_PROMPT });
+    expect(body.input[1]).toEqual({ role: "user", content: "my cat won't eat" });
+  });
+
+  it("adds one labelled untrusted context item before the unchanged current message when a previous question is passed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(completedResponse(JSON.stringify(VALID_EXTRACTION))));
+    globalThis.fetch = fetchMock;
+
+    await extractIntakeViaOpenAi("evet", "conv-hash-abc", ENV, "Nefes almakta güçlük var mı?");
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.input).toHaveLength(3);
+    expect(body.input[0]).toEqual({ role: "system", content: INTAKE_EXTRACTION_SYSTEM_PROMPT });
+    expect(body.input[1].role).toBe("user");
+    expect(body.input[1].content).toContain("Nefes almakta güçlük var mı?");
+    expect(body.input[1].content.toLowerCase()).toContain("untrusted");
+    expect(body.input[2]).toEqual({ role: "user", content: "evet" });
+  });
+
+  it("threads the previous question through the evaluation entry point the same way", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(completedResponse(JSON.stringify(VALID_EXTRACTION))));
+    globalThis.fetch = fetchMock;
+
+    await extractIntakeViaOpenAiForEvaluation("evet", "conv-hash-abc", "gpt-5.6-terra", { OPENAI_API_KEY: "test-openai-key" }, "Bilinç kaybı var mı?");
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.input).toHaveLength(3);
+    expect(body.input[1].content).toContain("Bilinç kaybı var mı?");
+    expect(body.input[2]).toEqual({ role: "user", content: "evet" });
+  });
+});
+
 describe("extractIntakeViaOpenAi — accepted responses", () => {
   it("accepts a completed response with non-message reasoning output plus one valid message, normalized by the Task 007 parser", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
