@@ -271,8 +271,24 @@ The secure Worker baseline is committed on `main`:
   latency, token, and official-price cost metrics without printing messages or
   model output. Task 028 passed 1,100/1,100 normal tests with one live test
   correctly skipped, three Worker dry-runs, secret/config checks, and Codex
-  review. No real OpenAI call, production secret, deployment, or model change
-  occurred; no Opus review was required.
+  review; no production deployment or model change occurred.
+- On 2026-08-13 Codex then ran the user-authorized live gate against a dedicated
+  OpenAI test project using synthetic text only. One Luna smoke request passed,
+  followed by all 66 cases on both Luna and Terra (132 calls) sequentially in
+  about 4 minutes 51 seconds. Both models returned 66/66 runtime-valid schemas
+  with zero provider failures. Luna matched 817/990 expected leaf fields
+  (82.53%). The visible Terra report showed 9/9 explicit red signals, 9/9
+  explicit false signals, 509/510 unspecified signals preserved as not-false,
+  and 15/15 targeted human/medical-advice/appointment intents; its token-based
+  estimate was $0.242272. These are engineering labels, not veterinarian-
+  approved evidence, so production remains Luna pending the reviewed Task 029
+  multi-turn corpus and human safety review.
+- The dedicated OpenAI test project allows only Luna and Terra. Its local key
+  is restricted to model requests, remains only in the ignored
+  `.dev.vars.live-ai`, and the organization now has an enforced $5 monthly hard
+  limit. The platform warned that enforcement is not instantaneous and a small
+  overage is possible; the dashboard showed $0.26 spend immediately after the
+  smoke and comparison run.
 
 Verified evidence before the context-system change:
 
@@ -305,13 +321,10 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 028 is complete: the isolated real-OpenAI local surface and versioned
-Luna/Terra evidence harness passed 1,100 normal tests and all three Worker
-dry-runs without a real provider call. The next planned technical task is Task
-029: bounded multi-turn interpretation plus timeout/rate/spend/fallback
-hardening. The first real step before that implementation is a user-authorized,
-small-budget synthetic Luna/Terra run; its evidence must not change the
-production model automatically.
+Task 028 is complete, including the authorized synthetic Luna/Terra live run
+and the $5 OpenAI hard-limit setup. The next planned technical task is Task 029:
+bounded multi-turn interpretation plus timeout/rate/spend/fallback hardening.
+The live evidence does not change the production model automatically.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production
@@ -400,6 +413,10 @@ occurred.
   spending must be monitored in the separate OpenAI project. Eval/model/prompt
   versions and current prices must be recorded, and no live result may change
   the production model without a separately reviewed task.
+- The dedicated OpenAI test organization currently enforces a $5 monthly hard
+  limit. It is an operational backstop rather than an exact transaction cap:
+  enforcement can lag slightly, and production still needs bounded per-
+  conversation work, Queue retry/DLQ behavior, and monitored usage.
 
 ## Context maintenance
 
