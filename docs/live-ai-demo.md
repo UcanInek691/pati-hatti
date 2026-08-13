@@ -93,7 +93,7 @@ ve [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) resmi
 sayfalarındaki güncel fiyatları yeniden kontrol edin.
 
 Çalışma, Luna ve Terra'yı sıralı (eşzamanlılık 1) olarak dener, tek
-çalıştırmada varsayılan olarak 66 × 2 = 132 sağlayıcı çağrısı yapar. Tekrar
+çalıştırmada varsayılan olarak 73 × 2 = 146 sağlayıcı çağrısı yapar. Tekrar
 sayısı özellikle artırılsa bile en fazla 2000 çağrıya izin verir ve yalnızca
 toplu metrikler ile başarısız senaryo ID'lerini yazdırır — hiçbir zaman
 anahtar, mesaj metni, ham sağlayıcı yanıtı veya model çıktısı
@@ -102,6 +102,14 @@ beklenen yaprak alanları ayrı ayrı sayar; kırmızı sinyal `true` yakalama v
 belirtilmeyen sinyali yanlışlıkla `false` saymama oranları ayrıca raporlanır.
 Bir canlı çalıştırma yalnızca kanıttır; üretim modeli
 sonuçtan bağımsız olarak Luna kalır.
+
+14 Ağustos 2026'da kullanıcı onayıyla aktif `2026-08-14.1` promptu için bu
+kapı çalıştırıldı. Luna 73/73 geçerli şema, 911/1.088 beklenen alan (%83,73),
+10/10 açık kırmızı sinyal, 9/9 açık negatif sinyal ve 565/565
+belirtilmeyen-sinyali-false-saymama üretti; tahmini maliyeti 0,032023 USD idi.
+Terra 73/73 geçerli şema, 901/1.088 beklenen alan (%82,81) ve aynı güvenlik
+metriklerini üretti; tahmini maliyeti 0,319138 USD idi. Luna hem alan
+doğruluğunda az farkla önde hem de yaklaşık on kat ucuz kaldı.
 
 ## Çok turlu model karşılaştırma (canlı eval) — opt-in
 
@@ -132,12 +140,13 @@ yanlış-pozitif metriği olarak sayar. Hiçbir zaman anahtar, mesaj metni,
 sağlayıcı yanıtı veya model çıktısı yazdırmaz. Bir canlı çalıştırma yalnızca
 kanıttır; üretim modeli otomatik değişmez.
 
-14 Ağustos 2026'da kullanıcı onayıyla bu kapı bir kez çalıştırıldı. Luna
+14 Ağustos 2026'da kullanıcı onayıyla aktif `2026-08-14.1` promptu için bu
+kapı çalıştırıldı. Luna
 30/30 geçerli şema, 51/52 beklenen alan (%98,08), 12/12 açık kırmızı sinyal,
 204/204 belirtilmeyen-sinyali-false-saymama ve sıfır beklenmeyen açık kırmızı
-sinyal üretti; tahmini maliyeti 0,011948 USD idi. Terra 30/30 geçerli şema ve
+sinyal üretti; tahmini maliyeti 0,0128972 USD idi. Terra 30/30 geçerli şema ve
 52/52 beklenen alanla tam eşleşti, aynı güvenlik metriklerini korudu ve
-0,119816 USD tuttu. Luna bütün zorunlu kapıları geçtiği ve Terra yaklaşık on
+0,128948 USD tuttu. Luna bütün zorunlu kapıları geçtiği ve Terra yaklaşık on
 kat pahalı olduğu için üretim çıkarım modeli Luna olarak bırakıldı. Tek Luna
 farkı `T029-027` şikâyet-takibi vakasındaki bir alan eşleşmesiydi; hiçbir
 güvenlik metriği etkilenmedi. Bu sentetik mühendislik kanıtı veteriner onayı

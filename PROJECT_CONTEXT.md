@@ -325,9 +325,23 @@ The secure Worker baseline is committed on `main`:
   handoff path instead of repeating indefinitely.
 - Task 030 passed frozen install, strict typecheck, 1,204 tests with 2 opt-in
   live tests skipped, production and live-AI Worker dry-runs, Codex review, and
-  Claude Opus's post-fix read-only safety/privacy review. No live evidence yet
-  covers prompt `2026-08-14.1`; the fixed Turkish copy and clinical routing
-  still require veterinarian and Turkish legal/KVKK approval before production.
+  Claude Opus's post-fix read-only safety/privacy review.
+- After that review, the user authorized fresh live evidence for prompt
+  `2026-08-14.1`. Codex ran the 73-case single-turn and 30-case multi-turn
+  corpora against Luna and Terra: 206 sequential API calls using synthetic text
+  only, with zero provider/schema failures. On the single-turn corpus Luna
+  matched 911/1,088 expected leaves (83.73%) and Terra 901/1,088 (82.81%);
+  both achieved 10/10 explicit-red recall, 9/9 explicit-false accuracy, and
+  565/565 unspecified-not-false. On the multi-turn corpus Luna matched 51/52
+  leaves and 29/30 exact cases, while Terra matched 52/52 and 30/30; both
+  achieved 12/12 explicit-red recall, 24/24 explicit-false accuracy,
+  204/204 unspecified-not-false, and zero unexpected explicit-red signals.
+  Estimated model cost was $0.4930062 total ($0.0449202 Luna and $0.448086
+  Terra). Luna remains the production extractor because it met every mandatory
+  safety gate, slightly led single-turn field accuracy, and cost about one
+  tenth as much. This is synthetic engineering evidence, not veterinarian
+  approval; the fixed Turkish copy and clinical routing still require
+  veterinarian and Turkish legal/KVKK approval before production.
 
 Verified evidence before the context-system change:
 
@@ -364,9 +378,9 @@ Tasks 028 through 030 are complete, including the authorized synthetic
 Luna/Terra live runs, bounded multi-turn interpretation, no-model budget stops,
 finite no-progress/media handoff, safe new-pet routing, unsupported-media
 handling, and the $5 OpenAI hard-limit setup. Luna remains the production
-extractor based on the recorded gates above, but prompt `2026-08-14.1` still
-needs fresh authorized live evidence. The next planned technical task is Task
-031: clinic profile, hours, and after-hours decisions.
+extractor based on the recorded gates above, including fresh authorized live
+evidence for prompt `2026-08-14.1`. The next planned technical task is Task 031:
+clinic profile, hours, and after-hours decisions.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production
