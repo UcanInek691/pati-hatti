@@ -5,6 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "demo": "wrangler dev --config wrangler.demo.toml --local --port 8790",
     "dev": "wrangler dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

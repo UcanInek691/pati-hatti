@@ -38,6 +38,11 @@ Worker `http://localhost:8787` adresinde başlar.
 
 Yerel testte gerçek bir isteği imzalamak için `.dev.vars` içindeki `WHATSAPP_APP_SECRET` ile aynı secret'ı kullanarak `sha256=<hex>` üretmeniz gerekir.
 
+## Yerel Türkçe test ekranı
+
+Gerçek WhatsApp/yapay zekâ/veritabanı olmadan karar mantığını denemek için:
+`pnpm.cmd demo` — bkz. [docs/local-demo.md](docs/local-demo.md).
+
 ## Test
 
 ```bash

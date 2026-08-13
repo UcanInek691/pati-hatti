@@ -1,0 +1,3 @@
+name = "vetai-local-demo"
+main = "src/localDemo.ts"
+compatibility_date = "2025-01-01"

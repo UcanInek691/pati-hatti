@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-10 by Codex.
+Last verified: 2026-08-11 by Codex.
 
 ## Product
 
@@ -251,6 +251,13 @@ The secure Worker baseline is committed on `main`:
   dedicated approval page; the KVKK version is nine-page landscape A4 for
   readable decision tables. Both preserve the source content, include plain-
   language technical glossaries, and were text-verified and visually reviewed.
+- A separate binding-free local Worker demo now lets a non-technical Turkish
+  tester run ten synthetic intake, safety, handoff, and appointment-decision
+  scenarios through the reviewed pure planners. It makes no external call,
+  changes no production route or configuration, and clearly distinguishes
+  simulation from real messaging, notification, persistence, and booking.
+  Task 027 passed 1,047/1,047 tests, both Worker dry-runs, Codex review, and a
+  rendered browser smoke test; no Opus review was needed.
 
 Verified evidence before the context-system change:
 
