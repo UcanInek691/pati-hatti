@@ -1,218 +1,255 @@
-# Current task — 030 Safe new-pet handoff and unsupported-media reply
+# Current task — 031 Clinic profile, hours, and after-hours handoff
 
-Status: `COMPLETE`
+Status: `READY`
 
-Owner: Codex
+Owner: Claude Sonnet
 
 ## Goal
 
-Stop two pilot-blocking silent or misleading paths without adding a pet-
-creation feature or any media analysis:
+Make clinic contact/hours behavior tenant-scoped, deterministic, and changeable
+without modifying the AI prompt:
 
-1. an explicit request to register a new/unregistered pet must use the existing
-   truthful staff-handoff path; and
-2. a supported inbound WhatsApp media type must receive one durable fixed
-   Turkish reply instead of being silently ignored.
+1. store a clinic's public phone/address plus one weekly opening interval per
+   day and optional full-day closure dates;
+2. resolve `open | closed | unconfigured` for the conversation's own clinic
+   in `Europe/Istanbul`; and
+3. personalize only the existing non-emergency `human_handoff` reply with the
+   configured clinic name/phone and truthful open/closed wording.
 
-Reuse the existing signed webhook, tenant-safe ingestion, Queue lease,
-deterministic safety gate, atomic finalizer, outbox, and delivery retry. Never
-send media bytes/metadata to OpenAI or store them in application tables.
+The AI still only extracts facts and intent. It must not choose operating
+policy, claim a clinic is open, create a pet, or book an appointment.
 
 ## Scope
 
 Allowed changes:
 
-- `prompts/intake-extraction-prompt.ts`
-- `evals/intake-live-cases.json`
-- `evals/intake-multiturn-live-cases.json` — prompt-version metadata only
-- `src/whatsappIngest.ts`
-- `src/index.ts` — import/call rename only if the extractor is renamed
-- `src/intakeConsumer.ts`
+- `supabase/migrations/20260814000100_clinic_operations.sql` (new)
+- `supabase/tests/031_clinic_operations.sql` (new, rollback-only)
+- `src/clinicOperations.ts` (new)
 - `src/intakeReply.ts`
-- `test/whatsappIngest.test.ts`
-- `test/index.test.ts`
-- `test/intakeConsumer.test.ts`
+- `src/intakeConsumer.ts`
+- `test/clinicOperations.test.ts` (new)
 - `test/intakeReply.test.ts`
-- `test/intakeExtractionPrompt.test.ts`
+- `test/intakeConsumer.test.ts`
+- `docs/clinic-operations.md` (new)
+- `docs/database-schema.md`
 - `docs/ai-behavior-and-safety.md`
 - `docs/inbound-queue.md`
-- `docs/intake-replies.md`
-- `docs/product-roadmap.md` — Task 030 status only
+- `docs/product-roadmap.md` — Task 031 status only
 - `CURRENT_TASK.md` — implementer fills only **Observed context** and
   **Delivery record**
 
 Do not change:
 
-- the `IntakeExtraction` shape, intent enum, runtime parser, JSON Schema,
-  persisted snapshot schema, safety-signal set, or deterministic safety rules;
-- pet tables, pet-creation RPCs, migrations, RLS, grants, outbox CHECK values,
-  finalizer RPCs, Queue message shape/bindings, delivery sender, Cron, webhook
-  signature/body limits, or any appointment behavior;
-- production Luna selection, 30-second timeout, `store: false`, reasoning
-  settings, safety identifier, dependency graph, lockfile, or environment
-  bindings;
-- existing emergency/human/safety/appointment Turkish copy;
-- any real secret, production resource, deployment, or external service state.
+- the OpenAI prompt/version, model, extraction schema/parser, eval corpora,
+  safety-signal set, deterministic safety precedence, or Luna selection;
+- pet creation, pet association, appointment tables/RPCs/behavior/copy,
+  staff-work-item behavior, outbound delivery, Queue message shape/bindings,
+  Cron, webhook verification/limits, environment bindings, dependencies, or
+  lockfile;
+- the existing emergency, safety-question, unsupported-media, appointment, or
+  generic fallback copy;
+- production resources, secrets, deployments, or external service state.
 
-Do not implement pet creation, media download, OCR, transcription, image/audio
-analysis, WhatsApp interactive controls, a new reply category, a new database
-column, or a generic message abstraction.
+Do not add a generic policy framework, JSON settings bag, dormant
+`appointment_offer` option, notification, map/geocoding integration,
+split-shift editor, overnight interval, partial-day exception, holiday API, or
+admin UI.
 
 ## Verified starting evidence
 
-- Task 029 is committed at `37f279d`; the worktree is clean and
-  `CURRENT_TASK.md` was `COMPLETE` before this contract.
-- `extractTextMessages` currently ignores every non-text item. Valid image or
-  audio webhooks therefore return 200 without persistence, Queue work, or a
-  user reply.
-- The signed text path already gives the required durable semantics:
-  `(phone_number_id, message.id)` dedupe, tenant/account resolution, inbound
-  persistence, versioned Queue job, lease/retry/DLQ, atomic reply outbox, and
-  outbound retry/status tracking.
-- `ingest_whatsapp_text_message` accepts a bounded text value and the Queue job
-  carries only conversation/provider-message IDs. The claim returns the stored
-  text. A fixed internal marker can therefore reuse this path without carrying
-  any media bytes, URL, ID, caption, filename, MIME type, location coordinates,
-  or contact-card data.
-- `finalize_intake_queue_job` already accepts the existing `intake_received`
-  reply category and same-stage updates. Reusing that neutral informational
-  category avoids a migration solely for analytics taxonomy.
-- The extraction contract already has `human_handoff`. The prompt can map an
-  explicit new/unregistered-pet registration request to that existing intent;
-  the unchanged safety gate then creates the existing staff work item and
-  truthful call-the-clinic reply. No new intent or pet mutation is required.
-- Task 029's production prompt version is `2026-08-13.1`. Any prompt text
-  change requires one version bump and both eval corpus metadata values must
-  stay aligned.
-- The last complete verification passed frozen install, typecheck, 1,139
-  normal tests (two opt-in live tests skipped), production/live-AI dry-runs,
-  Opus review, and the user-authorized 30 x 2 live comparison. Luna remains the
-  production extractor.
+- Task 030 and its fresh `2026-08-14.1` live evidence are committed at
+  `b301d9b` and `499a079`; the worktree was clean before this contract.
+- `public.clinics` currently stores only `id`, `name`, and timestamps.
+  Authenticated clinic staff have same-tenant read-only access; only
+  `service_role` may mutate clinic rows.
+- There is no clinic-hours table, closure table, operational-context RPC, or
+  runtime open/closed decision.
+- `planIntakeReply` returns closed fixed copy. The Queue consumer obtains a
+  tenant-scoped `conversationId` and already finalizes the resulting reply
+  atomically through the reviewed outbox path.
+- New/unregistered-pet requests currently become the existing
+  `human_handoff` decision. The reviewed appointment engine refuses to list or
+  hold a slot unless the conversation already has a tenant-owned `pet_id`.
+  Therefore this task must not pretend that a new-pet appointment mode exists.
+- The current generic handoff copy is the safe fallback when contact
+  configuration is absent, malformed, or unavailable.
 
-## Required design
+## Required behavior
 
-### 1. New/unregistered pet requests use the existing handoff
+### 1. Database profile and schedule
 
-Bump `INTAKE_EXTRACTION_PROMPT_VERSION` once to `2026-08-14.1` and add the
-minimum explicit rule:
+The migration must:
 
-- when the owner clearly asks to add/register a pet that is new to or not yet
-  registered with the clinic, emit the existing `human_handoff` intent;
-- this classification authorizes no action: never claim a pet was registered,
-  never create or output an ID, and never treat the stated name as an existing
-  tenant match;
-- still extract an explicitly stated pet name, species, complaint, symptoms,
-  and safety signals normally;
-- a medical-advice request and explicit safety facts retain their existing
-  meanings; the deterministic gate remains authoritative;
-- do not classify ordinary uses of “new” (new symptom, new toy, recently
-  changed behavior) as a pet-registration request.
+- add nullable `contact_phone_e164 text` and `public_address text` columns to
+  `public.clinics`;
+- constrain non-null phone values to canonical E.164
+  (`^\+[1-9]\d{1,14}$`);
+- constrain non-null addresses to trimmed, non-empty text of at most 500
+  characters;
+- create `public.clinic_weekly_hours` with exactly:
+  `clinic_id uuid`, `iso_weekday smallint`, `opens_at time without time
+  zone`, `closes_at time without time zone`, and timestamps;
+- use `(clinic_id, iso_weekday)` as the primary key, restrict weekdays to
+  1..7, require `opens_at < closes_at`, and cascade clinic erasure;
+- create `public.clinic_closure_dates` with `clinic_id uuid`,
+  `closed_on date`, and `created_at`; use `(clinic_id, closed_on)` as the
+  primary key and cascade clinic erasure;
+- enable RLS on both new tables, remove default/public/anon/authenticated
+  privileges, grant authenticated users read-only access through one
+  same-clinic `vetai_private.is_clinic_staff(clinic_id)` SELECT policy per
+  table, and grant `service_role` full table access;
+- alter default table privileges only if an existing repository pattern
+  requires it; do not broaden any role.
 
-Keep the closed output schema unchanged. Update both corpus prompt-version
-fields. Add a small set of single-turn synthetic cases covering at least:
+MVP ceiling: one non-overnight interval per weekday and full-day closures only.
+Do not build split shifts or partial-day exceptions.
 
-- explicit new-pet registration with and without a stated name/species;
-- “this pet is not registered” wording;
-- a new-pet request containing an explicit red safety signal;
-- negative “new symptom/new toy/recent change” examples.
+### 2. Tenant-safe operational-context RPC
 
-These remain engineering labels, not veterinarian-approved evidence.
+Create:
 
-### 2. Recognized unsupported media enters the existing durable path
+`public.get_conversation_clinic_operational_context(
+  p_conversation_id uuid,
+  p_at timestamptz default pg_catalog.now()
+)`
 
-Replace the text-only extractor name with `extractInboundMessages` and preserve
-the existing text behavior byte-for-byte. Recognize only this closed set of
-owner media types as unsupported input:
+It must be `security invoker`, `stable`, `set search_path = ''`, executable
+only by `service_role`, and return exactly one row with:
 
-```text
-audio, contacts, document, image, location, sticker, video
-```
+- `result text`: `configured | unconfigured | not_found`;
+- `clinic_name text`;
+- `contact_phone_e164 text`;
+- `public_address text`;
+- `is_open boolean`.
 
-For one of those types:
+Rules:
 
-- validate the same `phone_number_id`, message `id`, `from`, and `timestamp`
-  bounds used by text messages; malformed recognized media rejects the entire
-  webhook with 400 before persistence;
-- emit the existing `WhatsAppIngestItem` with one exported fixed internal
-  marker as `messageText`;
-- build the canonical hash from the validated envelope identifiers, timestamp,
-  and declared media type, but never inspect/hash the nested media payload;
-- use the existing contact-name fallback/cap and in-payload dedupe rules;
-- identical duplicates collapse; the same provider ID with a conflicting
-  supported kind or text remains fail-closed;
-- ignore status-only events and non-text types outside the closed set (for
-  example reaction/system/unknown) exactly as before.
+1. Null/invalid required input raises before reading data.
+2. Resolve `clinic_id` only through the exact conversation row; the caller
+   never supplies a clinic ID.
+3. Missing conversation returns `not_found` and four null payload fields.
+4. A profile is `configured` only when clinic name and phone are valid and at
+   least one weekly-hours row exists. Otherwise return `unconfigured` with
+   four null payload fields.
+5. Convert `p_at` to `Europe/Istanbul` inside PostgreSQL. `is_open=true`
+   only when the local ISO weekday/time falls inside that day's half-open
+   interval `[opens_at, closes_at)` and there is no matching full-day closure.
+6. A configured clinic with no interval for that weekday is closed.
+7. Never return another tenant's clinic data.
 
-The marker must be a fixed non-empty ASCII string below all current limits and
-must contain no user/provider data. A real text message equal to the internal
-marker may receive the fixed unsupported-media reply; this harmless collision
-is an accepted MVP ceiling and must be documented rather than adding schema.
+Do not use dynamic SQL or `SECURITY DEFINER`.
 
-### 3. Media marker consumes zero paid model work
+### 3. Native-fetch client and strict response parser
 
-In `processIntakeQueueMessage`, detect the exact marker after claim + context
-load and before previous-question selection, safety-identifier hashing, or any
-OpenAI call.
+`src/clinicOperations.ts` must follow the existing native-fetch
+service-role client rules:
 
-- Read `context.intakeData` through `readCanonicalPersistedSnapshot`; malformed
-  state retries and is never finalized as success.
-- Never send the marker, prior question, snapshot, or media information to
-  OpenAI.
-- Preserve the current pet and canonical intake snapshot.
-- Normally keep the current stage and atomically finalize the current lease
-  with the fixed unsupported-media reply below.
-- If the canonical snapshot already contains an explicit `true` emergency
-  signal, preserve the existing deterministic emergency precedence: route a
-  non-completed conversation to `human_handoff` and use the existing exact
-  emergency reply instead. Do not infer a new safety fact from the media.
-- A `completed` context stays completed and produces no new reply; this is a
-  defensive branch because ingestion does not reuse completed conversations.
-- Existing `applied | already_completed | stale_claim` acknowledgement and
-  retry dispositions remain unchanged.
+- HTTPS or loopback HTTP only; no dependency and no logging;
+- call only the fixed RPC above with `p_conversation_id`; runtime uses the
+  RPC's server-side default clock;
+- fail closed on missing configuration, network/non-2xx/JSON errors, arrays of
+  other than one row, non-plain rows, extra/missing keys, unknown results, or
+  incoherent nullability;
+- `not_found | unconfigured | failed` carry no clinic values;
+- `configured` requires a trimmed clinic name of 1..120 code points with no
+  C0 control characters, canonical E.164 phone, null or trimmed address of
+  1..500 code points with no C0 controls, and boolean `isOpen`;
+- return fresh closed-union objects and never expose response/provider bodies.
 
-Use one pure fixed-copy helper in `src/intakeReply.ts`. To avoid a migration,
-return the existing internal `intake_received` category with this exact text:
+### 4. Pure clinic-aware handoff reply
 
-```text
-Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın veya kliniğimizi telefonla arayın. Durum acilse bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.
-```
+Add one pure function in `src/intakeReply.ts` that accepts an existing
+`IntakeReplyPlan` plus the operational-context result:
 
-The copy claims no analysis, upload, notification, or staff action; gives no
-diagnosis/treatment; promises no response time; and includes an immediate
-off-bot emergency escape.
+- it may change only `{ kind: "send", category: "human_handoff" }`;
+- emergency, safety, media, appointment, other categories, and `none` return
+  behaviorally identical fresh values;
+- `unconfigured | not_found | failed` preserve the existing generic
+  `HUMAN_HANDOFF_TEXT`;
+- configured/open uses exactly:
 
-### 4. Durability and privacy
+  `Bu talebi bot üzerinden yanıtlayamam. {clinicName} ile {phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`
 
-- A processed recognized-media webhook persists the fixed marker through the
-  existing RPC and awaits the existing Queue send before returning 200.
-- Exact webhook redelivery and Queue redelivery must not create a second
-  outbound reply.
-- Unknown account, persistence failure, or Queue failure keeps the existing
-  503 behavior.
-- Do not log or persist media payloads, captions, IDs, URLs, filenames, MIME
-  types, coordinates, contact cards, message text, or provider bodies.
-- Do not add a real Meta/OpenAI/Supabase call in tests.
+- configured/closed uses exactly:
 
-## Acceptance criteria
+  `Bu talebi bot üzerinden yanıtlayamam. {clinicName} şu anda kapalı. Acil olmayan konular için çalışma saatleri içinde {phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`
 
-- Existing text/status/mixed webhook tests remain behaviorally unchanged.
-- Each closed-set media type produces one marker item; reaction/system/unknown
-  still produces none.
-- Recognized media with malformed sender/id/timestamp/phone ID returns
-  `{ ok:false }`; nested media fields are neither required nor read.
-- Hash/dedupe tests prove nested media payload changes are ignored, while a
-  conflicting declared type for the same key is rejected.
-- A signed image/audio webhook uses the existing ingest RPC and Queue job,
-  returning 200 only after both succeed; failure paths remain 503.
-- A claimed marker makes zero OpenAI calls, preserves canonical state/pet,
-  emits the exact fixed reply, and finalizes/acks through existing rules.
-- A marker with malformed persisted state retries; sticky explicit emergency
-  state uses the existing emergency reply and handoff precedence.
-- Prompt/schema tests prove the new-pet rule, unchanged closed JSON shape, and
-  aligned `2026-08-14.1` corpus metadata.
-- New-pet positive/negative synthetic cases are present; normal tests make no
-  paid call.
-- No schema/RPC/migration/category/dependency/config/secret/deployment change.
+Only validated clinic configuration may be interpolated. Never interpolate
+owner, pet, complaint, message, address, provider, or model data.
+
+### 5. Queue wiring
+
+In `src/intakeConsumer.ts`:
+
+1. Build the existing plan/base reply first, preserving all safety and
+   appointment precedence.
+2. Only when the base reply is `human_handoff`, call the operational-context
+   client and pass its closed result to the pure clinic-aware reply function.
+3. Operational-context failure or unconfigured data must fall back to the
+   existing generic handoff reply and continue finalization; it must not create
+   a retry/poison loop.
+4. Persist the selected reply through the existing atomic finalizer/outbox.
+5. Emergency copy must never be downgraded or personalized.
+6. No OpenAI request, prompt, safety decision, stage transition, work-item
+   priority, or appointment action may change.
+
+The new lookup is allowed only on turns whose already-planned reply category is
+`human_handoff`; ordinary intake, emergency, media, safety-question, and
+appointment paths must make no operational-context request.
+
+## Required tests
+
+### SQL rollback fixture
+
+The rollback-only SQL test must prove:
+
+- phone/address/schedule/closure constraints;
+- open inside `[opens_at, closes_at)`, closed exactly at `closes_at`, closed
+  before opening, closed on an unscheduled weekday, and closure-date override;
+- `Europe/Istanbul` evaluation with fixed `timestamptz` inputs;
+- configured, unconfigured, and not_found null coherence;
+- two conversations in different clinics never return one another's profile;
+- service-role success, anon/authenticated RPC denial, authenticated same-clinic
+  SELECT only, authenticated write denial, cross-clinic SELECT denial;
+- clinic erasure cascades both schedule tables;
+- zero fixture residue after rollback.
+
+Static function-body regex is not a substitute for the behavioral time cases.
+
+### TypeScript tests
+
+Cover:
+
+- every accepted and rejected RPC response shape and transport/config failure;
+- C0/length/E.164 validation and no logging;
+- pure reply behavior for open, closed, every fallback result, all untouched
+  categories, fresh objects, determinism, and non-mutation;
+- consumer open/closed personalization, fallback on client failure and
+  unconfigured profile, exactly one lookup only for `human_handoff`, no lookup
+  for emergency/ordinary/media/appointment paths, unchanged ack/retry results,
+  and no extra OpenAI call.
+
+## Documentation
+
+`docs/clinic-operations.md` must explain:
+
+- which clinic data is public operational configuration;
+- `Europe/Istanbul` and half-open interval semantics;
+- full-day closure precedence;
+- fail-closed generic-copy behavior;
+- the one-interval/no-overnight MVP ceiling;
+- profile changes affect future handoff replies without prompt edits;
+- this is controlled configuration, not arbitrary AI behavior.
+
+Also state plainly:
+
+- no clinic/admin edit UI exists yet;
+- no appointment is offered to an unregistered pet;
+- changing new-pet handoff into booking needs a separate implemented flow with
+  safe pet creation/verification and explicit appointment confirmation;
+- the new Turkish copy still requires clinic-veterinarian and Turkish
+  legal/KVKK approval before production.
 
 ## Required verification
 
@@ -223,283 +260,34 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
-pnpm exec wrangler deploy --dry-run --config wrangler.live-ai.toml --env live-ai --outdir .wrangler/dry-run-live-ai
 git diff --check
 ```
 
-Do not run `pnpm eval:openai` or `pnpm eval:openai-multiturn`. Sonnet must mark
-live model evidence `NOT RUN`. After code review, Codex may run the existing
-full synthetic Luna/Terra gate only with fresh explicit user authorization.
+Migration apply and `supabase/tests/031_clinic_operations.sql` are
+`NOT RUN` for Sonnet. Codex applies/tests them only on disposable
+`vetai-test` after review.
 
-No commit, push, deploy, plugin installation, database mutation, real service
-call, or external resource change is authorized for the implementer.
+Do not run either paid OpenAI eval: this task does not change the prompt,
+model, extraction contract, or model context.
+
+No commit, push, deploy, database mutation, real service call, plugin
+installation, or external resource change is authorized for the implementer.
 
 ## Review gates
 
-1. Codex reviews the diff and complete webhook -> ingest -> Queue -> marker ->
-   finalizer/outbox call path, reruns all required local checks, and verifies
-   no media or secrets cross a log/model/database boundary.
-2. Claude Opus performs one narrow read-only review of the new prompt rule,
-   emergency precedence, privacy boundary, and exact Turkish media copy. It
-   need not review unrelated RLS, appointments, staff UI, or delivery code.
-3. A live prompt eval requires separate user authorization. AI review and
-   synthetic evidence do not replace veterinarian approval of clinical copy.
-4. Codex records evidence, updates `PROJECT_CONTEXT.md`, and commits only after
-   every applicable gate passes.
+1. Codex reviews the complete migration/RLS/RPC/client/Queue path, runs local
+   checks, and validates the migration plus rollback fixture on disposable
+   `vetai-test`.
+2. Claude Opus performs one read-only review of tenant isolation, hours/time
+   semantics, emergency precedence, and truthful Turkish copy.
+3. Codex applies only verified targeted fixes, updates `PROJECT_CONTEXT.md`,
+   and commits after all gates pass.
+4. Veterinarian and Turkish legal/KVKK review remain external production gates.
 
 ## Observed context
 
-Verified from repository state before editing:
-
-- `git status` was clean; `HEAD` was `b940d34 docs: define safe media and new pet
-  task`, directly on top of Task 029's `37f279d`. No conflict with this
-  contract was found.
-- `rtk` is not installed in this shell (`rtk: command not found`), so native
-  commands were used, as `AGENTS.md` permits.
-- `src/whatsappIngest.ts` skipped every message whose `type` was not `"text"`
-  (`if (messageObj?.type !== "text") continue;`), confirming that a valid image
-  or audio webhook returned 200 with no persistence, Queue job, or reply.
-- `src/index.ts` had exactly one caller, `extractTextMessages(body)` at line 57;
-  a repository-wide search found no other production or demo caller.
-- `claimIntakeQueueJob` returns the stored `messageText`, and the Queue job
-  carries only `conversationId`/`providerMessageId`, so a fixed marker can reuse
-  the path without any media data.
-- `readCanonicalPersistedSnapshot` already provides the fail-closed snapshot
-  reader used by Task 029's no-model path, and `buildHandoffPlan` +
-  `planIntakeReply` already produce the exact existing emergency copy.
-- `IntakeReplyCategory` already contains `intake_received`, so no new category,
-  CHECK value, or migration is needed.
-- `prompts/intake-extraction-prompt.ts` was at version `2026-08-13.1`, matching
-  the `prompt_version` field in both eval corpora.
-- Constraint found in an out-of-scope test: `test/liveOpenAiEval.test.ts:264`
-  asserts every single-turn case id matches `/^T028-\d{3}$/` and that
-  `case_count === cases.length`. New cases therefore continue the `T028-0xx`
-  numbering (`T028-067`…`T028-072`) rather than using a `T030-` prefix.
+To be filled by the implementer from repository evidence.
 
 ## Delivery record
 
-### Changed files
-
-Product code:
-
-- `prompts/intake-extraction-prompt.ts` — version `2026-08-13.1` →
-  `2026-08-14.1` and one new "New or unregistered pets" rule mapping an explicit
-  registration request onto the existing `human_handoff` intent. Output contract
-  untouched.
-- `src/whatsappIngest.ts` — `extractTextMessages` renamed to
-  `extractInboundMessages`; exported `UNSUPPORTED_MEDIA_MARKER`
-  (`"__vetai_unsupported_media__"`); closed media set `audio, contacts,
-  document, image, location, sticker, video`.
-- `src/index.ts` — import and call rename only.
-- `src/intakeReply.ts` — added `UNSUPPORTED_MEDIA_TEXT` and the pure
-  `planUnsupportedMediaReply()` returning the existing `intake_received`
-  category.
-- `src/intakeConsumer.ts` — added the marker branch after claim + context load
-  and before previous-question selection, safety-identifier hashing, and any
-  OpenAI call.
-
-Evals: `evals/intake-live-cases.json` (prompt/eval version `2026-08-14.1`,
-`case_count` 66 → 73, seven new synthetic cases),
-`evals/intake-multiturn-live-cases.json` (`prompt_version` only).
-
-Tests: `test/whatsappIngest.test.ts`, `test/index.test.ts`,
-`test/intakeConsumer.test.ts`, `test/intakeReply.test.ts`,
-`test/intakeExtractionPrompt.test.ts`.
-
-Docs: `docs/ai-behavior-and-safety.md`, `docs/inbound-queue.md`,
-`docs/intake-replies.md`, `docs/product-roadmap.md`, and this file's two
-implementer sections.
-
-### Acceptance criteria satisfied
-
-- Existing text/status/mixed webhook tests are behaviorally unchanged; only the
-  extractor identifier was renamed. The one previously text-only assertion that
-  used `type: "image"` to prove "unsupported types are ignored" now covers
-  `reaction | system | unknown | button`, which is the same guarantee for types
-  that remain outside the closed set.
-- Each of the seven closed-set media types produces exactly one marker item;
-  reaction/system/unknown/button produce none.
-- Recognized media with a malformed sender, empty or oversized message id,
-  malformed timestamp, or malformed phone-number id returns `{ ok: false }`;
-  nested media fields are neither required nor read.
-- Hash/dedupe: a bare `image` message and one carrying
-  `{ id, mime_type, sha256, caption }` produce the identical `payloadHash`;
-  identical duplicates collapse; a conflicting declared type or a text body for
-  the same `(phone_number_id, message.id)` key returns `{ ok: false }`.
-- A signed image/audio webhook uses the existing
-  `ingest_whatsapp_text_message` RPC and the existing versioned Queue job and
-  returns 200 only after both succeed; unknown account and Queue send failure
-  return 503; malformed media returns 400 with zero fetch and zero Queue calls.
-- A claimed marker makes zero OpenAI calls, preserves the canonical snapshot,
-  stage, and `petId`, emits the exact fixed reply under `intake_received`, and
-  keeps the existing `applied | already_completed | stale_claim` → ack and
-  `stale_state`/failure → retry dispositions.
-- A marker with a malformed persisted snapshot retries after exactly two fetch
-  calls and never finalizes; an already-persisted explicit emergency signal
-  produces `human_handoff` plus the existing `emergency_handoff` copy; a
-  `completed` conversation stays completed with a null reply.
-- Prompt tests assert the new-pet rule, its no-authorization wording, the
-  negative "new symptom / new toy" exclusion, the unchanged closed intent enum
-  and field list, version `2026-08-14.1`, and matching `prompt_version` plus
-  `case_count === cases.length` in both corpora.
-- New-pet positive and negative synthetic cases are present and asserted by
-  category; the normal test run makes no paid call (both live tests skipped).
-- No schema, RPC, migration, reply category, dependency, config, secret, or
-  deployment change.
-
-### Checks run
-
-```text
-pnpm install --frozen-lockfile          PASS (already up to date, lockfile unchanged)
-pnpm typecheck                          PASS
-pnpm test                               PASS — 30 files, 1197 passed, 2 skipped (1199)
-pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run                                        PASS
-pnpm exec wrangler deploy --dry-run --config wrangler.live-ai.toml --env live-ai --outdir .wrangler/dry-run-live-ai   PASS
-git diff --check                        PASS (no whitespace errors)
-```
-
-The two skipped tests are the existing opt-in live gates. Test count moved from
-the 1,139-normal-test baseline to 1,197 passed with the same 2 skipped.
-
-### Not run, and why
-
-- **Live model evidence: `NOT RUN`.** `pnpm eval:openai` and
-  `pnpm eval:openai-multiturn` were not executed, as the contract requires. The
-  prompt is now `2026-08-14.1`, so the recorded `2026-08-13.1` Luna/Terra
-  results do **not** cover the new-pet rule. Any live gate needs fresh explicit
-  user authorization.
-- No commit, push, deploy, plugin install, database mutation, migration, real
-  Meta/OpenAI/Supabase call, or external resource change was performed.
-- No database or RLS check was run; this task adds no SQL.
-
-### Known limitations
-
-- **Marker collision (accepted MVP ceiling, per contract):** a real text message
-  whose body is exactly `__vetai_unsupported_media__` receives the fixed
-  unsupported-media reply. Documented in `docs/ai-behavior-and-safety.md` and
-  `docs/inbound-queue.md`; no schema was added to distinguish it.
-- **Category reuse:** the media reply shares the `intake_received` category, so
-  that value alone cannot distinguish a normal receipt from a media reply in
-  analytics. This was the contract's explicit trade to avoid a migration.
-- **Finite media escalation:** the marker branch remains before previous-
-  question selection and every paid operation, but it now enforces Task 029's
-  existing finite-work boundary locally. An existing `human_handoff` stage or
-  state version 12+ receives the truthful handoff reply, while persisted
-  emergency and completed-terminal precedence remain unchanged.
-- **New corpus expectations omit `missing_information`.** Scoring is per
-  expected leaf, so omission is valid, but it makes these seven cases
-  intentionally narrower than the older ones; guessing that field for a
-  registration request would have added noise, not signal. Each new case carries
-  a `note` saying so.
-- New case ids use the `T028-0xx` prefix because the out-of-scope
-  `test/liveOpenAiEval.test.ts` id regex requires it. The `category` values and
-  notes identify them as Task 030 cases.
-- Eval expectations remain engineering labels, not veterinarian-approved
-  clinical evidence. The Turkish media copy still needs clinic-veterinarian and
-  Turkish legal/privacy approval before production use.
-- `src/index.ts` still names its local variable `textExtraction`; the contract
-  allowed an import/call rename only, so the now-slightly-stale local name was
-  left alone.
-
-### Risks Codex or Opus should inspect
-
-1. The conservative runtime pet boundary depends on the model producing a
-   human-handled classification. The unchanged closed schema has no independent
-   registration flag, so a model misclassification remains an accepted risk
-   pending fresh live eval evidence.
-2. The exact Turkish copy in `src/intakeReply.ts` — it must claim no analysis,
-   upload, notification, or staff action, and it is not yet veterinarian
-   approved.
-3. The privacy boundary in `src/whatsappIngest.ts`: only validated envelope
-   identifiers, the timestamp, the fixed marker, and the declared type enter the
-   canonical hash. Confirm no nested media field can reach a hash, log, model,
-   or database column.
-4. Whether bumping `eval_version` on the single-turn corpus (its case set
-   changed) while leaving the multi-turn corpus's `eval_version` at
-   `2026-08-13.1` is the record you want; the contract limited the multi-turn
-   file to prompt-version metadata only.
-5. Prompt-rule wording: whether mapping registration requests onto
-   `human_handoff` risks over-triggering on adjacent phrasing (adoption,
-   ownership transfer, second-opinion) that the seven synthetic cases do not
-   cover.
-
-The multi-turn corpus still has `eval_version: 2026-08-13.1` while its
-`prompt_version` metadata follows the active `2026-08-14.1` prompt. The
-recorded 30-case Luna/Terra results in `PROJECT_CONTEXT.md` explicitly remain a
-`2026-08-13.1` baseline and are not evidence for the revised prompt.
-
-## Codex review record
-
-### Decision
-
-`PASS` on 2026-08-14. The implementation scope, signed-webhook
-path, durable ingestion/Queue/finalization path, fixed Turkish reply, and
-zero-model media branch passed Codex review. The mandatory narrow Claude Opus
-review found one blocking finite-escalation regression; Codex applied the
-targeted fix and the narrow Opus recheck passed.
-
-### Findings and targeted fixes
-
-1. **Fixed — new-pet name could bind to an existing tenant pet.** The prompt
-   classified registration correctly, but `planIntakeTurn` could still exact-
-   match the stated name or use its one-pet fallback. `src/intakeConsumer.ts`
-   now applies a conservative runtime boundary to human-handled turns
-   (`human_handoff`, explicit human request, or `medical_advice_request`): only
-   an already-selected conversation pet is preserved, while current-turn text
-   cannot introduce a pet association. This also covers combined registration
-   + explicit-human and registration + medical-advice messages without adding
-   a schema field or text heuristic. Three direct regression tests plus a
-   combined medical-advice regression prove the boundary.
-2. **Fixed — combined registration + medical advice was prompt-ambiguous.** The
-   prompt now explicitly preserves `medical_advice_request`; synthetic case
-   `T028-073` and a prompt assertion lock the precedence. The three new symptom
-   expectations were aligned with the prompt's exact-as-reported contract.
-3. **Clarified — privacy wording.** Documentation and source comments now say
-   nested media fields are not inspected or extracted. This is precise: the
-   signed request body is necessarily read and JSON-parsed, but caption/media
-   id/MIME/location/contact-card fields never enter the canonical hash,
-   application item, RPC body, Queue body, logs, model input, or stored reply.
-
-The marker remains before previous-question selection and all paid work. After
-Claude Opus identified that this placement bypassed Task 029's finite-work
-ceiling, the branch was corrected locally: an existing handoff stage or state
-version 12+ now receives the truthful handoff reply. A persisted explicit
-emergency still wins, and completed remains terminal with no reply.
-
-### Verification rerun by Codex
-
-- `pnpm.cmd install --frozen-lockfile` — PASS, already up to date.
-- `pnpm.cmd typecheck` — PASS.
-- `pnpm.cmd test` — PASS, 1,204 passed and 2 opt-in live tests skipped across
-  30 files.
-- Production `wrangler deploy --dry-run` — PASS; existing Queue/timezone/Graph
-  API bindings unchanged.
-- Live-AI config `wrangler deploy --dry-run` — PASS; no bindings found, as
-  intended.
-- `git diff --check` — PASS; only line-ending advisories.
-
-No database migration was added, so no database validation applies. No live
-OpenAI eval, commit, push, deploy, Meta call, Supabase mutation, or Queue
-mutation was performed. Prompt version `2026-08-14.1` therefore still needs a
-fresh explicitly authorized live eval after review; Task 029's earlier numbers
-are not evidence for this prompt revision.
-
-### Claude Opus review follow-up
-
-The first narrow read-only review returned `CHANGES_REQUIRED` for one blocking
-issue: the marker branch returned before Task 029's state-version/handoff
-ceiling, allowing media-only conversations to repeat indefinitely without a
-staff work item. The fix adds the existing ceiling condition to the marker
-branch without moving it past any paid work. Regression tests cover both state
-version 12 and an already-`human_handoff` conversation; both finalize to the
-truthful handoff reply with zero OpenAI calls.
-
-Non-blocking review notes were also recorded: the model-classification
-dependency is explicit in the safety documentation; the delivery record now
-says 66 → 73 / seven cases; and the earlier 30-case multi-turn results remain
-explicitly identified as a `2026-08-13.1` baseline rather than evidence for the
-active `2026-08-14.1` prompt. Claude Opus's narrow read-only recheck returned
-`PASS`: the finite escalation, emergency precedence, completed terminal path,
-zero-model guarantee, regression tests, classification limitation, case count,
-and baseline distinction were all confirmed. This review does not replace
-veterinarian or Turkish legal/KVKK approval.
+To be filled by the implementer.
