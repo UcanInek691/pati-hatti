@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-13 by Codex.
+Last verified: 2026-08-14 by Codex.
 
 ## Product
 
