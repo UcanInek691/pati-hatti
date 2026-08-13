@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { extractIntakeViaOpenAi, OPENAI_INTAKE_MODEL } from "../src/openaiIntake";
+import { extractIntakeViaOpenAi, extractIntakeViaOpenAiForEvaluation, EVALUATION_MODELS, OPENAI_INTAKE_MODEL } from "../src/openaiIntake";
 import { INTAKE_EXTRACTION_SYSTEM_PROMPT } from "../prompts/intake-extraction-prompt";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
@@ -96,6 +96,16 @@ describe("extractIntakeViaOpenAi — request shape", () => {
     expect(body.input).toHaveLength(2);
     expect(body.input[0]).toEqual({ role: "system", content: INTAKE_EXTRACTION_SYSTEM_PROMPT });
     expect(body.input[1]).toEqual({ role: "user", content: "my cat won't eat" });
+  });
+
+  it("bounds the request with a 30-second AbortSignal timeout", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(completedResponse(JSON.stringify(VALID_EXTRACTION))));
+    globalThis.fetch = fetchMock;
+
+    await extractIntakeViaOpenAi("hello", "conv-hash-abc", ENV);
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("does not trim, rewrite, or concatenate the message", async () => {
@@ -245,6 +255,25 @@ describe("extractIntakeViaOpenAi — generic failure on untrusted/malformed resp
     expect(result).toEqual({ ok: false });
   });
 
+  it("fails closed when the request aborts (timeout)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        (init.signal as AbortSignal).addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+    const controller = new AbortController();
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = () => controller.signal;
+    try {
+      const pending = extractIntakeViaOpenAi("hello", "conv-hash", ENV);
+      controller.abort();
+      const result = await pending;
+      expect(result).toEqual({ ok: false });
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
+
   it("fails closed on a non-2xx response without reading the body", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse({ error: "nope" }, 500));
     const result = await extractIntakeViaOpenAi("hello", "conv-hash", ENV);
@@ -333,6 +362,91 @@ describe("extractIntakeViaOpenAi — generic failure on untrusted/malformed resp
     globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(completedResponse(JSON.stringify(invalid))));
     const result = await extractIntakeViaOpenAi("hello", "conv-hash", ENV);
     expect(result).toEqual({ ok: false });
+  });
+});
+
+describe("extractIntakeViaOpenAiForEvaluation — closed model set", () => {
+  it("exposes exactly the reviewed Luna/Terra set", () => {
+    expect([...EVALUATION_MODELS].sort()).toEqual(["gpt-5.6-luna", "gpt-5.6-terra"]);
+  });
+
+  it("rejects an unsupported model without calling fetch", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+
+    const result = await extractIntakeViaOpenAiForEvaluation(
+      "hello",
+      "conv-hash",
+      "gpt-4o" as unknown as "gpt-5.6-luna",
+      { OPENAI_API_KEY: "test-openai-key" },
+    );
+    expect(result.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["gpt-5.6-luna", "gpt-5.6-terra"] as const)("sends %s in the request body and returns it on success", async (model) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(completedResponse(JSON.stringify(VALID_EXTRACTION))),
+    );
+    globalThis.fetch = fetchMock;
+
+    const result = await extractIntakeViaOpenAiForEvaluation("hello", "conv-hash", model, {
+      OPENAI_API_KEY: "test-openai-key",
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.model).toBe(model);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.extraction).toEqual(VALID_EXTRACTION);
+      expect(result.model).toBe(model);
+      expect(typeof result.elapsedMs).toBe("number");
+      expect(result.usage).toBeNull();
+    }
+  });
+
+  it("parses usage totals when the provider reports them", async () => {
+    const payload = completedResponse(JSON.stringify(VALID_EXTRACTION)) as Record<string, unknown>;
+    payload.usage = { input_tokens: 120, output_tokens: 40, total_tokens: 160 };
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await extractIntakeViaOpenAiForEvaluation("hello", "conv-hash", "gpt-5.6-terra", {
+      OPENAI_API_KEY: "test-openai-key",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 40, totalTokens: 160 });
+    }
+  });
+
+  it.each([
+    { input_tokens: -1, output_tokens: 40, total_tokens: 39 },
+    { input_tokens: 120.5, output_tokens: 40, total_tokens: 160.5 },
+  ])("ignores invalid provider usage metadata without weakening a valid extraction", async (usage) => {
+    const payload = completedResponse(JSON.stringify(VALID_EXTRACTION)) as Record<string, unknown>;
+    payload.usage = usage;
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await extractIntakeViaOpenAiForEvaluation("hello", "conv-hash", "gpt-5.6-luna", {
+      OPENAI_API_KEY: "test-openai-key",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.usage).toBeNull();
+  });
+
+  it("fails closed on a missing API key without calling fetch, still returning model/elapsedMs", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+
+    const result = await extractIntakeViaOpenAiForEvaluation("hello", "conv-hash", "gpt-5.6-luna", {
+      OPENAI_API_KEY: undefined,
+    });
+    expect(result).toEqual({ ok: false, model: "gpt-5.6-luna", elapsedMs: expect.any(Number) });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

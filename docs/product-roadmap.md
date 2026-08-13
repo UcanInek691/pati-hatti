@@ -132,7 +132,7 @@ Teslimler:
 - açık "mesaj OpenAI'ye gönderilir, gerçek veri girmeyin" uyarısı;
 - istek sayısı ve mesaj uzunluğu tavanı;
 - OpenAI timeout ve genel hata yanıtı;
-- Luna/Terra karşılaştırmalı, sentetik JSONL eval çalıştırıcısı;
+- Luna/Terra karşılaştırmalı, sentetik JSON eval çalıştırıcısı;
 - şema başarısı, semantik eşleşme, güvenlik sinyali recall, latency ve token
   maliyeti raporu;
 - model/prompt/eval sürüm kaydı.

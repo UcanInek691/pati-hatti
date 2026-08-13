@@ -258,6 +258,21 @@ The secure Worker baseline is committed on `main`:
   simulation from real messaging, notification, persistence, and booking.
   Task 027 passed 1,047/1,047 tests, both Worker dry-runs, Codex review, and a
   rendered browser smoke test; no Opus review was needed.
+- A second, isolated local Worker can send synthetic Turkish free text through
+  the real reviewed OpenAI extraction adapter and existing pure planners while
+  exposing no Supabase, Meta, Queue, Cron, or production binding. It accepts
+  only Luna or Terra, validates browser-returned state before a paid call,
+  limits one browser session to 20 calls, applies a 30-second provider timeout,
+  renders remote values only with `textContent`, and never claims a real side
+  effect. The production model remains Luna.
+- Task 028 also adds a versioned 66-case synthetic engineering corpus and an
+  explicitly opt-in, sequential Luna/Terra evaluator. It reports schema,
+  expected-field, critical-signal recall, unknown-signal fail-open, intent,
+  latency, token, and official-price cost metrics without printing messages or
+  model output. Task 028 passed 1,100/1,100 normal tests with one live test
+  correctly skipped, three Worker dry-runs, secret/config checks, and Codex
+  review. No real OpenAI call, production secret, deployment, or model change
+  occurred; no Opus review was required.
 
 Verified evidence before the context-system change:
 
@@ -290,19 +305,18 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Task 027 is complete and committed: the binding-free deterministic Turkish
-local demo passed 1,047 tests, both Worker dry-runs, Codex review, and a live
-browser smoke test. The reviewed product, integration, model-evaluation,
-operations, cost, and tariff sequence is now recorded in
-`docs/product-roadmap.md`.
+Task 028 is complete: the isolated real-OpenAI local surface and versioned
+Luna/Terra evidence harness passed 1,100 normal tests and all three Worker
+dry-runs without a real provider call. The next planned technical task is Task
+029: bounded multi-turn interpretation plus timeout/rate/spend/fallback
+hardening. The first real step before that implementation is a user-authorized,
+small-budget synthetic Luna/Terra run; its evidence must not change the
+production model automatically.
 
-Task 028 is ready for Sonnet implementation. It adds an isolated local-only
-real-OpenAI chat/eval surface for synthetic data and a bounded Luna-versus-Terra
-evidence harness. It does not change the production model, WhatsApp/Supabase/
-Queue runtime, safety rules, or production resources. Production release
-remains blocked on the human approvals and operational setup in
-`docs/production-readiness.md`; no real notification, production resource,
-secret configuration, production migration, or deployment has occurred.
+Production release remains blocked on the human approvals and operational
+setup in `docs/production-readiness.md`; no real notification, production
+resource, secret configuration, production migration, or deployment has
+occurred.
 
 ## Durable safety invariants
 
@@ -381,6 +395,11 @@ secret configuration, production migration, or deployment has occurred.
   existing hold is not released or extended by that path. It may remain until
   its fixed expiry and is then reclaimable; a started slot with a still-live
   hold follows the same bounded self-healing behavior.
+- Real OpenAI demos and evals use only synthetic text and a dedicated ignored
+  local secret file. Their browser call counter is not a billing hard stop;
+  spending must be monitored in the separate OpenAI project. Eval/model/prompt
+  versions and current prices must be recorded, and no live result may change
+  the production model without a separately reviewed task.
 
 ## Context maintenance
 

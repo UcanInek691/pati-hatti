@@ -43,6 +43,11 @@ Yerel testte gerçek bir isteği imzalamak için `.dev.vars` içindeki `WHATSAPP
 Gerçek WhatsApp/yapay zekâ/veritabanı olmadan karar mantığını denemek için:
 `pnpm.cmd demo` — bkz. [docs/local-demo.md](docs/local-demo.md).
 
+## Canlı yapay zekâ test ekranı
+
+Sentetik metinle gerçek OpenAI çağrısı deneyip planlayıcı sonucunu görmek
+için: `pnpm.cmd live-demo` — bkz. [docs/live-ai-demo.md](docs/live-ai-demo.md).
+
 ## Test
 
 ```bash

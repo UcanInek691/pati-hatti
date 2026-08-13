@@ -7,7 +7,9 @@
   "scripts": {
     "demo": "wrangler dev --config wrangler.demo.toml --local --port 8790",
     "dev": "wrangler dev",
+    "live-demo": "wrangler dev --config wrangler.live-ai.toml --env live-ai --local --port 8791",
     "test": "vitest run",
+    "eval:openai": "node --env-file=.dev.vars.live-ai node_modules/vitest/vitest.mjs run test/liveOpenAiEval.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
