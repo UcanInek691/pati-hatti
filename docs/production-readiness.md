@@ -99,6 +99,12 @@ every box in this section is checked.
 
 ## 5. Controlled smoke journey
 
+Before any step below runs against production, the isolated staging
+environment in [`staging-runbook.md`](staging-runbook.md) must have already
+passed end to end with synthetic data, including its own Coexistence
+evidence. Staging failures or an `UNAVAILABLE` Coexistence result block this
+section.
+
 Perform steps 1–8 against production with synthetic, non-patient data only
 (a test phone number and a fabricated pet/complaint) — never a real owner's
 data. Steps 9–10 are failure injection and must run only in an isolated

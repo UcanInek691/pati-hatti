@@ -1,6 +1,6 @@
 # Current task — 034 Real staging and same-number WhatsApp evidence
 
-Status: `READY`
+Status: `IN_REVIEW`
 
 Owner: Claude Sonnet (repository preparation), then Codex (review and live execution)
 
@@ -97,7 +97,7 @@ closed sections:
 3. **Supabase** — create/select a dedicated staging project; link only after
    showing the exact project ref; run migration dry-run then migration-history
    push; compare migration list; never run rollback fixtures or production data.
-4. **Cloudflare** — create the three exact staging Queues, set the eight secret
+4. **Cloudflare** — create the three exact staging Queues, set the seven secret
    bindings interactively, deploy only `vetai-staging`, and verify bindings,
    Cron, `/health`, and `/ready`.
 5. **Synthetic prerequisites** — one fabricated clinic/account/staff user/pet,
@@ -208,13 +208,144 @@ logic is out of scope.
 
 ## Observed context
 
-To be filled by the implementer from repository evidence before editing.
+- Repository was clean at start (`git status --short` empty); last commit
+  `9ee9afc docs: define real staging evidence task`.
+- Production `wrangler.toml`: Worker `vetai`, `main = "src/index.ts"`,
+  `compatibility_date = "2025-01-01"`, `[vars]` = `APP_TIMEZONE`,
+  `WHATSAPP_GRAPH_API_VERSION`; producer/consumer bindings for
+  `vetai-intake` → `vetai-intake-dlq` → `vetai-intake-terminal-dlq` with
+  `max_batch_size=1`, `max_batch_timeout=5`, `max_retries=3`,
+  `retry_delay=120`/`300`; Cron `* * * * *`. `wrangler.staging.toml` mirrors
+  this exactly with staging Worker/queue names, per the contract.
+- `src/env.ts`, `src/readiness.ts`, and a complete `env.*` usage scan show
+  exactly **seven** runtime-required
+  non-`[vars]` values (`WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
+  `OPENAI_API_KEY`, `WHATSAPP_ACCESS_TOKEN`), matching
+  `docs/production-readiness.md` §3 and `.dev.vars.example`. Codex corrected
+  the Phase A contract from eight to seven during review; no eighth runtime
+  value exists.
+- `docs/product-roadmap.md`'s Task 033 status paragraph was stale relative to
+  `PROJECT_CONTEXT.md` (Task 033 is recorded complete, validated on
+  disposable `vetai-test`, 1,336/1,336 tests, Codex + Opus review passed);
+  updated in place along with a new Task 034 in-progress paragraph.
+- Confirmed routes in `src/index.ts`: `GET /health`, `GET /ready`,
+  `GET|POST /webhooks/whatsapp`, `/staff*`.
+- `supabase/migrations/` currently ends at
+  `20260814000300_selective_automation.sql`; `supabase/tests/` currently
+  ends at `033_selective_automation.sql` — used as the exact reference point
+  in the runbook's Supabase migration-list comparison step.
 
 ## Delivery record
 
-To be filled by the implementer after Phase A implementation and local
-verification. All live checks must be reported `NOT RUN — reserved for Codex`.
+### Changed files
+
+- `wrangler.staging.toml` (new) — standalone staging config, no source/route/
+  secret/production Queue name.
+- `docs/staging-runbook.md` (new) — Turkish executable checklist, all 13
+  contract sections present, every live item unchecked (`[ ]`), no live
+  claim.
+- `docs/production-readiness.md` — one paragraph added to §5 requiring
+  staging to pass first, cross-linking the new runbook.
+- `docs/product-roadmap.md` — Task 033 status paragraph corrected to
+  "complete/validated"; new Task 034 repository-preparation-in-progress
+  paragraph added. No other text changed.
+- `README.md` — one link added to `docs/staging-runbook.md`.
+- `CURRENT_TASK.md` — this Observed context and Delivery record only.
+
+No source, prompt, migration, SQL fixture, test, dependency, lockfile,
+existing Wrangler config, environment type, Queue consumer, reply text, or
+KVKK/veterinary approval package was touched.
+
+### Acceptance criteria satisfied (repository gate)
+
+- Staging config is syntactically valid and uses only staging resource
+  names — confirmed by the staging Wrangler dry-run (see below).
+- Production `wrangler.toml` and runtime behavior are unchanged (not
+  edited; production dry-run output unchanged from baseline expectations).
+- Runbook contains all 13 required sections and marks no live checkbox
+  complete.
+- No secret or real identifier appears in the diff (`git diff` for the four
+  changed tracked files scanned for secret/token/key/password patterns:
+  none found; new files contain only placeholder/redacted-alias examples).
+- No new code, dependency, test framework, migration, or schema change.
+
+### Exact checks and results
+
+```text
+pnpm install --frozen-lockfile   → "Already up to date", exit 0
+pnpm typecheck                   → tsc --noEmit, no output, exit 0
+pnpm test                        → 32 test files passed, 1336 passed / 2 skipped (1338 total), exit 0
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → Worker "vetai", queue "vetai-intake" binding, exit 0
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run
+                                  → Worker "vetai-staging", queue "vetai-intake-staging" binding, exit 0
+git diff --check                 → only LF/CRLF line-ending warnings, no whitespace errors, exit 0
+```
+
+### Live checks
+
+All Meta/Cloudflare/Supabase live steps in `docs/staging-runbook.md`
+(§§2–10, §12): `NOT RUN — reserved for Codex`. No Cloudflare, Supabase,
+Meta, or OpenAI resource was created, modified, or called. No deploy,
+remote migration, or secret mutation occurred.
+
+### Known limitations / risks for Codex to inspect
+
+- The runbook's §10 Coexistence steps (Business App inbox visibility,
+  `smb_message_echoes` behavior, no-loop confirmation) are necessarily
+  written from documentation and code reading, not from an authenticated
+  Meta session — Codex must treat every expected behavior there as a
+  hypothesis to empirically confirm, not a given.
+- The runbook assumes the designated test sender and Meta test WABA number
+  are already available to Codex; provisioning/selecting that number is a
+  Phase B action outside this task's allowed file list.
+- `wrangler queues create` for the three staging queues must run before
+  `wrangler deploy --config wrangler.staging.toml` (queue bindings do not
+  auto-provision the underlying resource); the runbook §4 sequences this
+  correctly but Codex should confirm current Wrangler behavior has not
+  changed.
 
 ## Codex review record
 
-Reserved for Codex.
+Phase A repository preparation reviewed with minimum corrections:
+
+- corrected the task's mistaken secret count from eight to the seven values
+  actually used by `Env`, `checkReadiness`, `.dev.vars.example`, and the full
+  `env.*` usage scan;
+- corrected the cost preflight: Cloudflare Queues is available on Workers
+  Free with 10,000 operations/day and fixed 24-hour retention; Workers Paid
+  remains an optional minimum-$5 tier with longer retention, not a staging
+  prerequisite;
+- removed the misleading notion of a Cloudflare deployment region and kept
+  the real Supabase region plus Cloudflare account/plan checks;
+- clarified the Task 033 test count in the roadmap.
+
+Independent local verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+pnpm test                        -> PASS; 32 files, 1336 passed,
+                                     2 paid eval gates skipped
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS; production config unchanged
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run
+                                  -> PASS; vetai-staging and staging producer binding
+git diff --check                 -> PASS; only benign autocrlf notices
+```
+
+Read-only Phase B preflight, with identifiers suppressed from tool output:
+
+- Cloudflare CLI authentication: missing; Queue discovery therefore not
+  available and no Cloudflare mutation was attempted.
+- Supabase CLI authentication: present; four projects were returned and the
+  existing disposable `vetai-test` project is present. Project refs, account
+  identifiers, and names other than the already-documented alias were not
+  emitted.
+- Meta authenticated preflight: not run yet.
+
+Decision: `PHASE_A_PASS`. Task 034 remains `IN_REVIEW`; live execution cannot
+start until Cloudflare/Meta read-only discovery is complete, the exact plan and
+price are shown to the user, and the user explicitly approves the remote
+mutations. No Opus review or paid model eval is required for Phase A.

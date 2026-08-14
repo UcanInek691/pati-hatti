@@ -345,13 +345,19 @@ uygulamasıyla yanıt verme olanağı Task 034 gerçek staging'inde doğrulanama
 personel ekranından manuel Cloud API mesajı gönderme kontrollü pilot öncesi yeni
 bir bloklayıcı görev olur.
 
-Task 033 durumu: migrasyon, RPC'ler, envelope-first yönlendirme, `/staff`
-"WhatsApp otomasyonu" bölümü ve kapsamdaki tüm testler yazıldı; yerel
-`pnpm typecheck`/`pnpm test` doğrulaması yapıldı (bkz.
-[`docs/selective-automation.md`](selective-automation.md)). Migrasyon ve
-`supabase/tests/033_selective_automation.sql` henüz hiçbir veritabanına
-uygulanmadı — bunu yalnız Codex, incelemeden sonra disposable `vetai-test`
-üzerinde yapar; commit, push ve deploy de bu aşamada yapılmadı.
+Task 033 tamamlandı ve doğrulandı: migrasyon, RPC'ler, envelope-first
+yönlendirme, `/staff` "WhatsApp otomasyonu" bölümü ve kapsamdaki tüm testler
+disposable `vetai-test` üzerinde sıfır kalıntıyla geçti; 1.336 test geçti,
+2 ücretli eval atlandı; typecheck, frozen install, Worker dry-run, Codex
+incelemesi ve Opus'un mimari/RLS/KVKK incelemesi tamamlandı (bkz.
+[`docs/selective-automation.md`](selective-automation.md)). Hiçbir production
+migration, deploy veya gerçek Meta/OpenAI çağrısı yapılmadı.
+
+Task 034 repository preparation aşaması sürüyor: `wrangler.staging.toml` ve
+Türkçe [`docs/staging-runbook.md`](staging-runbook.md) hazırlandı, yerel
+doğrulamalar geçti. Gerçek staging kaynak oluşturma, migration push, Meta
+webhook/Coexistence kanıtı gibi canlı adımların hiçbiri henüz çalıştırılmadı;
+bunlar yalnızca Codex tarafından kullanıcı onayından sonra yürütülür.
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm
