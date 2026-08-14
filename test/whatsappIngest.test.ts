@@ -1,5 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { extractInboundMessages, UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
+import { resolveWhatsAppContactAutomation } from "../src/contactAutomation";
+import type { Env } from "../src/env";
+import type { IntakeQueueMessage } from "../src/intakeQueue";
+
+vi.mock("../src/contactAutomation", () => ({
+  resolveWhatsAppContactAutomation: vi.fn(),
+}));
+
+const resolveMock = vi.mocked(resolveWhatsAppContactAutomation);
+
+const env: Env = {
+  APP_TIMEZONE: "Europe/Istanbul",
+  WHATSAPP_VERIFY_TOKEN: "secret-token",
+  WHATSAPP_APP_SECRET: "test-app-secret",
+  SUPABASE_URL: "https://example.supabase.co",
+  SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+  SUPABASE_ANON_KEY: "test-anon-key",
+  OPENAI_API_KEY: "unused",
+  INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
+  WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",
+  WHATSAPP_GRAPH_API_VERSION: "v25.0",
+};
+
+beforeEach(() => {
+  resolveMock.mockReset();
+  resolveMock.mockResolvedValue({ kind: "ai" });
+});
 
 function envelope(messages: unknown[], contacts: unknown[] = [{ profile: { name: "Kerry Fisher" }, wa_id: "16315551181" }]) {
   return {
@@ -36,7 +63,7 @@ function textMessage(overrides: Record<string, unknown> = {}) {
 
 describe("extractInboundMessages", () => {
   it("extracts a single inbound text message with the matching contact name", async () => {
-    const result = await extractInboundMessages(envelope([textMessage()]));
+    const result = await extractInboundMessages(envelope([textMessage()]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toEqual([
@@ -61,21 +88,21 @@ describe("extractInboundMessages", () => {
         envelope([textMessage({ id: "wamid.B", from: "16315551182" })], [{ profile: { name: "Other" }, wa_id: "16315551182" }]).entry[0],
       ],
     };
-    const result = await extractInboundMessages(body);
+    const result = await extractInboundMessages(body, env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items.map((item) => item.providerMessageId)).toEqual(["wamid.A", "wamid.B"]);
   });
 
   it("uses the fallback owner name when no contact matches", async () => {
-    const result = await extractInboundMessages(envelope([textMessage()], []));
+    const result = await extractInboundMessages(envelope([textMessage()], []), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items[0]?.ownerName).toBe("WhatsApp user");
   });
 
   it("uses the fallback owner name when the matching profile name is blank", async () => {
-    const result = await extractInboundMessages(envelope([textMessage()], [{ profile: { name: "   " }, wa_id: "16315551181" }]));
+    const result = await extractInboundMessages(envelope([textMessage()], [{ profile: { name: "   " }, wa_id: "16315551181" }]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items[0]?.ownerName).toBe("WhatsApp user");
@@ -83,7 +110,7 @@ describe("extractInboundMessages", () => {
 
   it("caps an oversized contact name to 200 characters", async () => {
     const longName = "a".repeat(250);
-    const result = await extractInboundMessages(envelope([textMessage()], [{ profile: { name: longName }, wa_id: "16315551181" }]));
+    const result = await extractInboundMessages(envelope([textMessage()], [{ profile: { name: longName }, wa_id: "16315551181" }]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items[0]?.ownerName).toBe("a".repeat(200));
@@ -108,31 +135,31 @@ describe("extractInboundMessages", () => {
         },
       ],
     };
-    const result = await extractInboundMessages(body);
+    const result = await extractInboundMessages(body, env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toEqual([]);
   });
 
   it.each(["reaction", "system", "unknown", "button"])("ignores the unrecognized message type %s", async (type) => {
-    const result = await extractInboundMessages(envelope([{ from: "16315551181", id: "wamid.ID1", timestamp: "1603059201", type }]));
+    const result = await extractInboundMessages(envelope([{ from: "16315551181", id: "wamid.ID1", timestamp: "1603059201", type }]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toEqual([]);
   });
 
   it("rejects a declared text message with missing text body", async () => {
-    const result = await extractInboundMessages(envelope([textMessage({ text: undefined })]));
+    const result = await extractInboundMessages(envelope([textMessage({ text: undefined })]), env);
     expect(result.ok).toBe(false);
   });
 
   it("rejects a declared text message with oversized text", async () => {
-    const result = await extractInboundMessages(envelope([textMessage({ text: { body: "a".repeat(65537) } })]));
+    const result = await extractInboundMessages(envelope([textMessage({ text: { body: "a".repeat(65537) } })]), env);
     expect(result.ok).toBe(false);
   });
 
   it("counts Unicode text by code point", async () => {
-    const result = await extractInboundMessages(envelope([textMessage({ text: { body: "😀".repeat(40000) } })]));
+    const result = await extractInboundMessages(envelope([textMessage({ text: { body: "😀".repeat(40000) } })]), env);
     expect(result.ok).toBe(true);
   });
 
@@ -142,7 +169,7 @@ describe("extractInboundMessages", () => {
     ["too short", "1"],
     ["too long", "1234567890123456"],
   ])("rejects a malformed sender (%s)", async (_label, from) => {
-    const result = await extractInboundMessages(envelope([textMessage({ from })]));
+    const result = await extractInboundMessages(envelope([textMessage({ from })]), env);
     expect(result.ok).toBe(false);
   });
 
@@ -152,13 +179,13 @@ describe("extractInboundMessages", () => {
     ["leading zero", "0123"],
     ["outside the JavaScript date range", "999999999999999999999999"],
   ])("rejects a malformed timestamp (%s)", async (_label, timestamp) => {
-    const result = await extractInboundMessages(envelope([textMessage({ timestamp })]));
+    const result = await extractInboundMessages(envelope([textMessage({ timestamp })]), env);
     expect(result.ok).toBe(false);
   });
 
   it("computes a stable hash independent of surrounding batch packaging", async () => {
-    const alone = await extractInboundMessages(envelope([textMessage()]));
-    const batched = await extractInboundMessages(envelope([textMessage({ id: "wamid.OTHER", from: "16315551182" }), textMessage()]));
+    const alone = await extractInboundMessages(envelope([textMessage()]), env);
+    const batched = await extractInboundMessages(envelope([textMessage({ id: "wamid.OTHER", from: "16315551182" }), textMessage()]), env);
     expect(alone.ok).toBe(true);
     expect(batched.ok).toBe(true);
     if (!alone.ok || !batched.ok) return;
@@ -168,14 +195,14 @@ describe("extractInboundMessages", () => {
   });
 
   it("deduplicates repeated (phone_number_id, message.id) items within one webhook", async () => {
-    const result = await extractInboundMessages(envelope([textMessage(), textMessage()]));
+    const result = await extractInboundMessages(envelope([textMessage(), textMessage()]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toHaveLength(1);
   });
 
   it("rejects a repeated message id whose normalized content conflicts", async () => {
-    const result = await extractInboundMessages(envelope([textMessage(), textMessage({ text: { body: "Altered" } })]));
+    const result = await extractInboundMessages(envelope([textMessage(), textMessage({ text: { body: "Altered" } })]), env);
     expect(result.ok).toBe(false);
   });
 
@@ -186,7 +213,60 @@ describe("extractInboundMessages", () => {
     if (field === "phone-number id") {
       (body.entry[0]!.changes[0]!.value.metadata as { phone_number_id: string }).phone_number_id = "a".repeat(513);
     }
-    expect((await extractInboundMessages(body)).ok).toBe(false);
+    expect((await extractInboundMessages(body, env)).ok).toBe(false);
+  });
+});
+
+describe("extractInboundMessages: envelope-first automation routing (Task 033)", () => {
+  it("resolves the route from the phone-number id and E.164 sender before reading any nested content", async () => {
+    await extractInboundMessages(envelope([textMessage()]), env);
+    expect(resolveMock).toHaveBeenCalledWith("123456123", "+16315551181", env);
+  });
+
+  it("skips a candidate whose contact route is personal without reading its nested content", async () => {
+    resolveMock.mockResolvedValue({ kind: "personal" });
+    const body = envelope([textMessage({ text: undefined })]);
+    const value = body.entry[0]!.changes[0]!.value;
+    Object.defineProperty(value, "contacts", {
+      get() {
+        throw new Error("personal contact/profile fields must not be read");
+      },
+    });
+    const result = await extractInboundMessages(body, env);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items).toEqual([]);
+  });
+
+  it("fails the whole webhook closed when route resolution fails", async () => {
+    resolveMock.mockResolvedValue({ kind: "failed" });
+    const result = await extractInboundMessages(envelope([textMessage()]), env);
+    expect(result).toEqual({ ok: false, reason: "route_failed" });
+  });
+
+  it.each(["manual", "unknown_account"] as const)("still extracts content for a %s route", async (kind) => {
+    resolveMock.mockResolvedValue({ kind });
+    const result = await extractInboundMessages(envelope([textMessage()]), env);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("resolves the route independently per candidate sender", async () => {
+    resolveMock.mockImplementation(async (_phoneNumberId, contactE164) =>
+      contactE164 === "+16315551182" ? { kind: "personal" } : { kind: "ai" },
+    );
+    const body = {
+      object: "whatsapp_business_account",
+      entry: [
+        envelope([textMessage({ id: "wamid.A", from: "16315551181" })]).entry[0],
+        envelope([textMessage({ id: "wamid.B", from: "16315551182" })], [{ profile: { name: "Other" }, wa_id: "16315551182" }]).entry[0],
+      ],
+    };
+    const result = await extractInboundMessages(body, env);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items.map((item) => item.providerMessageId)).toEqual(["wamid.A"]);
   });
 });
 
@@ -210,7 +290,7 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
   });
 
   it.each(MEDIA_TYPES)("emits exactly one marker item for a %s message", async (type) => {
-    const result = await extractInboundMessages(envelope([mediaMessage(type)]));
+    const result = await extractInboundMessages(envelope([mediaMessage(type)]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toEqual([
@@ -228,8 +308,11 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
   });
 
   it("applies the same contact-name fallback and cap as text messages", async () => {
-    const fallback = await extractInboundMessages(envelope([mediaMessage("image")], []));
-    const capped = await extractInboundMessages(envelope([mediaMessage("image")], [{ profile: { name: "a".repeat(250) }, wa_id: "16315551181" }]));
+    const fallback = await extractInboundMessages(envelope([mediaMessage("image")], []), env);
+    const capped = await extractInboundMessages(
+      envelope([mediaMessage("image")], [{ profile: { name: "a".repeat(250) }, wa_id: "16315551181" }]),
+      env,
+    );
     expect(fallback.ok && capped.ok).toBe(true);
     if (!fallback.ok || !capped.ok) return;
     expect(fallback.items[0]?.ownerName).toBe("WhatsApp user");
@@ -242,24 +325,25 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
     ["oversized message id", { id: "a".repeat(513) }],
     ["timestamp", { timestamp: "0" }],
   ])("rejects the whole webhook for a media message with a malformed %s", async (_label, overrides) => {
-    const result = await extractInboundMessages(envelope([mediaMessage("image", overrides)]));
+    const result = await extractInboundMessages(envelope([mediaMessage("image", overrides)]), env);
     expect(result.ok).toBe(false);
   });
 
   it("rejects a media message when the phone-number id is malformed", async () => {
     const body = envelope([mediaMessage("image")]);
     (body.entry[0]!.changes[0]!.value.metadata as { phone_number_id: string }).phone_number_id = "a".repeat(513);
-    expect((await extractInboundMessages(body)).ok).toBe(false);
+    expect((await extractInboundMessages(body, env)).ok).toBe(false);
   });
 
   it("neither requires nor reads the nested media payload when hashing", async () => {
-    const bare = await extractInboundMessages(envelope([mediaMessage("image")]));
+    const bare = await extractInboundMessages(envelope([mediaMessage("image")]), env);
     const rich = await extractInboundMessages(
       envelope([
         mediaMessage("image", {
           image: { id: "MEDIA_ID", mime_type: "image/jpeg", sha256: "abc", caption: "Pamuk'un patisi" },
         }),
       ]),
+      env,
     );
     expect(bare.ok && rich.ok).toBe(true);
     if (!bare.ok || !rich.ok) return;
@@ -269,7 +353,7 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
   });
 
   it("collapses identical in-payload media duplicates", async () => {
-    const result = await extractInboundMessages(envelope([mediaMessage("image"), mediaMessage("image", { image: { id: "OTHER" } })]));
+    const result = await extractInboundMessages(envelope([mediaMessage("image"), mediaMessage("image", { image: { id: "OTHER" } })]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items).toHaveLength(1);
@@ -279,12 +363,12 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
     ["a different declared media type", [mediaMessage("image"), mediaMessage("video")]],
     ["a text message with the same key", [mediaMessage("image"), textMessage()]],
   ])("rejects the same (phone_number_id, id) key declaring %s", async (_label, messages) => {
-    expect((await extractInboundMessages(envelope(messages))).ok).toBe(false);
+    expect((await extractInboundMessages(envelope(messages), env)).ok).toBe(false);
   });
 
   it("hashes a media item differently from a text message whose body equals the marker", async () => {
-    const media = await extractInboundMessages(envelope([mediaMessage("image")]));
-    const text = await extractInboundMessages(envelope([textMessage({ text: { body: UNSUPPORTED_MEDIA_MARKER } })]));
+    const media = await extractInboundMessages(envelope([mediaMessage("image")]), env);
+    const text = await extractInboundMessages(envelope([textMessage({ text: { body: UNSUPPORTED_MEDIA_MARKER } })]), env);
     expect(media.ok && text.ok).toBe(true);
     if (!media.ok || !text.ok) return;
     expect(media.items[0]?.payloadHash).not.toBe(text.items[0]?.payloadHash);
@@ -292,7 +376,7 @@ describe("extractInboundMessages: unsupported media (Task 030)", () => {
   });
 
   it("keeps text and media items side by side in one webhook", async () => {
-    const result = await extractInboundMessages(envelope([textMessage(), mediaMessage("audio", { id: "wamid.ID2" })]));
+    const result = await extractInboundMessages(envelope([textMessage(), mediaMessage("audio", { id: "wamid.ID2" })]), env);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.items.map((item) => item.messageText)).toEqual(["Hello!", UNSUPPORTED_MEDIA_MARKER]);

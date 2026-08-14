@@ -149,7 +149,8 @@ of `(result text, conversation_id uuid)`. In one call it:
 2. Claims idempotency via `webhook_events (clinic_id, provider_event_id)`
    with `ON CONFLICT DO NOTHING RETURNING`, storing the resolved
    `whatsapp_account_id` on the new row; a redelivery with a matching
-   `payload_hash` returns `duplicate` with no further mutation, and a
+   `payload_hash` returns `duplicate` under an AI route (or `manual` under
+   a currently manual route) with no further mutation, and a
    redelivery with a different hash for the same provider event ID raises
    an error and writes nothing.
    A `duplicate` redelivery also backfills a null `whatsapp_account_id` on
@@ -670,3 +671,75 @@ has already resolved to `human_handoff` — see
 [`docs/clinic-operations.md`](clinic-operations.md) for the personalization
 behavior and [`docs/inbound-queue.md`](inbound-queue.md) for where this fits
 in the Queue consumer's pipeline.
+
+## Selective WhatsApp automation and manual takeover (Task 033)
+
+`supabase/migrations/20260814000300_selective_automation.sql`. **Codex applied
+the migration and ran `supabase/tests/033_selective_automation.sql` on
+disposable `vetai-test` on 2026-08-14: PASS with zero fixture residue. It is
+not applied to production.**
+
+`public.whatsapp_accounts` gains `automation_default text not null default
+'manual'`, constrained to `ai | manual`. A new `public.whatsapp_contact_routes`
+table holds `(whatsapp_account_id, clinic_id, contact_e164, mode, created_at,
+updated_at)`: primary key `(whatsapp_account_id, contact_e164)`;
+`contact_e164` constrained to canonical E.164; `mode` constrained to
+`ai | manual | personal`; `(whatsapp_account_id, clinic_id)` references
+`whatsapp_accounts (id, clinic_id) on delete cascade`. RLS is enabled with no
+default/public/anon privileges; authenticated clinic staff get read-only
+`SELECT` through one same-clinic `is_clinic_staff(clinic_id)` policy,
+matching the read-only pattern used elsewhere on this page; only
+`service_role` can write. No audit/history table — the current row is the
+whole model.
+
+Two private helpers back every route decision:
+`vetai_private.effective_contact_automation_mode(whatsapp_account_id,
+contact_e164)` (`stable`, `security invoker`) returns the contact's override
+if one exists, else the account's `automation_default`; and
+`vetai_private.lock_owner_and_resolve_automation(clinic_id,
+whatsapp_account_id, owner_id)` (`volatile`, `security invoker`) locks the
+owner row `for update` before resolving its effective mode, so route
+mutation and finalization always serialize on the same owner lock.
+
+`public.resolve_whatsapp_contact_automation(p_phone_number_id text,
+p_contact_e164 text)` is `security invoker`, `stable`, `set search_path=''`,
+and executable only by `service_role`. It returns exactly one closed
+`ai | manual | personal | unknown_account` result and exposes no identifier.
+`public.set_whatsapp_contact_route(p_whatsapp_account_id uuid,
+p_contact_e164 text, p_mode text)` is `security definer`, `volatile`, `set
+search_path=''`, and executable only by `authenticated` — the one other
+`SECURITY DEFINER` write pattern this schema already has, alongside the
+staff work-item RPCs. `p_mode` accepts `ai | manual | personal | inherit`
+(`inherit` deletes the override); it locks the target account row,
+authorizes its clinic through `is_clinic_staff`, and returns the same
+`not_found` for an absent or cross-tenant account so the two are
+indistinguishable. It returns only `updated | unchanged | not_found` — never
+an account, clinic, contact, or owner identifier. When the resulting mode is
+`manual` or `personal`, still-`pending` outbox rows for that account/owner's
+conversations are deleted in the same transaction; `processing`, `accepted`,
+and `failed` rows are never touched.
+
+`ingest_whatsapp_text_message` is replaced (same signature) to recheck the
+account and `(account, sender E.164)` override inside the ingest
+transaction, while holding a key-share lock on the exact account row and
+before any event/owner/conversation/message write: `personal`
+returns `ignored` with a null conversation ID and zero writes; `manual`
+persists the same sanitized record `ai` traffic does but marks the event's
+intake state terminally completed and returns `manual` with its conversation
+ID; exact redelivery under a currently manual route remains `manual` and is
+not enqueued; `ai` behavior is unchanged; unknown accounts remain
+`unknown_account`.
+
+`claim_intake_queue_job` now also returns the claimed job's current
+automation mode, with `message_text` strictly null for `manual | personal`.
+`finalize_intake_queue_job`, `finalize_appointment_offer_queue_job`, and
+`finalize_appointment_decision_queue_job` are replaced (same signatures) to
+lock/recheck the effective route via `lock_owner_and_resolve_automation`
+after validating and locking the current event/claim, but before any
+conversation, slot, or outbox mutation; a non-`ai` route completes the
+current lease via the existing `complete_intake_queue_job` and returns a new
+closed `suppressed` result with null stage/version instead of mutating any
+state. See [`docs/selective-automation.md`](selective-automation.md) for the
+full routing/privacy contract and
+[`docs/inbound-queue.md`](inbound-queue.md) for the consumer-side race
+closure this enables.

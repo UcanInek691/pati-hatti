@@ -1,3 +1,6 @@
+import type { Env } from "./env";
+import { resolveWhatsAppContactAutomation } from "./contactAutomation";
+
 const SENDER_PATTERN = /^[1-9]\d{1,14}$/;
 const TIMESTAMP_PATTERN = /^[1-9]\d*$/;
 const MAX_OWNER_NAME_LENGTH = 200;
@@ -27,7 +30,9 @@ export interface WhatsAppIngestItem {
   payloadHash: string;
 }
 
-export type ExtractionResult = { ok: true; items: WhatsAppIngestItem[] } | { ok: false };
+export type ExtractionResult =
+  | { ok: true; items: WhatsAppIngestItem[] }
+  | { ok: false; reason: "invalid" | "route_failed" };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -46,10 +51,14 @@ async function hashEvent(canonicalEvent: string): Promise<string> {
  * unsupported owner media types carries `UNSUPPORTED_MEDIA_MARKER` instead, so
  * nested media fields are never inspected, hashed, or persisted. Status/read
  * events and every other message type are ignored. Returns `{ ok: false }` if
- * any recognized item has malformed required fields — the caller must reject
- * the whole webhook and persist nothing in that case.
+ * any recognized item has malformed required fields, or if a route lookup
+ * fails — the caller must reject the whole webhook and persist nothing in
+ * that case. Every candidate's route is resolved from envelope fields alone
+ * (phone number ID, sender E.164) before any nested text/media field is
+ * read; an effective `personal` route skips the candidate entirely, so its
+ * nested content is never accessed, hashed, or persisted (Task 033).
  */
-export async function extractInboundMessages(body: { entry: unknown[] }): Promise<ExtractionResult> {
+export async function extractInboundMessages(body: { entry: unknown[] }, env: Env): Promise<ExtractionResult> {
   const items: WhatsAppIngestItem[] = [];
   const seen = new Map<string, string>();
 
@@ -67,17 +76,6 @@ export async function extractInboundMessages(body: { entry: unknown[] }): Promis
       const messages = value.messages;
       if (!Array.isArray(messages)) continue;
 
-      const contacts = Array.isArray(value.contacts) ? value.contacts : [];
-      const nameByWaId = new Map<string, string>();
-      for (const contact of contacts) {
-        const contactObj = asRecord(contact);
-        const waId = contactObj?.wa_id;
-        const profileName = asRecord(contactObj?.profile)?.name;
-        if (typeof waId === "string" && typeof profileName === "string") {
-          nameByWaId.set(waId, profileName);
-        }
-      }
-
       const phoneNumberId = asRecord(value.metadata)?.phone_number_id;
 
       for (const message of messages) {
@@ -87,35 +85,57 @@ export async function extractInboundMessages(body: { entry: unknown[] }): Promis
         const isText = declaredType === "text";
         if (!isText && !(typeof declaredType === "string" && UNSUPPORTED_MEDIA_TYPES.has(declaredType))) continue;
 
-        if (typeof phoneNumberId !== "string" || phoneNumberId.length < 1 || phoneNumberId.length > MAX_ID_LENGTH) return { ok: false };
+        if (typeof phoneNumberId !== "string" || phoneNumberId.length < 1 || phoneNumberId.length > MAX_ID_LENGTH) {
+          return { ok: false, reason: "invalid" };
+        }
 
         const id = messageObj.id;
         const from = messageObj.from;
         const timestamp = messageObj.timestamp;
 
-        if (typeof id !== "string" || id.length < 1 || id.length > MAX_ID_LENGTH) return { ok: false };
-        if (typeof from !== "string" || !SENDER_PATTERN.test(from)) return { ok: false };
-        if (typeof timestamp !== "string" || !TIMESTAMP_PATTERN.test(timestamp)) return { ok: false };
+        if (typeof id !== "string" || id.length < 1 || id.length > MAX_ID_LENGTH) return { ok: false, reason: "invalid" };
+        if (typeof from !== "string" || !SENDER_PATTERN.test(from)) return { ok: false, reason: "invalid" };
+        if (typeof timestamp !== "string" || !TIMESTAMP_PATTERN.test(timestamp)) return { ok: false, reason: "invalid" };
+
+        const senderE164 = `+${from}`;
+
+        // Route resolution happens here, from envelope fields alone, before any
+        // nested text/media field below is read. A failed lookup fails the
+        // whole webhook closed; an effective `personal` route skips this
+        // candidate without ever touching its content.
+        const route = await resolveWhatsAppContactAutomation(phoneNumberId, senderE164, env);
+        if (route.kind === "failed") return { ok: false, reason: "route_failed" };
+        if (route.kind === "personal") continue;
 
         let messageText: string;
         if (isText) {
           const text = asRecord(messageObj.text)?.body;
-          if (typeof text !== "string") return { ok: false };
+          if (typeof text !== "string") return { ok: false, reason: "invalid" };
           const textLength = Array.from(text).length;
-          if (textLength < MIN_TEXT_LENGTH || textLength > MAX_TEXT_LENGTH) return { ok: false };
+          if (textLength < MIN_TEXT_LENGTH || textLength > MAX_TEXT_LENGTH) return { ok: false, reason: "invalid" };
           messageText = text;
         } else {
           messageText = UNSUPPORTED_MEDIA_MARKER;
         }
 
         const timestampSeconds = Number(timestamp);
-        if (!Number.isSafeInteger(timestampSeconds)) return { ok: false };
+        if (!Number.isSafeInteger(timestampSeconds)) return { ok: false, reason: "invalid" };
         const timestampDate = new Date(timestampSeconds * 1000);
-        if (!Number.isFinite(timestampDate.getTime())) return { ok: false };
+        if (!Number.isFinite(timestampDate.getTime())) return { ok: false, reason: "invalid" };
 
         const dedupeKey = JSON.stringify([phoneNumberId, id]);
-        const senderE164 = `+${from}`;
-        const trimmedName = nameByWaId.get(from)?.trim();
+        // Contact/profile fields are intentionally inspected only after the
+        // route has proved that this is not a personal candidate.
+        const contacts = Array.isArray(value.contacts) ? value.contacts : [];
+        let profileName: string | undefined;
+        for (const contact of contacts) {
+          const contactObj = asRecord(contact);
+          if (contactObj?.wa_id !== from) continue;
+          const candidateName = asRecord(contactObj.profile)?.name;
+          if (typeof candidateName === "string") profileName = candidateName;
+          break;
+        }
+        const trimmedName = profileName?.trim();
         const ownerName = trimmedName ? Array.from(trimmedName).slice(0, MAX_OWNER_NAME_LENGTH).join("") : FALLBACK_OWNER_NAME;
         const providerTimestamp = timestampDate.toISOString();
         const canonicalEvent = isText
@@ -123,7 +143,7 @@ export async function extractInboundMessages(body: { entry: unknown[] }): Promis
           : JSON.stringify([phoneNumberId, id, senderE164, timestamp, messageText, declaredType]);
         const seenEvent = seen.get(dedupeKey);
         if (seenEvent !== undefined) {
-          if (seenEvent !== canonicalEvent) return { ok: false };
+          if (seenEvent !== canonicalEvent) return { ok: false, reason: "invalid" };
           continue;
         }
         seen.set(dedupeKey, canonicalEvent);

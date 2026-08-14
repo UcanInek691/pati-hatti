@@ -1,6 +1,6 @@
 # Inbound intake queue (producer and bounded consumer)
 
-Last verified: 2026-08-10.
+Last verified: 2026-08-14.
 
 ## What this step does
 
@@ -11,12 +11,19 @@ before it acknowledges the webhook with HTTP 200. The webhook response
 `await`s the Queue send; it does not use `waitUntil` and does not return
 early.
 
-- Both `processed` and exact-`duplicate` persistence outcomes are enqueued.
+- Both `processed` and exact-`duplicate` persistence outcomes under the
+  current `ai` route are enqueued.
   Enqueuing duplicates is deliberate: it repairs the case where the database
   write committed but the first Queue send or webhook HTTP response failed
   before the sender's retry, so the retry's duplicate outcome still gets a job
   published.
 - `unknown_account` and `failed` persistence outcomes are never enqueued.
+- `manual` and `ignored` persistence outcomes (Task 033 selective automation,
+  see [`docs/selective-automation.md`](selective-automation.md)) are also
+  never enqueued, but are still successful HTTP-200 outcomes — they are not
+  counted as `failed`.
+  An exact redelivery under a route that is currently `manual` also returns
+  `manual`, not `duplicate`, so it cannot reopen AI Queue work.
 - If the required enqueue fails for any item, that item counts as `failed`
   and the webhook returns its existing HTTP 503 response, unchanged from
   Task 010. HTTP 200 is only returned after every processed/duplicate item's
@@ -71,6 +78,20 @@ wired into the `queue()` handler below:
   claimer, while an expired lease is reclaimed with a new token. Only the
   current token can complete the job — a worker whose lease was reclaimed
   gets `stale`, never `completed`, if it tries to finish late.
+
+### Selective automation short-circuit (Task 033)
+
+`claim_intake_queue_job` also returns the claimed job's current WhatsApp
+automation mode (`ai | manual | personal`), with `message_text` strictly
+null whenever the mode is not `ai` (see
+[`docs/selective-automation.md`](selective-automation.md)). This closes the
+race where a contact's route changes after its message was persisted as
+`ai` but before a worker claims the Queue job: `src/intakeConsumer.ts`
+checks `claim.automationMode !== "ai"` immediately after a successful claim
+and, if true, calls `completeIntakeQueueJob` right away — before context
+lookup, safety hashing, any OpenAI call, planning, appointment calls,
+clinic-hours lookup, or reply creation — and acknowledges the message with
+no further work.
 
 > **Disposable validation passed (2026-08-08).** Codex applied the migration
 > to `vetai-test`; the rollback test returned `PASS 0 0 0 0 0 0`. This was an
@@ -154,12 +175,19 @@ re-extracts, and re-plans from whatever is currently persisted.
 | parse       | invalid body                          | `ack`       |
 | claim       | `completed` / `not_found`             | `ack`       |
 | claim       | `busy` / `failed`                     | `retry`     |
+| claim       | non-`ai` mode -> immediate `completeIntakeQueueJob` | `ack` |
 | context     | `not_found` / `failed`                | `retry`     |
 | extraction  | provider/refusal/malformed failure    | `retry`     |
 | safety check| inconsistent handoff vs. planned stage| `retry`     |
-| finalize    | `applied` / `already_completed` / `stale_claim` | `ack` |
+| finalize    | `applied` / `already_completed` / `stale_claim` / `suppressed` | `ack` |
 | finalize    | `stale_state` / `failed`              | `retry`     |
 | (any)       | unexpected thrown exception           | `retry`     |
+
+`suppressed` (Task 033) means the claimed job was still `ai` at claim time
+but its route changed to `manual`/`personal` before the finalizer's own
+recheck; the finalizer completes the lease and makes zero conversation,
+appointment, or outbox mutation on that attempt. See
+[`docs/selective-automation.md`](selective-automation.md).
 
 `completeIntakeQueueJob` is never called from the consumer; exactly one of
 `finalizeIntakeQueueJob`, `finalizeAppointmentOfferQueueJob`, or

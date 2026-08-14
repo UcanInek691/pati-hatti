@@ -1,4 +1,4 @@
-# Minimal staff workflow (Tasks 021, 032)
+# Minimal staff workflow (Tasks 021, 032, 033)
 
 Last verified: 2026-08-14.
 
@@ -210,6 +210,33 @@ surface it prominently. Nothing in this system may tell a customer, in
 product copy or support messaging, that staff have been "notified,"
 "assigned," or will respond within any particular time — that claim is not
 true today and this task does not add it anywhere.
+
+## WhatsApp automation controls (Task 033)
+
+A separate, fixed "WhatsApp otomasyonu" section — independent of the
+non-resolved work list and its polling/alerts above — lists the caller's
+RLS-scoped WhatsApp accounts (`id, display_name, automation_default`) and,
+for the selected account, its at most 100 configured contact overrides
+(`contact_e164, mode, updated_at`, newest first). An operator enters one
+exact canonical E.164 number and picks one of four fixed actions —
+`AI açık`, `Sadece insan`, `Kişisel / yok say`, `Numara varsayılanı` — each
+calling `set_whatsapp_contact_route` and accepting only its closed
+`updated | unchanged | not_found` result; only this section refreshes after
+a successful change. It uses `textContent`/native DOM only and never stores
+account/contact/route data in `sessionStorage`, local storage,
+notifications, URLs, or logs, matching the storage discipline the rest of
+this page already follows. See
+[`docs/selective-automation.md`](selective-automation.md) for the full
+routing contract, the fixed Turkish explanations shown next to each action,
+and the same-number manual-messaging ceiling — this section does not add a
+staff reply composer, and switching a contact to manual/personal does not
+notify anyone or erase earlier stored records.
+
+The fixed copy also states that `manual` messages remain stored for the
+clinic, while `personal` content does not persist but its routing phone number
+does. Selecting `Numara varsayılanı` deletes the override row; see the
+selective-automation document for the owner-erasure and account-default
+caveat.
 
 ## Pilot operating procedure
 

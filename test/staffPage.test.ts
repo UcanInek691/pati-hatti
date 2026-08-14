@@ -291,10 +291,8 @@ describe("handleStaffScript", () => {
 
   it("stops polling on logout/session failure and clears the baseline", () => {
     expect(STAFF_APP_JS).toContain("function stopPolling() {\n  if (pollIntervalId !== null) {\n    clearInterval(pollIntervalId);\n    pollIntervalId = null;\n  }\n  knownWorkItemIds = null;\n}");
-    const clearSessionBody = STAFF_APP_JS.slice(
-      STAFF_APP_JS.indexOf("function clearSession() {"),
-      STAFF_APP_JS.indexOf("function clearSession() {") + 200,
-    );
+    const clearSessionStart = STAFF_APP_JS.indexOf("function clearSession() {");
+    const clearSessionBody = STAFF_APP_JS.slice(clearSessionStart, STAFF_APP_JS.indexOf("\nfunction ", clearSessionStart));
     expect(clearSessionBody).toContain("stopPolling();");
   });
 
@@ -366,6 +364,77 @@ describe("handleStaffScript", () => {
 
   it("never interpolates a work-item ID, name, phone, or reason into the notification", () => {
     expect(STAFF_APP_JS).not.toMatch(/Notification\([^)]*\+[^)]*item\./s);
+  });
+});
+
+describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
+  it("states the exact manual and personal retention boundaries in Turkish", () => {
+    expect(STAFF_HTML).toContain(
+      "Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz.",
+    );
+    expect(STAFF_HTML).toContain(
+      "Yönlendirme için telefon numarası VetAI'de saklanmaya devam eder; bot otomatik yanıt vermez.",
+    );
+  });
+
+  it("loads automation accounts and routes right after the queue on both login and resumed-session paths", () => {
+    const loginBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"') + 400,
+    );
+    expect(loginBody).toContain("await refreshQueue();\n    await loadAutomationAccounts();\n    startPolling();");
+
+    const initBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("async function init() {"));
+    expect(initBody).toContain("await refreshQueue();\n      await loadAutomationAccounts();\n      startPolling();");
+  });
+
+  it("posts a route change to set_whatsapp_contact_route and strictly validates a single-key result", () => {
+    expect(STAFF_APP_JS).toContain('await authedFetch("/rest/v1/rpc/set_whatsapp_contact_route"');
+    expect(STAFF_APP_JS).toContain(
+      "body: JSON.stringify({ p_whatsapp_account_id: accountId, p_contact_e164: contactE164, p_mode: mode }),",
+    );
+    const submitBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitContactRoute(accountId, contactE164, mode) {"),
+      STAFF_APP_JS.indexOf("accountSelect.addEventListener"),
+    );
+    expect(submitBody).toContain('!isExactRecord(rows[0], ["result"])');
+    expect(submitBody).toContain('["updated", "unchanged", "not_found"].indexOf(rows[0].result) === -1');
+  });
+
+  it("strictly validates bounded account and route projections before rendering", () => {
+    expect(STAFF_APP_JS).toContain("rows.length > 100");
+    expect(STAFF_APP_JS).toContain('isExactRecord(row, ["id", "display_name", "automation_default"])');
+    expect(STAFF_APP_JS).toContain('isExactRecord(row, ["contact_e164", "mode", "updated_at"])');
+    expect(STAFF_APP_JS).toContain('row.mode === "ai" || row.mode === "manual" || row.mode === "personal"');
+    expect(STAFF_APP_JS).toContain("Number.isFinite(Date.parse(row.updated_at))");
+  });
+
+  it("reads the submitted mode from event.submitter and rejects anything outside the closed ai/manual/personal/inherit set", () => {
+    const formBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('routeForm.addEventListener("submit"'),
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
+    );
+    expect(formBody).toContain("const mode = event.submitter && event.submitter.value;");
+    expect(formBody).toContain('if (mode !== "ai" && mode !== "manual" && mode !== "personal" && mode !== "inherit") {\n    return;\n  }');
+    expect(formBody).toContain("if (!selectedAccountId || !CONTACT_E164_PATTERN.test(contactE164)) {");
+  });
+
+  it("guards the route form against double submission while a request is in flight", () => {
+    const formBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('routeForm.addEventListener("submit"'),
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
+    );
+    expect(formBody).toContain("if (routeSubmitInFlight) {\n    return;\n  }");
+    expect(formBody).toContain("routeSubmitInFlight = true;");
+    expect(formBody).toContain("routeSubmitInFlight = false;");
+  });
+
+  it("clears the account and route lists on logout", () => {
+    const clearSessionStart = STAFF_APP_JS.indexOf("function clearSession() {");
+    const clearSessionBody = STAFF_APP_JS.slice(clearSessionStart, STAFF_APP_JS.indexOf("\nfunction ", clearSessionStart));
+    expect(clearSessionBody).toContain("selectedAccountId = null;");
+    expect(clearSessionBody).toContain('accountSelect.textContent = "";');
+    expect(clearSessionBody).toContain('routeList.textContent = "";');
   });
 });
 

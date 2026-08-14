@@ -144,6 +144,7 @@ function isPlainDataObject(value: unknown): value is Record<string, unknown> {
 export type FinalizeAppointmentOfferResult =
   | { kind: "offered"; intakeStage: IntakeStage; stateVersion: number }
   | { kind: "unavailable"; intakeStage: IntakeStage; stateVersion: number }
+  | { kind: "suppressed" }
   | { kind: "already_completed" }
   | { kind: "stale_claim" }
   | { kind: "stale_state" }
@@ -192,7 +193,7 @@ export async function finalizeAppointmentOfferQueueJob(input: FinalizeAppointmen
     if (!row || Reflect.ownKeys(row).length !== 3) return failedOffer();
     const { result, intake_stage: intakeStage, state_version: stateVersion } = row;
 
-    if (result === "already_completed" || result === "stale_claim" || result === "stale_state") {
+    if (result === "already_completed" || result === "stale_claim" || result === "stale_state" || result === "suppressed") {
       return intakeStage === null && stateVersion === null ? { kind: result } : failedOffer();
     }
     if (result !== "offered" && result !== "unavailable") return failedOffer();
@@ -215,6 +216,7 @@ export type FinalizeAppointmentDecisionResult =
   | { kind: "declined"; intakeStage: IntakeStage; stateVersion: number }
   | { kind: "repeated"; intakeStage: IntakeStage; stateVersion: number }
   | { kind: "stale_hold"; intakeStage: IntakeStage; stateVersion: number }
+  | { kind: "suppressed" }
   | { kind: "already_completed" }
   | { kind: "stale_claim" }
   | { kind: "stale_state" }
@@ -266,7 +268,7 @@ export async function finalizeAppointmentDecisionQueueJob(
     if (!row || Reflect.ownKeys(row).length !== 3) return failedDecision();
     const { result, intake_stage: intakeStage, state_version: stateVersion } = row;
 
-    if (result === "already_completed" || result === "stale_claim" || result === "stale_state") {
+    if (result === "already_completed" || result === "stale_claim" || result === "stale_state" || result === "suppressed") {
       return intakeStage === null && stateVersion === null ? { kind: result } : failedDecision();
     }
     if (result !== "confirmed" && result !== "declined" && result !== "repeated" && result !== "stale_hold") return failedDecision();

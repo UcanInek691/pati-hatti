@@ -36,12 +36,14 @@ afterEach(() => {
 
 describe("claimIntakeQueueJob", () => {
   it("calls the RPC with the documented URL, method, headers, and body", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Hello" }]));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Hello", automation_mode: "ai" }]));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await claimIntakeQueueJob(conversationId, providerMessageId, env);
 
-    expect(result).toEqual({ kind: "claimed", claimToken, messageText: "Hello" });
+    expect(result).toEqual({ kind: "claimed", claimToken, messageText: "Hello", automationMode: "ai" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/claim_intake_queue_job");
@@ -54,8 +56,28 @@ describe("claimIntakeQueueJob", () => {
   });
 
   it.each(["completed", "busy", "not_found"] as const)("parses a %s result with a null token and text", async (result) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, claim_token: null, message_text: null }])));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse([{ result, claim_token: null, message_text: null, automation_mode: null }])),
+    );
     expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: result });
+  });
+
+  it.each(["manual", "personal"] as const)("parses a claimed result with automation mode %s and null text", async (automationMode) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: null, automation_mode: automationMode }]),
+        ),
+    );
+    expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({
+      kind: "claimed",
+      claimToken,
+      messageText: null,
+      automationMode,
+    });
   });
 
   it("fails closed when Supabase configuration is missing, without calling fetch", async () => {
@@ -83,9 +105,16 @@ describe("claimIntakeQueueJob", () => {
   });
 
   it("allows plain HTTP for loopback localhost testing", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Hello" }])));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Hello", automation_mode: "ai" }]),
+        ),
+    );
     const result = await claimIntakeQueueJob(conversationId, providerMessageId, { ...env, SUPABASE_URL: "http://localhost:54321" });
-    expect(result).toEqual({ kind: "claimed", claimToken, messageText: "Hello" });
+    expect(result).toEqual({ kind: "claimed", claimToken, messageText: "Hello", automationMode: "ai" });
   });
 
   it("treats a network failure as failed", async () => {
@@ -99,29 +128,57 @@ describe("claimIntakeQueueJob", () => {
   });
 
   it.each([
-    ["a non-array body", { result: "claimed", claim_token: claimToken, message_text: "Hello" }],
+    ["a non-array body", { result: "claimed", claim_token: claimToken, message_text: "Hello", automation_mode: "ai" }],
     ["zero rows", []],
-    ["more than one row", [{ result: "not_found", claim_token: null, message_text: null }, { result: "not_found", claim_token: null, message_text: null }]],
-    ["a row with an extra column", [{ result: "not_found", claim_token: null, message_text: null, extra: "x" }]],
-    ["a row with an unknown result", [{ result: "invented", claim_token: null, message_text: null }]],
-    ["a claimed row with a non-string token", [{ result: "claimed", claim_token: 1, message_text: "Hello" }]],
-    ["a claimed row with a malformed token", [{ result: "claimed", claim_token: "not-a-uuid", message_text: "Hello" }]],
-    ["a claimed row with a non-string text", [{ result: "claimed", claim_token: claimToken, message_text: 1 }]],
-    ["a claimed row with empty text", [{ result: "claimed", claim_token: claimToken, message_text: "" }]],
-    ["a claimed row with oversized text", [{ result: "claimed", claim_token: claimToken, message_text: "a".repeat(65537) }]],
-    ["a busy row with a non-null token", [{ result: "busy", claim_token: claimToken, message_text: null }]],
-    ["a not_found row with non-null text", [{ result: "not_found", claim_token: null, message_text: "leaked" }]],
+    [
+      "more than one row",
+      [
+        { result: "not_found", claim_token: null, message_text: null, automation_mode: null },
+        { result: "not_found", claim_token: null, message_text: null, automation_mode: null },
+      ],
+    ],
+    ["a row with an extra column", [{ result: "not_found", claim_token: null, message_text: null, automation_mode: null, extra: "x" }]],
+    ["a row with an unknown result", [{ result: "invented", claim_token: null, message_text: null, automation_mode: null }]],
+    ["a claimed row with a non-string token", [{ result: "claimed", claim_token: 1, message_text: "Hello", automation_mode: "ai" }]],
+    [
+      "a claimed row with a malformed token",
+      [{ result: "claimed", claim_token: "not-a-uuid", message_text: "Hello", automation_mode: "ai" }],
+    ],
+    ["a claimed row with a non-string text", [{ result: "claimed", claim_token: claimToken, message_text: 1, automation_mode: "ai" }]],
+    ["a claimed row with empty text", [{ result: "claimed", claim_token: claimToken, message_text: "", automation_mode: "ai" }]],
+    [
+      "a claimed row with oversized text",
+      [{ result: "claimed", claim_token: claimToken, message_text: "a".repeat(65537), automation_mode: "ai" }],
+    ],
+    ["a busy row with a non-null token", [{ result: "busy", claim_token: claimToken, message_text: null, automation_mode: null }]],
+    ["a not_found row with non-null text", [{ result: "not_found", claim_token: null, message_text: "leaked", automation_mode: null }]],
+    ["a busy row with a non-null automation mode", [{ result: "busy", claim_token: null, message_text: null, automation_mode: "ai" }]],
+    ["a claimed row with an unknown automation mode", [{ result: "claimed", claim_token: claimToken, message_text: "Hello", automation_mode: "invented" }]],
+    ["a claimed ai row with null text", [{ result: "claimed", claim_token: claimToken, message_text: null, automation_mode: "ai" }]],
+    [
+      "a claimed manual row with non-null text",
+      [{ result: "claimed", claim_token: claimToken, message_text: "leaked", automation_mode: "manual" }],
+    ],
+    [
+      "a claimed personal row with non-null text",
+      [{ result: "claimed", claim_token: claimToken, message_text: "leaked", automation_mode: "personal" }],
+    ],
   ])("treats %s as a malformed response and fails", async (_label, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
     expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: "failed" });
   });
 
   it("rejects a non-plain row and hidden extra columns", async () => {
-    const nonPlain = Object.assign(Object.create(null), { result: "not_found", claim_token: null, message_text: null });
+    const nonPlain = Object.assign(Object.create(null), {
+      result: "not_found",
+      claim_token: null,
+      message_text: null,
+      automation_mode: null,
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rawJsonResponse([nonPlain])));
     expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: "failed" });
 
-    const hiddenExtra = { result: "not_found", claim_token: null, message_text: null };
+    const hiddenExtra = { result: "not_found", claim_token: null, message_text: null, automation_mode: null };
     Object.defineProperty(hiddenExtra, "extra", { value: "x" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rawJsonResponse([hiddenExtra])));
     expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: "failed" });
@@ -130,7 +187,14 @@ describe("claimIntakeQueueJob", () => {
   it("does not log the request or response", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Sensitive text" }])));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse([{ result: "claimed", claim_token: claimToken, message_text: "Sensitive text", automation_mode: "ai" }]),
+        ),
+    );
 
     await claimIntakeQueueJob(conversationId, providerMessageId, env);
 
@@ -290,7 +354,7 @@ describe("finalizeIntakeQueueJob", () => {
     });
   });
 
-  it.each(["already_completed", "stale_claim", "stale_state"] as const)("parses a %s result with a null stage and version", async (result) => {
+  it.each(["already_completed", "stale_claim", "stale_state", "suppressed"] as const)("parses a %s result with a null stage and version", async (result) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
     expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: result });
   });

@@ -340,7 +340,7 @@ describe("finalizeAppointmentOfferQueueJob", () => {
     expect(await finalizeAppointmentOfferQueueJob(baseInput, env)).toEqual({ kind: result, intakeStage, stateVersion: 3 });
   });
 
-  it.each(["already_completed", "stale_claim", "stale_state"] as const)("parses a %s result with null stage and version", async (result) => {
+  it.each(["already_completed", "stale_claim", "stale_state", "suppressed"] as const)("parses a %s result with null stage and version", async (result) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
     expect(await finalizeAppointmentOfferQueueJob(baseInput, env)).toEqual({ kind: result });
   });
@@ -428,6 +428,8 @@ describe("finalizeAppointmentOfferQueueJob", () => {
     ["an unavailable row with the wrong valid stage", [{ result: "unavailable", intake_stage: "appointment_selection", state_version: 2 }]],
     ["an already_completed row with a non-null intake_stage", [{ result: "already_completed", intake_stage: "appointment_selection", state_version: null }]],
     ["an already_completed row with a non-null state_version", [{ result: "already_completed", intake_stage: null, state_version: 2 }]],
+    ["a suppressed row with a non-null intake_stage", [{ result: "suppressed", intake_stage: "appointment_selection", state_version: null }]],
+    ["a suppressed row with a non-null state_version", [{ result: "suppressed", intake_stage: null, state_version: 2 }]],
   ])("treats %s as a malformed response and fails", async (_label, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
     expect(await finalizeAppointmentOfferQueueJob(baseInput, env)).toEqual({ kind: "failed" });
@@ -517,7 +519,7 @@ describe("finalizeAppointmentDecisionQueueJob", () => {
     expect(await finalizeAppointmentDecisionQueueJob(baseInput, env)).toEqual({ kind: result, intakeStage, stateVersion: 3 });
   });
 
-  it.each(["already_completed", "stale_claim", "stale_state"] as const)("parses a %s result with null stage and version", async (result) => {
+  it.each(["already_completed", "stale_claim", "stale_state", "suppressed"] as const)("parses a %s result with null stage and version", async (result) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
     expect(await finalizeAppointmentDecisionQueueJob(baseInput, env)).toEqual({ kind: result });
   });
@@ -607,6 +609,8 @@ describe("finalizeAppointmentDecisionQueueJob", () => {
     ["a stale_hold row with the wrong valid stage", [{ result: "stale_hold", intake_stage: "completed", state_version: 2 }]],
     ["an already_completed row with a non-null intake_stage", [{ result: "already_completed", intake_stage: "completed", state_version: null }]],
     ["an already_completed row with a non-null state_version", [{ result: "already_completed", intake_stage: null, state_version: 2 }]],
+    ["a suppressed row with a non-null intake_stage", [{ result: "suppressed", intake_stage: "completed", state_version: null }]],
+    ["a suppressed row with a non-null state_version", [{ result: "suppressed", intake_stage: null, state_version: 2 }]],
   ])("treats %s as a malformed response and fails", async (_label, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
     expect(await finalizeAppointmentDecisionQueueJob(baseInput, env)).toEqual({ kind: "failed" });

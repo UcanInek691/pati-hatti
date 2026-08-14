@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 import { parseIntakeQueueMessage } from "./intakeQueue";
-import { claimIntakeQueueJob, finalizeIntakeQueueJob } from "./intakeJobLease";
+import { claimIntakeQueueJob, completeIntakeQueueJob, finalizeIntakeQueueJob } from "./intakeJobLease";
 import type { FinalizeIntakeQueueJobInput } from "./intakeJobLease";
 import { getConversationIntakeContext } from "./conversationState";
 import type { ConversationIntakeContext, IntakeStage } from "./conversationState";
@@ -176,6 +176,15 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     if (claim.kind === "completed" || claim.kind === "not_found") return "ack";
     if (claim.kind === "busy" || claim.kind === "failed") return "retry";
 
+    if (claim.automationMode !== "ai") {
+      // The route changed between ingest and claim (Task 033 race window a):
+      // complete the lease immediately and acknowledge, before any context
+      // lookup, safety hashing, OpenAI call, planning, appointment call,
+      // clinic-hours lookup, or reply creation.
+      const completeResult = await completeIntakeQueueJob(conversationId, providerMessageId, claim.claimToken, env);
+      return completeResult.kind === "completed" ? "ack" : "retry";
+    }
+
     const contextResult = await getConversationIntakeContext(conversationId, env);
     if (!contextResult.ok) return "retry";
     const context = contextResult.context;
@@ -212,7 +221,12 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         },
         env,
       );
-      if (finalizeResult.kind === "applied" || finalizeResult.kind === "already_completed" || finalizeResult.kind === "stale_claim") {
+      if (
+        finalizeResult.kind === "applied" ||
+        finalizeResult.kind === "suppressed" ||
+        finalizeResult.kind === "already_completed" ||
+        finalizeResult.kind === "stale_claim"
+      ) {
         return "ack";
       }
       return "retry";
@@ -238,7 +252,12 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         reply: replyPlan,
       };
       const finalizeResult = await finalizeIntakeQueueJob(finalizeInput, env);
-      if (finalizeResult.kind === "applied" || finalizeResult.kind === "already_completed" || finalizeResult.kind === "stale_claim") {
+      if (
+        finalizeResult.kind === "applied" ||
+        finalizeResult.kind === "suppressed" ||
+        finalizeResult.kind === "already_completed" ||
+        finalizeResult.kind === "stale_claim"
+      ) {
         return "ack";
       }
       return "retry";
@@ -303,6 +322,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       if (
         offerResult.kind === "offered" ||
         offerResult.kind === "unavailable" ||
+        offerResult.kind === "suppressed" ||
         offerResult.kind === "already_completed" ||
         offerResult.kind === "stale_claim"
       ) {
@@ -331,6 +351,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         decisionResult.kind === "declined" ||
         decisionResult.kind === "repeated" ||
         decisionResult.kind === "stale_hold" ||
+        decisionResult.kind === "suppressed" ||
         decisionResult.kind === "already_completed" ||
         decisionResult.kind === "stale_claim"
       ) {
@@ -353,7 +374,12 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     };
     const finalizeResult = await finalizeIntakeQueueJob(finalizeInput, env);
 
-    if (finalizeResult.kind === "applied" || finalizeResult.kind === "already_completed" || finalizeResult.kind === "stale_claim") {
+    if (
+      finalizeResult.kind === "applied" ||
+      finalizeResult.kind === "suppressed" ||
+      finalizeResult.kind === "already_completed" ||
+      finalizeResult.kind === "stale_claim"
+    ) {
       return "ack";
     }
     return "retry";

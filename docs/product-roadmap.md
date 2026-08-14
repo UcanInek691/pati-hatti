@@ -332,10 +332,10 @@ Kontrollü pilot öncesi planlanan teknik görevler:
 8. Task 035 - canary, failure injection, observability ve kontrollü pilot kapısı.
 
 Task 033 için ürün kararı: sistem arkadaş/müşteri ayrımını mesaj metninden veya
-AI tahmininden yapmayacak. Karışık kullanılan bir WhatsApp hesabı varsayılan
-olarak manuel kalacak; operatör yalnız seçtiği kişi için AI'yı açabilecek,
-belirli bir müşteriyi tekrar yalnız insana bırakabilecek ve önceden işaretlediği
-kişisel kişi için yeni mesaj içeriğinin VetAI'ye kaydedilmesini engelleyebilecek.
+AI tahmininden yapmaz. Karışık kullanılan bir WhatsApp hesabı varsayılan
+olarak manuel kalır; operatör yalnız seçtiği kişi için AI'yı açabilir,
+belirli bir müşteriyi tekrar yalnız insana bırakabilir ve önceden işaretlediği
+kişisel kişi için yeni mesaj içeriğinin VetAI'ye kaydedilmesini engelleyebilir.
 Meta webhook'u teknik olarak imzalı ham mesajı Worker'a ulaştırır; kişisel modda
 VetAI yalnız yönlendirme zarfını değerlendirip içeriği okumadan, hashlemeden,
 loglamadan, Supabase/OpenAI'a göndermeden bırakır. Kişisel mesaj baytlarının
@@ -344,6 +344,14 @@ Bu kontrol kendi başına insan mesajı göndermez. Aynı numaradan WhatsApp Bus
 uygulamasıyla yanıt verme olanağı Task 034 gerçek staging'inde doğrulanamazsa,
 personel ekranından manuel Cloud API mesajı gönderme kontrollü pilot öncesi yeni
 bir bloklayıcı görev olur.
+
+Task 033 durumu: migrasyon, RPC'ler, envelope-first yönlendirme, `/staff`
+"WhatsApp otomasyonu" bölümü ve kapsamdaki tüm testler yazıldı; yerel
+`pnpm typecheck`/`pnpm test` doğrulaması yapıldı (bkz.
+[`docs/selective-automation.md`](selective-automation.md)). Migrasyon ve
+`supabase/tests/033_selective_automation.sql` henüz hiçbir veritabanına
+uygulanmadı — bunu yalnız Codex, incelemeden sonra disposable `vetai-test`
+üzerinde yapar; commit, push ve deploy de bu aşamada yapılmadı.
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm

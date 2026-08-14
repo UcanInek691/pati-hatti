@@ -54,9 +54,14 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   console.log("whatsapp webhook event received");
 
   const statusExtraction = await extractOutboundStatuses(body);
-  const textExtraction = await extractInboundMessages(body);
-  if (!statusExtraction.ok || !textExtraction.ok) {
+  if (!statusExtraction.ok) {
     return new Response("Bad Request", { status: 400 });
+  }
+  const textExtraction = await extractInboundMessages(body, env);
+  if (!textExtraction.ok) {
+    return textExtraction.reason === "route_failed"
+      ? new Response("Service Unavailable", { status: 503 })
+      : new Response("Bad Request", { status: 400 });
   }
 
   let statusFailed = 0;
@@ -76,9 +81,23 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
 
   let processed = 0;
   let duplicate = 0;
+  let manual = 0;
+  let ignored = 0;
   let failed = 0;
   for (const item of textExtraction.items) {
     const outcome = await ingestWhatsAppTextMessage(item, env);
+
+    // Manual and ignored routes never enqueue paid intake work; they are a
+    // successful, terminal outcome for this item (Task 033).
+    if (outcome.kind === "manual") {
+      manual++;
+      continue;
+    }
+    if (outcome.kind === "ignored") {
+      ignored++;
+      continue;
+    }
+
     if (outcome.kind !== "processed" && outcome.kind !== "duplicate") {
       failed++;
       continue;
@@ -93,7 +112,7 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
     if (outcome.kind === "processed") processed++;
     else duplicate++;
   }
-  console.log("whatsapp webhook event persisted", { processed, duplicate, failed });
+  console.log("whatsapp webhook event persisted", { processed, duplicate, manual, ignored, failed });
 
   if (failed > 0 || statusFailed > 0) {
     return new Response("Service Unavailable", { status: 503 });

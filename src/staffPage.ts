@@ -82,6 +82,34 @@ export const STAFF_HTML = `<!doctype html>
   <ul id="queue-list"></ul>
 </section>
 
+<section id="automation-section" aria-labelledby="automation-heading" hidden>
+  <h2 id="automation-heading">WhatsApp otomasyonu</h2>
+  <p id="automation-status-region" role="status" aria-live="polite"></p>
+  <p id="automation-error-region" role="alert" aria-live="assertive"></p>
+  <label for="account-select">Hat</label>
+  <select id="account-select"></select>
+  <ul id="route-list"></ul>
+  <form id="route-form">
+    <label for="contact-input">Telefon numarası (+90...)</label>
+    <input type="text" id="contact-input" name="contact" required>
+    <button type="submit" name="mode" value="ai">AI açık</button>
+    <button type="submit" name="mode" value="manual">Sadece insan</button>
+    <button type="submit" name="mode" value="personal">Kişisel / yok say</button>
+    <button type="submit" name="mode" value="inherit">Numara varsayılanı</button>
+  </form>
+  <dl>
+    <dt>AI açık</dt>
+    <dd>Bu numaradan gelen mesajlara VetAI otomatik yanıt verir.</dd>
+    <dt>Sadece insan</dt>
+    <dd>Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz. Numarayı yalnızca personel telefonla veya başka bir kanaldan yanıtlayabilir.</dd>
+    <dt>Kişisel / yok say</dt>
+    <dd>Meta imzalı webhook'u VetAI'ye iletir. Yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, hashlenmez, loglanmaz, Supabase veya OpenAI'a gönderilmez ve kaydedilmez. Yönlendirme için telefon numarası VetAI'de saklanmaya devam eder; bot otomatik yanıt vermez.</dd>
+    <dt>Numara varsayılanı</dt>
+    <dd>Bu numara için özel ayar kaldırılır; hattın genel varsayılanı uygulanır.</dd>
+  </dl>
+  <p>Modu insan veya kişisel olarak değiştirmek önceki kayıtları silmez. Sağlayıcıya zaten iletilmiş bir yanıt yine de alıcıya ulaşabilir; bu geri alınamaz. Bu işlem hiçbir personeli bilgilendirmez ve otomatik bir insan yanıtı oluşturmaz.</p>
+</section>
+
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
   <h2 id="detail-heading">Detay</h2>
   <p id="workitem-status-region"></p>
@@ -100,6 +128,7 @@ export const STAFF_APP_JS = `"use strict";
 
 const SESSION_STORAGE_KEY = "vetai_staff_access_token";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CONTACT_E164_PATTERN = /^\\+[1-9]\\d{1,14}$/;
 const POLL_INTERVAL_MS = 30000;
 
 const statusRegion = document.getElementById("status-region");
@@ -107,6 +136,13 @@ const errorRegion = document.getElementById("error-region");
 const loginSection = document.getElementById("login-section");
 const queueSection = document.getElementById("queue-section");
 const detailSection = document.getElementById("detail-section");
+const automationSection = document.getElementById("automation-section");
+const automationStatusRegion = document.getElementById("automation-status-region");
+const automationErrorRegion = document.getElementById("automation-error-region");
+const accountSelect = document.getElementById("account-select");
+const routeList = document.getElementById("route-list");
+const routeForm = document.getElementById("route-form");
+const contactInput = document.getElementById("contact-input");
 const loginForm = document.getElementById("login-form");
 const emailInput = document.getElementById("email-input");
 const passwordInput = document.getElementById("password-input");
@@ -129,6 +165,7 @@ const REASON_LABELS = {
   provider_failed: "Sa\\u011flay\\u0131c\\u0131 hatas\\u0131",
 };
 const STATUS_LABELS = { open: "A\\u00e7\\u0131k", seen: "G\\u00f6r\\u00fcld\\u00fc", in_progress: "\\u0130\\u015fleniyor" };
+const MODE_LABELS = { ai: "AI a\\u00e7\\u0131k", manual: "Sadece insan", personal: "Ki\\u015fisel / yok say" };
 
 let config = null;
 let currentUserId = null;
@@ -136,6 +173,23 @@ let currentWorkItemId = null;
 let queueLoadInFlight = false;
 let knownWorkItemIds = null;
 let pollIntervalId = null;
+let selectedAccountId = null;
+let routeSubmitInFlight = false;
+
+function isExactRecord(value, keys) {
+  try {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.getPrototypeOf(value) === Object.prototype &&
+      Reflect.ownKeys(value).length === keys.length &&
+      keys.every((key) => Object.prototype.propertyIsEnumerable.call(value, key))
+    );
+  } catch {
+    return false;
+  }
+}
 
 function showError(message) {
   errorRegion.textContent = message;
@@ -154,18 +208,21 @@ function showLoginView() {
   loginSection.hidden = false;
   queueSection.hidden = true;
   detailSection.hidden = true;
+  automationSection.hidden = true;
 }
 
 function showQueueView() {
   loginSection.hidden = true;
   queueSection.hidden = false;
   detailSection.hidden = true;
+  automationSection.hidden = false;
 }
 
 function showDetailView() {
   loginSection.hidden = true;
   queueSection.hidden = true;
   detailSection.hidden = false;
+  automationSection.hidden = true;
 }
 
 function stopPolling() {
@@ -187,6 +244,11 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
   currentUserId = null;
   currentWorkItemId = null;
+  selectedAccountId = null;
+  accountSelect.textContent = "";
+  routeList.textContent = "";
+  automationStatusRegion.textContent = "";
+  automationErrorRegion.textContent = "";
   stopPolling();
   clearMessages();
   showLoginView();
@@ -565,6 +627,175 @@ async function openDetail(workItemId, conversationId) {
   }
 }
 
+async function fetchAutomationAccounts() {
+  const res = await authedFetch("/rest/v1/whatsapp_accounts?select=id,display_name,automation_default&order=display_name.asc&limit=100", {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error("account list fetch failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 100 ||
+    !rows.every(
+      (row) =>
+        isExactRecord(row, ["id", "display_name", "automation_default"]) &&
+        typeof row.id === "string" &&
+        UUID_PATTERN.test(row.id) &&
+        (row.display_name === null ||
+          (typeof row.display_name === "string" &&
+            row.display_name.trim() === row.display_name &&
+            row.display_name.length >= 1 &&
+            row.display_name.length <= 200)) &&
+        (row.automation_default === "ai" || row.automation_default === "manual")
+    )
+  ) {
+    throw new Error("malformed account list response");
+  }
+  return rows;
+}
+
+function renderAccounts(accounts) {
+  accountSelect.textContent = "";
+  for (const account of accounts) {
+    const option = document.createElement("option");
+    option.value = account.id;
+    const defaultLabel = account.automation_default === "ai" ? "AI" : "\\u0130nsan";
+    option.textContent = (account.display_name || "WhatsApp hesab\\u0131") + " (" + defaultLabel + ")";
+    accountSelect.appendChild(option);
+  }
+}
+
+async function fetchContactRoutes(accountId) {
+  const res = await authedFetch(
+    "/rest/v1/whatsapp_contact_routes?whatsapp_account_id=eq." +
+      encodeURIComponent(accountId) +
+      "&select=contact_e164,mode,updated_at&order=updated_at.desc&limit=100",
+    { headers: { Accept: "application/json" } }
+  );
+  if (!res.ok) {
+    throw new Error("route list fetch failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 100 ||
+    !rows.every(
+      (row) =>
+        isExactRecord(row, ["contact_e164", "mode", "updated_at"]) &&
+        typeof row.contact_e164 === "string" &&
+        CONTACT_E164_PATTERN.test(row.contact_e164) &&
+        (row.mode === "ai" || row.mode === "manual" || row.mode === "personal") &&
+        typeof row.updated_at === "string" &&
+        Number.isFinite(Date.parse(row.updated_at))
+    )
+  ) {
+    throw new Error("malformed route list response");
+  }
+  return rows;
+}
+
+function renderRoutes(routes) {
+  routeList.textContent = "";
+  for (const route of routes) {
+    const li = document.createElement("li");
+    const updated = new Date(route.updated_at).toLocaleString("tr-TR");
+    li.textContent = route.contact_e164 + " \\u2014 " + MODE_LABELS[route.mode] + " \\u2014 " + updated;
+    routeList.appendChild(li);
+  }
+}
+
+async function loadAutomationRoutes() {
+  if (!selectedAccountId) {
+    routeList.textContent = "";
+    return;
+  }
+  try {
+    renderRoutes(await fetchContactRoutes(selectedAccountId));
+  } catch {
+    automationErrorRegion.textContent = "Numara listesi y\\u00fcklenemedi.";
+  }
+}
+
+async function loadAutomationAccounts() {
+  try {
+    const accounts = await fetchAutomationAccounts();
+    renderAccounts(accounts);
+    selectedAccountId = accounts.length > 0 ? accounts[0].id : null;
+    if (selectedAccountId) {
+      accountSelect.value = selectedAccountId;
+    }
+    await loadAutomationRoutes();
+  } catch {
+    automationErrorRegion.textContent = "Hat listesi y\\u00fcklenemedi.";
+  }
+}
+
+async function submitContactRoute(accountId, contactE164, mode) {
+  const res = await authedFetch("/rest/v1/rpc/set_whatsapp_contact_route", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ p_whatsapp_account_id: accountId, p_contact_e164: contactE164, p_mode: mode }),
+  });
+  if (!res.ok) {
+    throw new Error("route rpc failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length !== 1 ||
+    typeof rows[0] !== "object" ||
+    rows[0] === null ||
+    Array.isArray(rows[0]) ||
+    !isExactRecord(rows[0], ["result"]) ||
+    typeof rows[0].result !== "string" ||
+    ["updated", "unchanged", "not_found"].indexOf(rows[0].result) === -1
+  ) {
+    throw new Error("malformed route rpc response");
+  }
+  return rows[0].result;
+}
+
+accountSelect.addEventListener("change", () => {
+  selectedAccountId = accountSelect.value || null;
+  automationErrorRegion.textContent = "";
+  loadAutomationRoutes();
+});
+
+routeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  automationErrorRegion.textContent = "";
+  automationStatusRegion.textContent = "";
+  if (routeSubmitInFlight) {
+    return;
+  }
+  const mode = event.submitter && event.submitter.value;
+  if (mode !== "ai" && mode !== "manual" && mode !== "personal" && mode !== "inherit") {
+    return;
+  }
+  const contactE164 = contactInput.value.trim();
+  if (!selectedAccountId || !CONTACT_E164_PATTERN.test(contactE164)) {
+    automationErrorRegion.textContent = "Ge\\u00e7erli bir E.164 numaras\\u0131 girin (\\u00f6rn. +90...).";
+    return;
+  }
+  routeSubmitInFlight = true;
+  try {
+    const result = await submitContactRoute(selectedAccountId, contactE164, mode);
+    if (result === "not_found") {
+      automationErrorRegion.textContent = "Hat bulunamad\\u0131.";
+      return;
+    }
+    contactInput.value = "";
+    automationStatusRegion.textContent = result === "updated" ? "Numara g\\u00fcncellendi." : "De\\u011fi\\u015fiklik yoktu.";
+    await loadAutomationRoutes();
+  } catch {
+    automationErrorRegion.textContent = "Numara g\\u00fcncellenirken bir hata olu\\u015ftu.";
+  } finally {
+    routeSubmitInFlight = false;
+  }
+});
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessages();
@@ -574,6 +805,7 @@ loginForm.addEventListener("submit", async (event) => {
     currentUserId = await fetchCurrentUser();
     showQueueView();
     await refreshQueue();
+    await loadAutomationAccounts();
     startPolling();
   } catch {
     clearSession();
@@ -686,6 +918,7 @@ async function init() {
       currentUserId = await fetchCurrentUser();
       showQueueView();
       await refreshQueue();
+      await loadAutomationAccounts();
       startPolling();
     } catch {
       clearSession();

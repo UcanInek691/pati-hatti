@@ -58,8 +58,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function claimRow(result: "claimed" | "completed" | "busy" | "not_found", extra: { claim_token?: string; message_text?: string } = {}): Response {
-  return jsonResponse([{ result, claim_token: extra.claim_token ?? null, message_text: extra.message_text ?? null }]);
+function claimRow(
+  result: "claimed" | "completed" | "busy" | "not_found",
+  extra: { claim_token?: string; message_text?: string | null; automation_mode?: "ai" | "manual" | "personal" } = {},
+): Response {
+  return jsonResponse([
+    {
+      result,
+      claim_token: extra.claim_token ?? null,
+      message_text: extra.message_text ?? null,
+      automation_mode: extra.automation_mode ?? (result === "claimed" ? "ai" : null),
+    },
+  ]);
 }
 
 function contextRow(overrides: Record<string, unknown> = {}): Response {
@@ -137,6 +147,7 @@ function decisionRow(
 
 type Routes = {
   claim?: () => Response;
+  complete?: () => Response;
   context?: () => Response;
   openai?: () => Response;
   finalize?: () => Response;
@@ -149,6 +160,7 @@ function routedFetch(routes: Routes) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = input.toString();
     if (url.includes("/rpc/claim_intake_queue_job")) return routes.claim ? routes.claim() : new Response("", { status: 500 });
+    if (url.includes("/rpc/complete_intake_queue_job")) return routes.complete ? routes.complete() : new Response("", { status: 500 });
     if (url.includes("/rpc/get_conversation_intake_context")) return routes.context ? routes.context() : new Response("", { status: 500 });
     if (url.includes("api.openai.com")) return routes.openai ? routes.openai() : new Response("", { status: 500 });
     if (url.includes("/rpc/finalize_appointment_offer_queue_job")) {
@@ -1534,5 +1546,53 @@ describe("processIntakeQueueMessage: Task 030 unsupported-media marker", () => {
     await processIntakeQueueMessage(validBody, env);
 
     expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(true);
+  });
+});
+
+describe("processIntakeQueueMessage: non-ai claim short-circuit (Task 033 race window a)", () => {
+  function completeRow(result: "completed" | "stale"): Response {
+    return jsonResponse([{ result }]);
+  }
+
+  it.each(["manual", "personal"] as const)(
+    "completes the lease and acks immediately for a %s claim, without any context, OpenAI, or finalize call",
+    async (automationMode) => {
+      const fetchMock = routedFetch({
+        claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: null, automation_mode: automationMode }),
+        complete: () => completeRow("completed"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await processIntakeQueueMessage(validBody, env);
+
+      expect(result).toBe("ack");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const completeBody = bodyOf(fetchMock, 1);
+      expect(completeBody).toEqual({
+        p_conversation_id: CONVERSATION_ID,
+        p_provider_message_id: PROVIDER_MESSAGE_ID,
+        p_claim_token: CLAIM_TOKEN,
+      });
+    },
+  );
+
+  it("retries when the immediate completion reports a stale claim", async () => {
+    const fetchMock = routedFetch({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: null, automation_mode: "manual" }),
+      complete: () => completeRow("stale"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
+  });
+
+  it("retries when the completion call fails closed", async () => {
+    const fetchMock = routedFetch({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: null, automation_mode: "manual" }),
+      complete: () => new Response("", { status: 500 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
   });
 });

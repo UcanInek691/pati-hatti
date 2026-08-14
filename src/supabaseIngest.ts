@@ -4,6 +4,8 @@ import type { WhatsAppIngestItem } from "./whatsappIngest";
 export type IngestOutcome =
   | { kind: "processed"; conversationId: string }
   | { kind: "duplicate"; conversationId: string }
+  | { kind: "manual"; conversationId: string }
+  | { kind: "ignored" }
   | { kind: "unknown_account" }
   | { kind: "failed" };
 
@@ -77,11 +79,11 @@ export async function ingestWhatsAppTextMessage(item: WhatsAppIngestItem, env: E
 
   const { result, conversation_id: conversationId } = row as Record<string, unknown>;
 
-  if (result === "unknown_account") {
-    return conversationId === null ? { kind: "unknown_account" } : FAILED;
+  if (result === "unknown_account" || result === "ignored") {
+    return conversationId === null ? { kind: result } : FAILED;
   }
 
-  if (result !== "processed" && result !== "duplicate") {
+  if (result !== "processed" && result !== "duplicate" && result !== "manual") {
     return FAILED;
   }
 

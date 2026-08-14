@@ -3,7 +3,8 @@ import type { IntakeStage } from "./conversationState";
 import type { IntakeReplyPlan } from "./intakeReply";
 
 export type ClaimIntakeQueueJobResult =
-  | { kind: "claimed"; claimToken: string; messageText: string }
+  | { kind: "claimed"; claimToken: string; messageText: string; automationMode: "ai" }
+  | { kind: "claimed"; claimToken: string; messageText: null; automationMode: "manual" | "personal" }
   | { kind: "completed" }
   | { kind: "busy" }
   | { kind: "not_found" }
@@ -13,6 +14,7 @@ export type CompleteIntakeQueueJobResult = { kind: "completed" } | { kind: "stal
 
 export type FinalizeIntakeQueueJobResult =
   | { kind: "applied"; intakeStage: IntakeStage; stateVersion: number }
+  | { kind: "suppressed" }
   | { kind: "already_completed" }
   | { kind: "stale_claim" }
   | { kind: "stale_state" }
@@ -130,19 +132,25 @@ export async function claimIntakeQueueJob(conversationId: string, providerMessag
 
   const row = asPlainRecord(rows[0]);
   try {
-    if (!row || Reflect.ownKeys(row).length !== 3) return FAILED_CLAIM;
+    if (!row || Reflect.ownKeys(row).length !== 4) return FAILED_CLAIM;
 
-    const { result, claim_token: claimToken, message_text: messageText } = row;
+    const { result, claim_token: claimToken, message_text: messageText, automation_mode: automationMode } = row;
 
     if (result === "completed" || result === "busy" || result === "not_found") {
-      return claimToken === null && messageText === null ? { kind: result } : FAILED_CLAIM;
+      return claimToken === null && messageText === null && automationMode === null ? { kind: result } : FAILED_CLAIM;
     }
 
     if (result !== "claimed") return FAILED_CLAIM;
     if (typeof claimToken !== "string" || !UUID_PATTERN.test(claimToken)) return FAILED_CLAIM;
-    if (typeof messageText !== "string" || !isCodePointLengthInRange(messageText, 1, 65536)) return FAILED_CLAIM;
 
-    return { kind: "claimed", claimToken, messageText };
+    if (automationMode === "ai") {
+      if (typeof messageText !== "string" || !isCodePointLengthInRange(messageText, 1, 65536)) return FAILED_CLAIM;
+      return { kind: "claimed", claimToken, messageText, automationMode: "ai" };
+    }
+    if (automationMode === "manual" || automationMode === "personal") {
+      return messageText === null ? { kind: "claimed", claimToken, messageText: null, automationMode } : FAILED_CLAIM;
+    }
+    return FAILED_CLAIM;
   } catch {
     return FAILED_CLAIM;
   }
@@ -200,7 +208,7 @@ export async function finalizeIntakeQueueJob(input: FinalizeIntakeQueueJobInput,
 
     const { result, intake_stage: intakeStage, state_version: stateVersion } = row;
 
-    if (result === "already_completed" || result === "stale_claim" || result === "stale_state") {
+    if (result === "already_completed" || result === "stale_claim" || result === "stale_state" || result === "suppressed") {
       return intakeStage === null && stateVersion === null ? { kind: result } : FAILED_FINALIZE;
     }
 

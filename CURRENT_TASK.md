@@ -1,8 +1,8 @@
 # Current task — 033 Selective WhatsApp automation and manual takeover
 
-Status: `READY`
+Status: `COMPLETE`
 
-Owner: Claude Sonnet
+Owner: Codex
 
 ## Goal
 
@@ -416,12 +416,191 @@ implementer.
 
 ## Observed context
 
-To be filled by the implementer from repository evidence before editing.
+Confirmed by reading `AGENTS.md`, `PROJECT_CONTEXT.md`, and this file in
+order, then the repository itself, before any edit:
+
+- Worktree was clean at commit `9e45f1c` (Task 032, "feat: add pilot staff
+  ownership and alerts") before this task's edits began.
+- `public.whatsapp_accounts` had no `automation_default` column and no
+  per-contact routing table existed; every inbound message persisted first
+  and every `processed | duplicate` outcome was unconditionally enqueued
+  (`src/index.ts`, `src/supabaseIngest.ts`).
+- `src/whatsappIngest.ts`'s `extractInboundMessages` validated full message
+  content with no route-lookup phase; no `resolve_whatsapp_contact_automation`
+  or `set_whatsapp_contact_route` RPC existed.
+- `claim_intake_queue_job` (`supabase/migrations/20260808000100_intake_job_lease.sql`)
+  returned only `result | claim_token | message_text`, no automation mode;
+  `complete_intake_queue_job` was already defined there and reused unchanged
+  by this task's consumer short-circuit — Task 033 does not redefine it.
+- `finalize_intake_queue_job`, `finalize_appointment_offer_queue_job`, and
+  `finalize_appointment_decision_queue_job` had no route recheck and no
+  `suppressed` result kind (defined across
+  `20260808000200_finalize_intake_queue_job.sql`,
+  `20260809000100_intake_reply_outbox.sql`, and
+  `20260810000200_whatsapp_appointment_flow.sql`).
+- `/staff` (`src/staffPage.ts`) already had RLS-scoped Supabase Auth and a
+  non-resolved work list, browser alerts, and claim/detail UI, but no
+  contact-routing controls and no `set_whatsapp_contact_route` caller.
+- `docs/selective-automation.md` did not exist; `docs/database-schema.md`,
+  `docs/inbound-queue.md`, and `docs/staff-workflow.md` had no Task 033
+  content; `docs/product-roadmap.md`'s Task 033 paragraph was written in
+  future/planned tense.
 
 ## Delivery record
 
-To be filled by the implementer after implementation and verification.
+Implemented strictly within the allowed-changes list; `git status
+--porcelain` after implementation shows exactly the allowed new/modified
+files and nothing else:
+
+- New: `supabase/migrations/20260814000300_selective_automation.sql`,
+  `supabase/tests/033_selective_automation.sql`, `src/contactAutomation.ts`,
+  `test/contactAutomation.test.ts`, `docs/selective-automation.md`.
+- Modified: `src/supabaseIngest.ts`, `src/whatsappIngest.ts`,
+  `src/intakeJobLease.ts`, `src/intakeConsumer.ts`, `src/appointmentFlow.ts`,
+  `src/index.ts`, `src/staffPage.ts`, `test/whatsappIngest.test.ts`,
+  `test/intakeJobLease.test.ts`, `test/intakeConsumer.test.ts`,
+  `test/appointmentFlow.test.ts`, `test/index.test.ts`,
+  `test/staffPage.test.ts`, `docs/database-schema.md`,
+  `docs/inbound-queue.md`, `docs/staff-workflow.md`, `docs/product-roadmap.md`
+  (Task 033 status paragraph only).
+- No file outside this list was touched. `CURRENT_TASK.md` was edited only
+  in this "Observed context" and "Delivery record" section.
+
+**Local verification run (all commands from "Required verification"):**
+
+```text
+pnpm install --frozen-lockfile   -> already up to date, exit 0
+pnpm typecheck                   -> tsc --noEmit, exit 0 (see fix below)
+pnpm test                        -> 32 test files passed, 1328 tests passed,
+                                     2 skipped (test/liveOpenAiEval.test.ts,
+                                     test/liveOpenAiMultiTurnEval.test.ts —
+                                     paid OpenAI evals, correctly not run)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> succeeded, "--dry-run: exiting now."
+git diff --check                 -> exit 0 (only benign LF/CRLF
+                                     autocrlf warnings, no whitespace errors)
+```
+
+`pnpm typecheck` initially failed with 3 `TS2322` errors in
+`test/intakeConsumer.test.ts` (the `claimRow` test helper's `message_text`
+override was typed `string | undefined` but three non-`ai` claim fixtures
+correctly pass `message_text: null`, matching the real RPC shape). Fixed by
+widening the helper's type to `string | null | undefined`; no behavior
+change. All five commands above pass cleanly after that fix.
+
+**Explicitly not run, per contract:**
+
+- The migration was not applied to any database (local, `vetai-test`, or
+  production) and `supabase/tests/033_selective_automation.sql` was not
+  executed. Both are reserved for Codex on disposable `vetai-test` after
+  review.
+- No real Meta/WhatsApp API call and no real (paid) OpenAI call were made.
+- No `git commit`, `git push`, or deploy was performed.
+
+**Test coverage added/changed this task:** `test/contactAutomation.test.ts`
+(new, 20 tests) for the route-resolution client; targeted additions/updates
+across `test/whatsappIngest.test.ts`, `test/intakeJobLease.test.ts`,
+`test/intakeConsumer.test.ts`, `test/staffPage.test.ts`, and
+`test/index.test.ts` (including new coverage for `manual`/`ignored` ingest
+outcomes and the envelope-first routing call sequence).
+
+**Codex review correction:** route lookup is still envelope-first, but a
+missing Supabase configuration, network failure, or malformed route-RPC
+response is an operational failure and returns retryable HTTP 503. Only a
+malformed inbound envelope/content returns HTTP 400. This prevents a
+transient routing outage from being acknowledged as a permanent bad request.
 
 ## Codex review record
 
-Reserved for Codex.
+Codex reviewed the full Task 033 diff and call paths, applied targeted fixes,
+and reran every required local check.
+
+Targeted fixes:
+
+- deferred WhatsApp `contacts/profile` inspection until after a candidate has
+  resolved non-`personal`; a throwing `contacts` getter now proves the personal
+  path touches envelope fields only;
+- distinguished malformed inbound data (HTTP 400) from route-service/config
+  failures (retryable HTTP 503);
+- removed unreachable early returns from
+  `set_whatsapp_contact_route` so pending outbox cleanup actually executes;
+- serialized ingest against route mutation on the exact account row with
+  `FOR KEY SHARE`, while the setter holds `FOR UPDATE`;
+- kept an exact duplicate under a currently manual route terminally `manual`
+  so it cannot enqueue fresh AI work;
+- added strict bounded account/route response validation and honest personal
+  webhook wording to `/staff`;
+- added strict TypeScript parser coverage and rollback-SQL suppression proof
+  for both appointment finalizers;
+- fixed the rollback fixture's second-message optimistic version assumption
+  by reading the conversation's current `state_version`.
+
+Local verification after fixes:
+
+```text
+pnpm install --frozen-lockfile   -> PASS
+pnpm typecheck                   -> PASS
+pnpm test                        -> PASS; 32 files, 1335 passed, 2 paid eval gates skipped
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS; no deploy
+git diff --check                 -> PASS; only benign autocrlf notices
+```
+
+Disposable database validation:
+
+- applied `20260814000300_selective_automation.sql` to `vetai-test`;
+- ran `033_selective_automation.sql` after fixing its stale expected-version
+  assumption: `PASS` with all reported fixture residue counts at zero;
+- independently verified `automation_default='manual'`, RLS enabled, exactly
+  one authenticated SELECT policy, authenticated read-only table access,
+  anon denial, setter/resolver execute ACLs, and aggregate fixture residue:
+  all `true`.
+
+No production database, deploy, real Meta/WhatsApp call, or paid OpenAI eval
+was used. Model/prompt/extraction/safety/reply copy did not change, so a paid
+eval is not required for this task.
+
+Decision: `PASS_FOR_OPUS`. The remaining mandatory gate is Claude Opus's
+read-only architecture/RLS/KVKK review.
+
+Opus returned `CHANGES_REQUIRED` on the first read-only pass. The narrow
+follow-up fixes now:
+
+- state directly in `/staff` that manual-mode messages remain stored for the
+  clinic and make no OpenAI call;
+- state directly that personal-mode content is not persisted but the routing
+  phone number remains stored;
+- document that owner erasure does not delete the independent route row,
+  `inherit` is the route-row deletion operation, and an `ai` account default
+  will apply again to future messages after deletion;
+- disclose same-clinic staff visibility of route rows;
+- record the required pre-production follow-up to add
+  `whatsapp_contact_routes` to `docs/kvkk-inceleme-paketi.md`;
+- reject malformed status callbacks before performing any contact-route RPC.
+
+Decision after targeted fixes: `READY_FOR_OPUS_RECHECK`.
+
+Verification after the Opus follow-up fixes:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+pnpm exec vitest run test/staffPage.test.ts test/index.test.ts
+                                  -> PASS; 131/131 targeted tests
+pnpm test                        -> PASS; 32 files, 1336 passed,
+                                     2 paid eval gates skipped
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  -> PASS; no deploy
+git diff --check                 -> PASS; only benign autocrlf notices
+```
+
+The migration and database fixture were not rerun because this follow-up
+changed only fixed staff copy, documentation, webhook validation ordering,
+and regression tests; the previously validated SQL is unchanged. No real
+Meta/OpenAI call, production mutation, commit, push, or deploy was performed.
+
+Claude Opus completed the requested narrow read-only recheck and returned
+`PASS`. It verified the exact `/staff` retention copy, the owner-erasure /
+`inherit` / account-default / same-clinic-visibility / KVKK documentation, and
+the malformed-status-callback ordering. No remaining Task 033 code, RLS, or
+KVKK review blocker was identified. Final Codex decision: `PASS`.

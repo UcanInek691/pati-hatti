@@ -379,6 +379,20 @@ The secure Worker baseline is committed on `main`:
   statements and strengthened rollback fixture passed on disposable
   `vetai-test`; the final fixture returned `PASS 0/0/0/0`. No production
   migration, deployment, real notification, or paid model call occurred.
+- Task 033 is complete. Each WhatsApp account now has a closed default
+  automation mode and optional exact-E.164 contact overrides for `ai`,
+  `manual`, or `personal`. The staff page can list and change those routes;
+  `inherit` removes the override so the account default applies again.
+- `manual` persists the clinic conversation but performs no Queue send,
+  OpenAI call, intake/appointment mutation, or bot reply. `personal` performs
+  envelope-only routing and acknowledges the signed webhook without reading,
+  hashing, logging, or persisting message content; the routing phone number
+  itself remains stored in `whatsapp_contact_routes`.
+- Task 033 passed frozen install, strict typecheck, 1,336 tests with 2 paid
+  eval gates skipped, Worker dry-run, Codex review, and Claude Opus's required
+  architecture/RLS/KVKK review. Its migration and rollback fixture passed on
+  disposable `vetai-test` with zero residue. No production migration,
+  deployment, real Meta/OpenAI call, or paid eval occurred.
 
 Verified evidence before the context-system change:
 
@@ -394,9 +408,10 @@ Verified evidence before the context-system change:
 
 - No general-purpose application query interface exists; runtime database
   access remains limited to predefined validated RPCs.
-- No explicit per-account/contact AI routing or manual-takeover control exists
-  yet. Same-number WhatsApp Business App/Cloud API coexistence and outbound
-  message echoes have not been verified for the intended Turkish pilot account.
+- Same-number WhatsApp Business App/Cloud API coexistence, outbound message
+  echoes, and operator expectations have not been verified on the intended
+  Turkish pilot account. The repository now provides explicit routing, but
+  Meta-side coexistence remains a staging gate.
 - External/background staff notification and administrative user or clinic
   management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
@@ -414,16 +429,16 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Tasks 028 through 032 are complete, including the authorized synthetic
+Tasks 028 through 033 are complete, including the authorized synthetic
 Luna/Terra live runs, bounded multi-turn interpretation, no-model budget stops,
 finite no-progress/media handoff, safe new-pet routing, unsupported-media
 handling, clinic operational hours/contact configuration, pilot staff
-ownership/status/browser alerts, and the $5 OpenAI hard-limit setup. Luna remains the production
+ownership/status/browser alerts, selective per-contact automation, and the $5
+OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. The next planned technical task is Task 033:
-explicit per-account/contact `ai | manual | personal` routing with atomic
-manual-takeover suppression. Real staging resources and same-number
-WhatsApp-Business-App/Cloud-API coexistence evidence move to Task 034; canary,
+evidence for prompt `2026-08-14.1`. The next planned technical task is Task 034:
+real staging resources and same-number WhatsApp-Business-App/Cloud-API
+coexistence evidence. Canary,
 failure injection, observability, and the controlled pilot gate move to Task
 035.
 
@@ -531,6 +546,20 @@ occurred.
   limit. It is an operational backstop rather than an exact transaction cap:
   enforcement can lag slightly, and production still needs bounded per-
   conversation work, Queue retry/DLQ behavior, and monitored usage.
+- Contact automation is resolved from validated WhatsApp envelope identifiers,
+  never inferred by AI. Route mutation and ingest serialize on the account
+  row, while Queue finalizers recheck the current route before committing an
+  AI reply; already handed-off provider traffic cannot be recalled.
+- `manual` messages remain stored for clinic use but receive no automated
+  processing. `personal` message content must remain unread and unpersisted,
+  although the exact routing phone number is retained so the exclusion can be
+  enforced. Removing that row with `inherit` may re-enable AI when the account
+  default is `ai`.
+- Contact-route rows are independent of owner records: owner erasure does not
+  remove them. All authenticated staff of the same clinic can see them through
+  RLS. The Turkish legal/KVKK review package must inventory this retention,
+  visibility, deletion procedure, and same-number personal/business use before
+  production approval.
 
 ## Context maintenance
 
