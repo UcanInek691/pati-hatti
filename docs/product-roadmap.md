@@ -336,6 +336,10 @@ AI tahmininden yapmayacak. Karışık kullanılan bir WhatsApp hesabı varsayıl
 olarak manuel kalacak; operatör yalnız seçtiği kişi için AI'yı açabilecek,
 belirli bir müşteriyi tekrar yalnız insana bırakabilecek ve önceden işaretlediği
 kişisel kişi için yeni mesaj içeriğinin VetAI'ye kaydedilmesini engelleyebilecek.
+Meta webhook'u teknik olarak imzalı ham mesajı Worker'a ulaştırır; kişisel modda
+VetAI yalnız yönlendirme zarfını değerlendirip içeriği okumadan, hashlemeden,
+loglamadan, Supabase/OpenAI'a göndermeden bırakır. Kişisel mesaj baytlarının
+VetAI altyapısına hiç ulaşmaması isteniyorsa güvenilir sınır ayrı numaradır.
 Bu kontrol kendi başına insan mesajı göndermez. Aynı numaradan WhatsApp Business
 uygulamasıyla yanıt verme olanağı Task 034 gerçek staging'inde doğrulanamazsa,
 personel ekranından manuel Cloud API mesajı gönderme kontrollü pilot öncesi yeni

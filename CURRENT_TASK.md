@@ -36,12 +36,16 @@ Allowed changes:
 - `supabase/migrations/20260814000300_selective_automation.sql` (new)
 - `supabase/tests/033_selective_automation.sql` (new, rollback-only)
 - `src/supabaseIngest.ts`
+- `src/contactAutomation.ts` (new)
+- `src/whatsappIngest.ts`
 - `src/intakeJobLease.ts`
 - `src/intakeConsumer.ts`
 - `src/appointmentFlow.ts`
 - `src/index.ts`
 - `src/staffPage.ts`
 - `test/supabaseIngest.test.ts`
+- `test/contactAutomation.test.ts` (new)
+- `test/whatsappIngest.test.ts`
 - `test/intakeJobLease.test.ts`
 - `test/intakeConsumer.test.ts`
 - `test/appointmentFlow.test.ts`
@@ -88,6 +92,10 @@ new dependency.
   with agents or bots. Same-number WhatsApp Business App/Cloud API coexistence
   eligibility and message-echo behavior have not been verified for the chosen
   Turkish pilot account and remain a real-staging gate.
+- Meta webhook subscription is WABA/phone-number scoped rather than
+  contact-scoped. Therefore the signed raw webhook necessarily reaches the
+  Worker for every covered inbound event; absolute non-receipt of personal
+  message bytes requires a separate number/account boundary.
 
 ## Required behavior
 
@@ -152,12 +160,53 @@ The UI and docs must truthfully warn that an outbound row already claimed as
 
 ### 3. Route before persistence and paid work
 
+Implement a two-phase inbound boundary. After signature verification and JSON
+decoding, `src/whatsappIngest.ts` must first extract/validate only the envelope
+fields required for routing: exact phone-number ID, sender E.164, provider
+message ID, timestamp, and declared message type. It must not access nested
+text/media/contact/location/document fields during this phase.
+
+Add a native-fetch, service-role-only client and a matching fixed RPC:
+
+```text
+public.resolve_whatsapp_contact_automation(
+  p_phone_number_id text,
+  p_contact_e164 text
+)
+```
+
+The RPC returns exactly one closed `ai | manual | personal | unknown_account`
+result, derives the clinic/account internally, exposes no identifier or PII,
+is `SECURITY INVOKER`, `STABLE`, `SET search_path=''`, and is executable only
+by `service_role`. The client must use the repository's HTTPS/loopback and
+strict fail-closed response rules and must never log inputs or bodies.
+
+Resolve every validated candidate before materializing any non-personal
+message. A failed route lookup fails the webhook closed. For effective
+`personal`, stop at the envelope: do not access or validate nested message
+content, construct a content-bearing ingest item, compute a payload hash, call
+the ingest RPC, persist data, enqueue work, or invoke OpenAI. Tests must use a
+throwing nested-content getter/proxy to prove the personal path never reads it.
+
+The Worker still necessarily receives and JSON-decodes Meta's signed webhook
+payload in transient memory. The product/docs must say “content is not
+inspected, logged, hashed, forwarded, or persisted by VetAI after routing,” not
+claim that the infrastructure never receives the bytes. A separate WhatsApp
+number is the only supported option when absolute non-receipt is required.
+
+After all route lookups succeed, materialize and fully validate only `ai` and
+`manual` items before performing any persistence, preserving the existing
+whole-webhook malformed-item rejection for those routes. Keep text/media
+canonical hashing byte-for-byte unchanged.
+
 Replace `ingest_whatsapp_text_message` only in the new migration, preserving
 its signature and existing validation/idempotency/tenant behavior for AI
 traffic.
 
-Resolve the exact account and `(account, sender E.164)` override before any
-event/owner/conversation/message write:
+Recheck the exact account and `(account, sender E.164)` override inside the
+ingest transaction before any event/owner/conversation/message write, so a
+route change between the pre-route read and mutation cannot persist content or
+enqueue automation:
 
 - effective `personal` -> return `ignored` with null conversation ID and make
   zero database writes;
@@ -176,6 +225,10 @@ Update the strict native-fetch result parser and webhook route so only
 outcomes with no Queue send; malformed/unknown Data API results remain failed.
 Operational logs may contain fixed aggregate counts only, never account/contact
 identifiers, message content, route-table values, or provider bodies.
+
+This route lookup adds no model tokens. It adds at most one bounded Supabase
+read per recognized inbound candidate; `manual` and `personal` routes make zero
+OpenAI calls, so they reduce paid model usage relative to the current behavior.
 
 ### 4. Pending-job and finalization race closure
 
@@ -286,11 +339,14 @@ two-session check on disposable `vetai-test` if practical.
 ### TypeScript/browser-source tests
 
 Cover strict accept/reject shapes for all new ingest/claim/finalizer results;
-zero Queue send for `manual | ignored`; zero context/OpenAI/planner/appointment/
-clinic lookup for a non-AI claim; acknowledgment of `suppressed` on every
-finalizer path; unchanged AI behavior; exact account/route projections and
-bounds; exact E.164 input handling; all route actions/results; fixed Turkish
-explanations; and absence of console/unsafe HTML/storage/notification leaks.
+strict route-client outcomes; envelope-first routing; a personal candidate
+whose nested content throws on access; whole-webhook validation before writes
+for AI/manual candidates; zero Queue send for `manual | ignored`; zero
+context/OpenAI/planner/appointment/clinic lookup for a non-AI claim;
+acknowledgment of `suppressed` on every finalizer path; unchanged AI behavior;
+exact account/route projections and bounds; exact E.164 input handling; all
+route actions/results; fixed Turkish explanations; and absence of
+console/unsafe HTML/storage/notification leaks.
 
 ## Documentation
 
@@ -300,6 +356,13 @@ explain:
 - account default versus exact contact override;
 - why the system never guesses friend/customer status;
 - persistence and AI behavior of each mode;
+- the honest webhook privacy boundary: Meta still delivers the signed payload
+  to the Worker, but personal nested content is not inspected, hashed, logged,
+  forwarded to Supabase/OpenAI, or persisted after envelope routing;
+- a separate number/account is required if the owner needs personal messages
+  never to reach VetAI infrastructure at all;
+- the bounded Supabase routing read versus zero OpenAI-token usage for manual
+  and personal messages;
 - pending-reply cleanup, finalizer recheck, and the irreducible already-in-
   flight send caveat;
 - same-number Coexistence is an unverified staging dependency, not a shipped
