@@ -1,355 +1,319 @@
-# Current task — 032 Pilot staff ownership, status, and browser alerts
+# Current task — 033 Selective WhatsApp automation and manual takeover
 
-Status: `COMPLETE`
+Status: `READY`
 
 Owner: Claude Sonnet
 
 ## Goal
 
-Turn the existing minimal `/staff` queue into a usable pilot operation without
-adding a framework or an external notification provider:
+Let one WhatsApp Business number serve both automated clinic contacts and
+human-only/personal contacts without asking AI to guess which is which.
 
-1. move each manual staff item through the closed workflow
-   `open -> seen -> in_progress -> resolved`;
-2. record the authenticated staff identity and database time for first view,
-   ownership, and manual resolution; and
-3. refresh the queue automatically and show a PII-free native browser alert
-   for newly visible work while the staff page is open.
+The closed routing modes are:
 
-This task does not change clinical decisions, customer-facing WhatsApp copy,
-AI behavior, or the creation rules for staff work items.
+- `ai`: preserve the reviewed intake/appointment/reply pipeline;
+- `manual`: persist the inbound clinic conversation, but perform no Queue send,
+  OpenAI call, intake/appointment mutation, or bot reply; and
+- `personal`: acknowledge the signed webhook without creating/updating an
+  owner, message, conversation, webhook event, or Queue job. The preconfigured
+  routing row necessarily retains the contact's E.164 number.
+
+An exact contact override belongs to one WhatsApp account. When no override
+exists, the account default applies. Every existing and newly created account
+defaults to `manual`; a dedicated automation-only staging/production number may
+be explicitly configured as `ai` by an authorized operational setup outside
+this task.
+
+This task also adds a minimal authenticated control to `/staff` so a clinic
+operator can set an exact E.164 contact to `ai`, `manual`, `personal`, or back
+to the account default. It does not infer friendship/customer status from text,
+prompt output, contact names, or previous conversation content.
 
 ## Scope
 
 Allowed changes:
 
-- `supabase/migrations/20260814000200_staff_assignment_and_alerts.sql` (new)
-- `supabase/tests/032_staff_assignment_and_alerts.sql` (new, rollback-only)
+- `supabase/migrations/20260814000300_selective_automation.sql` (new)
+- `supabase/tests/033_selective_automation.sql` (new, rollback-only)
+- `src/supabaseIngest.ts`
+- `src/intakeJobLease.ts`
+- `src/intakeConsumer.ts`
+- `src/appointmentFlow.ts`
+- `src/index.ts`
 - `src/staffPage.ts`
+- `test/supabaseIngest.test.ts`
+- `test/intakeJobLease.test.ts`
+- `test/intakeConsumer.test.ts`
+- `test/appointmentFlow.test.ts`
+- `test/index.test.ts`
 - `test/staffPage.test.ts`
-- `docs/staff-workflow.md`
-- `docs/staff-work-items.md`
+- `docs/selective-automation.md` (new)
 - `docs/database-schema.md`
-- `docs/product-roadmap.md` — Task 032 status paragraph only
+- `docs/inbound-queue.md`
+- `docs/staff-workflow.md`
+- `docs/product-roadmap.md` — Task 033 status paragraph only
 - `CURRENT_TASK.md` — implementer fills only **Observed context** and
   **Delivery record**
 
 Do not change:
 
-- staff-work-item creation, deduplication, urgency, reason, tenant FK,
-  erasure cascade, or automatic provider-failure resolution behavior;
-- conversation, intake, safety, appointment, webhook, Queue, outbox, clinic
-  hours, OpenAI prompt/model/eval, or WhatsApp behavior;
-- Worker routes, environment bindings, Wrangler configuration, dependencies,
-  package-manager files, lockfile, or existing migrations;
-- Supabase Auth user/role management or clinic membership management;
-- production resources, secrets, deployments, or external service state.
+- prompt text/version, OpenAI model/configuration, extraction schema, safety
+  decision, clinical copy, clinic-hours copy, appointment copy, or media copy;
+- webhook signature/size/content-type validation or outbound Meta request
+  format;
+- existing migration files, core RLS policies, staff work-item creation/status
+  rules, appointment rules, Queue retry/DLQ limits, dependencies, lockfile,
+  Wrangler bindings, or production resources;
+- current staff authentication/session design or staff claim/resolve behavior.
 
-Do not add a UI framework, Supabase SDK, Realtime subscription, service
-worker, Push API backend, custom audio asset, e-mail/SMS/Slack/CRM integration,
-notes, staff messaging, supervisor console, reassignment/history table,
-analytics service, SLA engine, or generic workflow abstraction.
+Do not add content-based routing, AI classification of personal contacts, a
+CRM, a second inbox, a staff free-text sender, contact import/sync, address-book
+access, WhatsApp message-echo parsing, push/e-mail/SMS alerts, a framework, or a
+new dependency.
 
 ## Verified starting evidence
 
-- Task 031 is complete and committed at `7f8277c`; the worktree was clean
+- Task 032 is complete and committed at `9e45f1c`; the worktree was clean
   before this contract.
-- `public.staff_work_items` currently has only `open | resolved` status,
-  `created_at`, and `resolved_at`. Authenticated staff have same-clinic SELECT
-  only; all direct INSERT/UPDATE/DELETE operations remain denied.
-- `public.resolve_staff_work_item(uuid)` is an authenticated-only,
-  tenant-checking `SECURITY DEFINER` RPC. It locks the exact row and currently
-  lets any same-clinic staff member resolve an open item.
-- `/staff` uses native browser APIs and direct Supabase Auth/PostgREST calls.
-  It stores only the access token in `sessionStorage`, lists only `status=open`
-  rows, refreshes manually, and has no ownership or notification behavior.
-- The staff list already sorts `priority.desc, created_at.asc, id.asc`, so
-  urgent work appears first without a schema/index redesign.
-- Automatic `provider_failed` closure is performed by the existing database
-  trigger and must remain a valid system resolution with no human resolver.
+- Every supported inbound message currently persists first, then every
+  `processed | duplicate` outcome is enqueued. No contact/account automation
+  route exists.
+- The Queue consumer claims the event before reading context or calling
+  OpenAI. Generic and appointment finalizers lock the exact event before
+  mutating conversation/appointment/outbox state.
+- `/staff` already has RLS-scoped Supabase Auth and can render same-clinic
+  operational data safely, but it cannot configure contact routing or send a
+  human WhatsApp message.
+- Meta's official Cloud API documentation supports systems connecting users
+  with agents or bots. Same-number WhatsApp Business App/Cloud API coexistence
+  eligibility and message-echo behavior have not been verified for the chosen
+  Turkish pilot account and remain a real-staging gate.
 
 ## Required behavior
 
-### 1. Minimal status and audit columns
+### 1. Closed account/contact routing data
 
-The migration must extend `public.staff_work_items` with exactly these nullable
-columns:
+The migration must:
 
-- `first_seen_at timestamptz`
-- `first_seen_by uuid references auth.users(id) on delete set null`
-- `assigned_at timestamptz`
-- `assigned_to uuid references auth.users(id) on delete set null`
-- `resolved_by uuid references auth.users(id) on delete set null`
+- add `automation_default text not null default 'manual'` to
+  `public.whatsapp_accounts`, constrained to `ai | manual`;
+- create `public.whatsapp_contact_routes` with exactly the routing identity,
+  mode, and timestamps needed for this feature:
+  `clinic_id`, `whatsapp_account_id`, `contact_e164`, `mode`, `created_at`,
+  `updated_at`;
+- make `(whatsapp_account_id, contact_e164)` the primary/unique identity;
+- constrain `contact_e164` to canonical E.164 and `mode` to
+  `ai | manual | personal`;
+- bind `(whatsapp_account_id, clinic_id)` to the existing composite WhatsApp
+  account key with `ON DELETE CASCADE`, and cascade clinic/account erasure;
+- enable RLS, revoke default access, grant same-clinic authenticated `SELECT`
+  only through one `is_clinic_staff(clinic_id)` policy, and grant backend
+  access only to `service_role`;
+- reuse the existing updated-at trigger function; add no audit/history table.
 
-Replace the existing status check so the only allowed values are:
+An override is account-specific. Removing it restores that exact account's
+default. Route rows contain a phone number and are therefore personal data;
+they must never be logged, sent to OpenAI, placed in browser notifications, or
+claimed to be anonymous.
 
-`open | seen | in_progress | resolved`.
+### 2. Closed authenticated route mutation
 
-Add named checks that enforce:
-
-- `open`: no seen/assignment/resolution timestamps and no actor IDs;
-- `seen`: `first_seen_at` is present, assignment/resolution fields are null;
-- `in_progress`: `first_seen_at` and `assigned_at` are present,
-  `resolved_at/resolved_by` are null;
-- `resolved`: `resolved_at` is present; human audit fields may be null because
-  existing rows and the existing provider-status trigger can resolve work
-  automatically;
-- an actor UUID, when non-null, always has its matching timestamp.
-
-`ON DELETE SET NULL` may erase an actor UUID while retaining the event time.
-Therefore checks must not require an actor UUID whenever its timestamp exists.
-An `in_progress` row whose assignee was erased remains recoverable by a later
-claim.
-
-Existing `open` and `resolved` rows must satisfy the new checks without an
-invented backfill identity or timestamp. Do not add an event/audit table or a
-new list index unless an actual new query requires it.
-
-The existing RLS policy and grants must remain unchanged: same-clinic
-authenticated users can SELECT these columns but still cannot mutate the table
-directly. Actor IDs are opaque operational identifiers and must never be
-interpolated into the page, logs, alerts, or customer messages.
-
-### 2. Closed authenticated RPCs
-
-Create these functions:
+Create one RPC:
 
 ```text
-public.mark_staff_work_item_seen(p_work_item_id uuid)
-public.claim_staff_work_item(p_work_item_id uuid)
+public.set_whatsapp_contact_route(
+  p_whatsapp_account_id uuid,
+  p_contact_e164 text,
+  p_mode text
+)
 ```
 
-Replace `public.resolve_staff_work_item(uuid)` without changing its signature.
+`p_mode` accepts only `ai | manual | personal | inherit`; `inherit` deletes the
+override. The function must be `SECURITY DEFINER`, `VOLATILE`,
+`SET search_path=''`, executable only by `authenticated`, and revoked from
+`PUBLIC`, `anon`, and `service_role`.
 
-All three functions must be `SECURITY DEFINER`, `VOLATILE`,
-`SET search_path = ''`, executable only by `authenticated`, and revoked from
-`PUBLIC`, `anon`, and `service_role`. Each must:
+It must validate inputs before mutation, lock/resolve the exact WhatsApp
+account, authorize its clinic through `vetai_private.is_clinic_staff`, and
+return the same `not_found` result for an absent/cross-tenant account. It may
+return only the closed one-column results `updated | unchanged | not_found`.
+It must not return an account, clinic, contact, owner, or actor identifier.
 
-- reject a null ID before reading data;
-- obtain `auth.uid()`, lock the exact work-item row, and authorize the locked
-  row through `vetai_private.is_clinic_staff(row.clinic_id)`;
-- return the same `not_found` result for absent and cross-clinic rows;
-- derive every actor from `auth.uid()`; callers never provide a clinic or user
-  ID;
-- return exactly one row with one `result text` field;
-- use no dynamic SQL and reveal no identifier, PII, message, or database error
-  detail in a success result.
+When an owner with the exact clinic/phone already exists, lock that owner row
+before changing the route. When the resulting route is `manual` or `personal`,
+delete only still-`pending` automated outbox rows for that exact account and
+owner's conversations in the same transaction. Never delete or rewrite
+`processing`, `accepted`, or `failed` rows. This lock order must serialize the
+route change with intake finalization so an uncommitted finalizer cannot insert
+a new pending reply after the cleanup.
 
-#### `mark_staff_work_item_seen`
+The UI and docs must truthfully warn that an outbound row already claimed as
+`processing` may already be leaving the system and cannot be recalled.
 
-- `open` -> atomically set `status='seen'`, `first_seen_at=now()`, and
-  `first_seen_by=auth.uid()`; return `seen`.
-- `seen | in_progress` -> no mutation; return `already_seen`.
-- `resolved` -> no mutation; return `already_resolved`.
-- Closed result set: `seen | already_seen | already_resolved | not_found`.
+### 3. Route before persistence and paid work
 
-#### `claim_staff_work_item`
+Replace `ingest_whatsapp_text_message` only in the new migration, preserving
+its signature and existing validation/idempotency/tenant behavior for AI
+traffic.
 
-- `open | seen` -> atomically set `status='in_progress'`, fill missing first-
-  seen fields with `now()/auth.uid()`, and set `assigned_at/assigned_to` to
-  `now()/auth.uid()`; return `claimed`.
-- `in_progress` with the same assignee -> no mutation; return
-  `already_claimed`.
-- `in_progress` with a different non-null assignee -> no mutation; return
-  `busy`.
-- `in_progress` with a null assignee left by Auth-user erasure -> assign the
-  current user, refresh `assigned_at`, and return `claimed`.
-- `resolved` -> no mutation; return `already_resolved`.
-- Closed result set:
-  `claimed | already_claimed | busy | already_resolved | not_found`.
+Resolve the exact account and `(account, sender E.164)` override before any
+event/owner/conversation/message write:
 
-#### `resolve_staff_work_item`
+- effective `personal` -> return `ignored` with null conversation ID and make
+  zero database writes;
+- effective `manual` -> persist the existing sanitized inbound/event/owner/
+  conversation/message record atomically, but make the event intake state
+  terminally completed and return `manual` with its conversation ID;
+- effective `ai` -> preserve current `processed | duplicate` behavior and
+  pending intake state.
 
-- Preserve `already_resolved | not_found` behavior.
-- `open | seen`, or an `in_progress` row with a null assignee -> no mutation;
-  return `not_claimed`.
-- `in_progress` assigned to another user -> no mutation; return `not_owner`.
-- Only the current assignee may set `status='resolved'`,
-  `resolved_at=now()`, and `resolved_by=auth.uid()`; return `resolved`.
-- Closed result set:
-  `resolved | already_resolved | not_claimed | not_owner | not_found`.
+Unknown accounts remain `unknown_account` with zero writes. Exact duplicate
+delivery under a currently manual/personal route must not create/enqueue new AI
+work. Do not read or classify message text to choose a route.
 
-The existing database trigger may still resolve `provider_failed` items
-without calling this RPC; such rows legitimately have `resolved_by = null`.
-True two-session lock contention is a Codex validation concern, not something
-the rollback-only fixture may claim to have executed.
+Update the strict native-fetch result parser and webhook route so only
+`processed | duplicate` enqueue. `manual | ignored` are successful HTTP-200
+outcomes with no Queue send; malformed/unknown Data API results remain failed.
+Operational logs may contain fixed aggregate counts only, never account/contact
+identifiers, message content, route-table values, or provider bodies.
 
-### 3. Staff identity and queue query
+### 4. Pending-job and finalization race closure
 
-Keep the existing direct Supabase Auth architecture and access-token storage.
-After login and on session restoration, obtain the current authenticated user
-from the fixed `/auth/v1/user` endpoint using the existing token. Accept only
-a valid non-empty UUID `id`, hold it in memory, and never store email, user ID,
-or any additional auth response in `sessionStorage`.
+Extend `claim_intake_queue_job` in the new migration so a valid claim returns
+the current closed automation mode in addition to its existing data. For
+`manual | personal`, do not return `message_text`; the TypeScript parser must
+require exact null/value coherence. The consumer must complete the claimed
+lease immediately and acknowledge it before context lookup, safety hashing,
+OpenAI, planning, appointment calls, clinic-hours lookup, or reply creation.
 
-The list query must:
+Create/reuse one narrowly scoped private helper that locks the conversation's
+owner and resolves the effective route from the exact event account. Revoke
+direct execution except where the reviewed service-role finalizers need it.
 
-- select only `id,kind,priority,reason,status,created_at,conversation_id,
-  first_seen_at,assigned_at,assigned_to`;
-- include every non-resolved status and exclude resolved rows;
-- preserve urgent-first, then oldest-first ordering and the 100-row bound;
-- remain RLS-scoped by the caller token.
+In the new migration, replace the current bodies of:
 
-The rendered list must show fixed Turkish labels for `open`, `seen`, and
-`in_progress`, plus one of `Sahipsiz`, `Sizde`, or `Başka personelde` by
-comparing `assigned_to` with the in-memory current-user ID. Never display an
-actor UUID.
+- `finalize_intake_queue_job`;
+- `finalize_appointment_offer_queue_job`; and
+- `finalize_appointment_decision_queue_job`.
 
-### 4. View, claim, and resolve UI
+After each finalizer validates and locks the current event/claim, but before
+any conversation, slot, or outbox mutation, it must lock/recheck the effective
+route. If the route is no longer `ai`, atomically complete the current intake
+lease and return a new closed `suppressed` result with null stage/version.
+There must be zero conversation-state change, appointment hold/confirmation/
+release, or outbox insert in that branch.
 
-Opening a detail must call `mark_staff_work_item_seen` before loading owner,
-pet, conversation, or messages. Accept only its exact one-row closed result.
-On `already_resolved | not_found`, return to the refreshed list without
-loading detail. Network/HTTP/malformed failures show a generic error and do
-not broaden data access.
+Update all three strict TypeScript clients and consumer dispositions so
+`suppressed` is accepted only with the exact null shape and is acknowledged.
+Every other result and failure behavior remains unchanged.
 
-Add a fixed `İşi üstlen` action:
+### 5. Minimal staff routing controls
 
-- it calls only `claim_staff_work_item` with the current work-item ID;
-- it is available for `open | seen`, for a recoverable null-assignee
-  `in_progress` row, and idempotently for the current assignee;
-- `busy` displays a fixed Turkish “başka personel üstlendi” status without an
-  identity;
-- success refreshes the selected item's state.
+Keep `/staff` dependency-free. Add a separate fixed “WhatsApp otomasyonu”
+section that:
 
-The existing resolve action must be enabled only when the item is
-`in_progress` and assigned to the current user. Keep its fixed confirmation.
-Accept the expanded closed resolve result set; `not_claimed | not_owner` must
-show generic fixed Turkish guidance and refresh state rather than leaking any
-actor or raw response.
+- loads the caller's RLS-scoped WhatsApp accounts with only
+  `id,display_name,automation_default`;
+- loads at most 100 configured routes for the selected account with only
+  `contact_e164,mode,updated_at`, ordered newest first;
+- accepts one exact canonical E.164 input and fixed actions for
+  `AI açık`, `Sadece insan`, `Kişisel / yok say`, and `Numara varsayılanı`;
+- calls only `set_whatsapp_contact_route` and accepts only its exact one-row
+  closed result;
+- refreshes only this bounded routing section after a successful change.
 
-All dynamic database values continue to use `textContent` and native DOM
-construction only. Do not add `innerHTML`, log calls, unrestricted selects,
-raw provider bodies, or secret/service-role references.
+Use `textContent`/native DOM only. Never store account/contact/route data in
+`sessionStorage`, local storage, notifications, URLs, or logs. Existing login,
+queue/detail, ownership, polling, and browser-alert behavior must not change.
 
-### 5. Automatic refresh and PII-free browser alerts
+Display fixed Turkish explanations:
 
-Use only native browser APIs:
+- `AI açık`: future messages may enter the automated intake flow;
+- `Sadece insan`: messages are retained for the clinic, but VetAI does not
+  answer or call OpenAI;
+- `Kişisel / yok say`: future message content and owner/conversation records
+  are not persisted by VetAI, while the routing phone remains stored, and the
+  bot does not answer;
+- `Numara varsayılanı`: removes the override;
+- changing to manual/personal does not erase earlier stored records; and
+- a reply already in provider delivery may still arrive.
 
-- while authenticated and the page remains open, fetch the bounded work list
-  every 30 seconds;
-- prevent overlapping refresh requests;
-- stop the interval on logout/session failure and do not create multiple
-  intervals after repeated login/navigation;
-- continue polling while the detail view is open, but do not replace its DOM;
-- the first successful list load establishes a baseline and emits no alert;
-- on later successful loads, alert only for work-item IDs not in the previous
-  successful open-set baseline; status/ownership changes of an existing ID do
-  not alert;
-- a failed refresh does not erase the last successful baseline and does not
-  generate a notification.
+Do not imply that a human was notified or will answer. This task adds no human
+message composer.
 
-Add a fixed `Bildirimleri aç` button. Request `Notification` permission only
-from that explicit user action—never at page load/login. Unsupported, denied,
-or default permission states must remain non-fatal and show fixed Turkish
-status text.
+### 6. Same-number manual messaging ceiling
 
-When permission is already `granted`, a later newly visible item may create
-one native notification with only:
+Document that route controls only silence VetAI. Human same-number replies
+require either:
 
-- title: `VetAI personel kuyruğu`
-- body `Yeni acil personel işi var.` when at least one new item is urgent;
-- otherwise body: `Yeni personel işi var.`
+1. Meta-supported WhatsApp Business App/Cloud API coexistence on the chosen
+   account; or
+2. a later reviewed staff free-text sender through Cloud API.
 
-Do not place work-item IDs, clinic/owner/pet names, phone numbers, reasons,
-message content, counts, URLs, tokens, or other data in the notification.
-Do not set `silent: true`; actual sound remains controlled by the browser and
-operating system and is not guaranteed by this application.
-
-The visible page status region must still report the current open-work count.
-Manual refresh remains available.
-
-### 6. Explicit product ceiling
-
-This task's notification is only an active-page pilot aid. It does not prove a
-person saw the work, and it does not operate reliably after the page/browser
-is closed. General sale still requires a separate, PII-free external
-notification path plus measured staging/pilot evidence.
-
-No customer-facing text may claim that staff were notified, assigned, or will
-respond within a time window.
+Task 034 must verify the chosen account's current Coexistence eligibility,
+onboarding behavior, and outbound message-echo/webhook behavior in real
+staging. If it is unavailable, manual compose/send becomes a pilot blocker.
+Do not claim coexistence is available in Türkiye or for this account until
+that staging evidence exists.
 
 ## Required tests
 
 ### SQL rollback fixture
 
-The rollback-only SQL test must prove:
+Prove at minimum:
 
-- the new status and audit checks, including existing open/resolved row
-  compatibility and Auth-user `ON DELETE SET NULL` behavior;
-- same-clinic authenticated `open -> seen -> in_progress -> resolved` with
-  exact first-seen/assignment/resolver identity and timestamps;
-- idempotent seen/claim/resolve results;
-- claim directly from `open` fills first-seen fields;
-- a second same-clinic user receives `busy`/`not_owner` and cannot mutate the
-  current owner's row;
-- an erased assignee can be reclaimed by another same-clinic user;
-- absent and cross-tenant IDs are indistinguishable as `not_found` with zero
-  mutation;
-- null IDs fail before lookup;
-- automatic `provider_failed` resolution remains valid with
-  `resolved_by is null`;
-- authenticated direct table INSERT/UPDATE/DELETE remains denied, SELECT
-  remains same-clinic only, and `anon`/`service_role` cannot execute the three
-  staff RPCs;
-- function security/search-path/grant shape and zero fixture residue after
-  rollback.
+- default/manual/AI/contact-override resolution and exact account isolation;
+- personal mode writes no webhook event, owner, conversation, or message;
+- manual mode persists exactly one inbound conversation/message but completes
+  intake and cannot be claimed;
+- AI mode preserves processed/duplicate behavior;
+- route mutation same-clinic success, idempotency, inherit deletion,
+  cross-tenant/absent indistinguishability, invalid-input rejection, RLS,
+  grants, account/clinic erasure, and zero fixture residue;
+- changing to manual/personal deletes only exact pending outbox rows and leaves
+  processing/accepted/failed rows unchanged;
+- claim returns mode with strict null text for non-AI;
+- generic/appointment-offer/appointment-decision finalizers return
+  `suppressed`, complete the lease, and cause zero state/slot/outbox mutation
+  after a route change;
+- function security/search-path/grant shape and the common owner-lock route
+  check.
 
-The sequential fixture may verify row-state outcomes but must state that it
-does not execute real two-session lock contention.
+The rollback fixture may prove sequential state outcomes, but must not claim a
+real two-session race. Codex reviews lock order and may run a separate
+two-session check on disposable `vetai-test` if practical.
 
 ### TypeScript/browser-source tests
 
-Extend the existing dependency-free tests to cover:
-
-- the exact non-resolved list projection/order/limit;
-- current-user loading, UUID rejection, access-token-only session storage,
-  and session clearing on 401/403;
-- all three RPC paths and every accepted/rejected closed result;
-- exact list ownership/status labels without rendering actor UUIDs;
-- mark-seen-before-detail ordering, claim/busy behavior, and owner-only
-  resolve enablement;
-- one 30-second interval, overlap prevention, logout/session cleanup, manual
-  refresh preservation, and polling during detail view without replacing it;
-- baseline/no-initial-alert, new-ID alert, no alert for existing-ID status
-  changes, urgent precedence, and baseline retention after failure;
-- explicit permission request only, unsupported/denied behavior, and exact
-  PII-free notification title/body;
-- no `console`, dynamic HTML sink, service-role key, refresh-token storage,
-  unrestricted select, arbitrary URL, or notification interpolation.
-
-Do not add a DOM/test framework dependency merely to test this fixed page.
-Reuse the existing source-level page test style and extract a tiny pure helper
-only if it materially improves behavioral proof without widening runtime
-surface.
+Cover strict accept/reject shapes for all new ingest/claim/finalizer results;
+zero Queue send for `manual | ignored`; zero context/OpenAI/planner/appointment/
+clinic lookup for a non-AI claim; acknowledgment of `suppressed` on every
+finalizer path; unchanged AI behavior; exact account/route projections and
+bounds; exact E.164 input handling; all route actions/results; fixed Turkish
+explanations; and absence of console/unsafe HTML/storage/notification leaks.
 
 ## Documentation
 
-Update the staff docs to explain:
+Create `docs/selective-automation.md` and narrowly update existing docs to
+explain:
 
-- the four statuses and which RPC performs each manual transition;
-- first-seen, current-owner, assignment, resolver, and timestamp semantics;
-- actor UUIDs are same-clinic operational/audit data, not display names, and
-  are nulled when the Auth user is erased while timestamps remain;
-- automatic provider resolution has no human resolver;
-- urgent-first ordering and current `Sahipsiz | Sizde | Başka personelde`
-  display;
-- automatic 30-second refresh and the exact PII-free alert boundary;
-- notification permission is explicit, OS/browser sound is not guaranteed,
-  and the page must remain open;
-- the pilot procedure: one named staff operator keeps the page open during
-  clinic hours, enables notifications, claims before working, resolves after
-  action, and hands page-monitoring duty to another authenticated staff member
-  at shift change; an already claimed item remains with its recorded owner
-  because this MVP has no release/reassignment flow;
-- no response-time promise is made to customers; `first_seen_at`,
-  `assigned_at`, and `resolved_at` only enable later measurement;
-- no external/background notification, full immutable event history,
-  reassignment UI, notes, staff reply, or admin/user-management UI exists.
+- account default versus exact contact override;
+- why the system never guesses friend/customer status;
+- persistence and AI behavior of each mode;
+- pending-reply cleanup, finalizer recheck, and the irreducible already-in-
+  flight send caveat;
+- same-number Coexistence is an unverified staging dependency, not a shipped
+  capability;
+- `personal` route phone numbers are still personal data, and earlier stored
+  records are not automatically erased;
+- operator procedure for pre-marking friends, enabling AI for selected
+  customers, taking a customer back to manual, and restoring the default;
+- no staff notification, response-time promise, free-text sender, echo import,
+  contact sync, or account-default admin UI exists in this task.
 
-State that staff actor IDs and operational timestamps are personal/audit data
-whose retention and access must be covered by the Turkish legal/KVKK review
-before production.
+Include links to Meta's official Cloud API documentation and official
+Business-App-user onboarding/Coexistence documentation, while stating that
+actual account eligibility is verified only in Task 034 staging.
 
 ## Required verification
 
@@ -363,174 +327,38 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-Migration apply and `supabase/tests/032_staff_assignment_and_alerts.sql` are
-`NOT RUN` for Sonnet. Codex applies/tests them only on disposable `vetai-test`
-after review.
+Migration apply and `supabase/tests/033_selective_automation.sql` are `NOT RUN`
+for Sonnet. Codex applies/tests them only on disposable `vetai-test` after
+review.
 
 Do not run paid OpenAI evals: this task changes no prompt, model, extraction
-contract, model context, safety decision, or customer reply.
+contract, model context, safety decision, or customer copy.
 
-No commit, push, deploy, database mutation, real notification, real service
-call, plugin installation, or external resource change is authorized for the
+No commit, push, deploy, database mutation, real Meta/WhatsApp call, contact
+import, plugin installation, or external resource change is authorized for the
 implementer.
 
 ## Review gates
 
-1. Codex reviews the full schema/RLS/RPC/browser path, reruns local checks,
-   and validates the migration plus rollback fixture on disposable
+1. Codex reviews the ingest/claim/finalizer/outbox race, all result parsers,
+   UI privacy, and local checks; then applies/tests SQL only on disposable
    `vetai-test`.
 2. Claude Opus performs one read-only review because this task changes
-   authenticated `SECURITY DEFINER` mutations, tenant-visible actor IDs, and
-   notification/privacy behavior.
+   persistence suppression, tenant-visible phone routing, `SECURITY DEFINER`
+   mutation, and human/AI control boundaries.
 3. Codex applies only verified targeted fixes, updates `PROJECT_CONTEXT.md`,
    and commits after all gates pass.
-4. Turkish legal/KVKK review remains an external production gate.
+4. Turkish legal/KVKK review of routing-number retention and same-number
+   personal/business use remains an external production gate.
 
 ## Observed context
 
-Confirmed by reading the repository directly before editing, matching the
-"Verified starting evidence" above:
-
-- Working tree was clean at commit `8da8353` (Task 031 plus its docs
-  follow-up) before this contract; `git status --porcelain` showed no
-  pending changes.
-- `public.staff_work_items` (from
-  `supabase/migrations/20260809000400_staff_work_items.sql` and
-  `supabase/migrations/20260809000500_staff_workflow.sql`) had only
-  `status in ('open','resolved')`, `created_at`, and `resolved_at`; no
-  `first_seen_*`/`assigned_*`/`resolved_by` columns existed. Same-clinic
-  authenticated `SELECT` was the only table grant.
-- `public.resolve_staff_work_item(uuid)` existed as the sole workflow RPC:
-  `SECURITY DEFINER`/`VOLATILE`/`SET search_path=''`, authenticated-only,
-  row-locking, returning `resolved | already_resolved | not_found`, letting
-  any same-clinic staff member resolve an open item with no ownership check.
-- `src/staffPage.ts` (`STAFF_HTML`/`STAFF_APP_JS`) listed only `status=eq.open`
-  rows via PostgREST with the caller's own token, stored only the access
-  token in `sessionStorage`, refreshed solely via a manual button, and had no
-  current-user identity, ownership label, polling, or `Notification` usage.
-- `test/staffPage.test.ts` covered the pre-Task-032 login/list/detail/resolve
-  behavior only, with no assertions for seen/claim, ownership labels,
-  polling, or alerts.
-- The automatic `provider_failed` resolution trigger from Task 020
-  (`vetai_private.sync_delivery_failure_work_item`) was unchanged and
-  confirmed to remain the only path that resolves a row with no human
-  actor.
+To be filled by the implementer from repository evidence before editing.
 
 ## Delivery record
 
-Implemented with the minimum diff against the files above: extended
-`public.staff_work_items` and replaced/added the three RPCs in the new
-migration `supabase/migrations/20260814000200_staff_assignment_and_alerts.sql`
-(not applied to any database); authored the rollback-only fixture
-`supabase/tests/032_staff_assignment_and_alerts.sql` (not executed against
-any database); rewrote `src/staffPage.ts` to add current-user identity,
-mark-seen-before-detail, the claim button, expanded resolve handling,
-ownership/status labels, 30-second polling with overlap prevention and
-baseline-diffed PII-free browser alerts gated on explicit permission; and
-extended `test/staffPage.test.ts` with new/changed assertions for all of the
-above. Updated `docs/staff-workflow.md`, `docs/staff-work-items.md`,
-`docs/database-schema.md`, and added the Task 032 status paragraph to
-`docs/product-roadmap.md`.
-
-Local verification results:
-
-- `pnpm install --frozen-lockfile` — passed (`Already up to date`).
-- `pnpm typecheck` (`tsc --noEmit`) — passed, no errors.
-- `pnpm test` — passed: 31 test files, 1281 tests passed, 2 pre-existing
-  skipped (1283 total), including `test/staffPage.test.ts` (50 tests, all
-  passing).
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed;
-  bundled successfully (Total Upload 122.69 KiB / gzip 25.72 KiB), listed
-  existing `INTAKE_QUEUE`/`APP_TIMEZONE`/`WHATSAPP_GRAPH_API_VERSION`
-  bindings, exited at `--dry-run: exiting now.` with no deploy performed.
-- `git diff --check` — passed, no whitespace errors (only benign
-  LF-will-become-CRLF autocrlf warnings on the two modified TypeScript
-  files, not a diff content issue).
-- Migration apply and `supabase/tests/032_staff_assignment_and_alerts.sql`:
-  **NOT RUN**, per contract — not executed against any database (disposable
-  `vetai-test` or otherwise) in this pass; left for Codex to apply/test on
-  disposable `vetai-test` after review.
-- No paid OpenAI eval was run: this task changes no prompt, model,
-  extraction contract, model context, safety decision, or customer reply.
-- No commit, push, deploy, database mutation, real notification, real
-  external service call, plugin installation, or other external resource
-  change was performed.
+To be filled by the implementer after implementation and verification.
 
 ## Codex review record
 
-Reviewed by Codex on 2026-08-14. Decision: `PASS_FOR_OPUS`; the task remains
-`IN_REVIEW` until the required read-only Claude Opus gate completes.
-
-Codex traced the new status checks, Auth-user foreign keys, all three
-`SECURITY DEFINER` RPCs, the existing automatic provider-failure trigger, the
-RLS/grant boundary, the current-user lookup, mark-seen-before-detail path,
-claim/resolve controls, polling lifecycle, and notification payload. Tenant
-identity continues to come only from the locked work-item row plus
-`auth.uid()`/`vetai_private.is_clinic_staff`; authenticated users retain
-same-clinic SELECT only and cannot mutate the table directly.
-
-Targeted fixes applied during review:
-
-- isolated the Auth-user-erasure fixture onto a fifth disposable staff user;
-  the original test deleted the first staff identity and then incorrectly
-  reused it in later scenarios;
-- cast `information_schema.role_table_grants.privilege_type` to `text` before
-  comparing the aggregated grant list, fixing a real PostgreSQL type mismatch;
-- contained native `Notification` constructor failures so browser/OS alert
-  failure cannot abort a successful list refresh; and
-- cleared a newly stored access token when the follow-up `/auth/v1/user`
-  response fails validation, preventing a malformed login session from being
-  left in `sessionStorage`; and
-- clarified that `first_seen_*` records the first authenticated attempt to
-  open an item, not proof that its detail content successfully rendered or
-  was read.
-
-Disposable database evidence: Codex applied
-`20260814000200_staff_assignment_and_alerts.sql` through the authenticated
-Supabase SQL editor only to disposable PostgreSQL 17 `vetai-test`. The fixed
-rollback fixture returned `PASS` with
-`remaining_test_clinics=0`, `remaining_test_users=0`,
-`remaining_test_items=0`, and `remaining_test_outbox_rows=0`. No production
-database was touched, and this SQL-editor validation is not a Supabase CLI
-migration-history entry.
-
-Final local verification after fixes:
-
-- `pnpm install --frozen-lockfile` — PASS, already up to date;
-- `pnpm typecheck` — PASS;
-- `pnpm test` — PASS, 31/31 files, 1,283 passed, 2 opt-in paid evals skipped;
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — PASS,
-  existing bindings unchanged and no deployment;
-- `git diff --check` — PASS (line-ending advisories only).
-
-No paid OpenAI eval was run because Task 032 changes no prompt, model,
-extraction schema, model context, safety decision, or customer reply. No
-commit, push, production deployment, real browser notification, or production
-database mutation has occurred. Claude Opus should now perform the contract's
-single read-only review of the `SECURITY DEFINER`/tenant boundary, four-state
-transition and concurrency semantics, actor-ID erasure behavior, polling and
-PII-free alert boundary, and the truthfulness of the documented pilot ceiling.
-
-### Opus finding and final remediation
-
-Claude Opus completed the required read-only review on 2026-08-14. The
-`SECURITY DEFINER`/RLS boundary, status RPCs, actor erasure, browser session,
-polling, alert privacy, and documented pilot ceiling passed. It found one
-blocking interaction: Task 020's partial unique indexes, trigger conflict
-targets, and provider-recovery update still covered only `status='open'`, so
-the new `seen`/`in_progress` states could permit a duplicate handoff item and
-prevent automatic provider-failure resolution.
-
-Codex fixed the root cause only in the new Task 032 migration, leaving prior
-migrations unchanged: both partial unique indexes and matching trigger
-predicates now cover every `status <> 'resolved'` row. The rollback fixture
-now proves repeated handoff updates keep exactly one seen/claimed item (and
-can upgrade it to urgent in place), plus automatic `provider_failed`
-resolution from both `seen` and `in_progress` with `resolved_by is null`.
-
-Codex applied the corrective statements to disposable `vetai-test` and ran
-the strengthened fixture; it returned `PASS 0/0/0/0`. Frozen install,
-typecheck, all 1,283 normal tests, Worker dry-run, and `git diff --check`
-passed again; the two opt-in paid evals remained skipped because no AI
-behavior changed. The blocking review finding is closed. No production
-database, deployment, real notification, or paid model call was used.
+Reserved for Codex.

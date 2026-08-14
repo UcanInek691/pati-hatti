@@ -394,6 +394,9 @@ Verified evidence before the context-system change:
 
 - No general-purpose application query interface exists; runtime database
   access remains limited to predefined validated RPCs.
+- No explicit per-account/contact AI routing or manual-takeover control exists
+  yet. Same-number WhatsApp Business App/Cloud API coexistence and outbound
+  message echoes have not been verified for the intended Turkish pilot account.
 - External/background staff notification and administrative user or clinic
   management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
@@ -418,7 +421,11 @@ handling, clinic operational hours/contact configuration, pilot staff
 ownership/status/browser alerts, and the $5 OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
 evidence for prompt `2026-08-14.1`. The next planned technical task is Task 033:
-real staging resources and end-to-end integration evidence.
+explicit per-account/contact `ai | manual | personal` routing with atomic
+manual-takeover suppression. Real staging resources and same-number
+WhatsApp-Business-App/Cloud-API coexistence evidence move to Task 034; canary,
+failure injection, observability, and the controlled pilot gate move to Task
+035.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production

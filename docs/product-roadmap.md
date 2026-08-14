@@ -325,8 +325,21 @@ Kontrollü pilot öncesi planlanan teknik görevler:
 3. Task 030 - yeni hayvan ve desteklenmeyen medya güvenli davranışı.
 4. Task 031 - klinik profil/saat/mesai dışı kararları.
 5. Task 032 - minimal staff durum/sahiplenme/bildirim operasyonu.
-6. Task 033 - gerçek staging kaynakları ve uçtan uca entegrasyon kanıtı.
-7. Task 034 - canary, failure injection, observability ve kontrollü pilot kapısı.
+6. Task 033 - hesap/kişi bazlı `AI açık | sadece insan | kişisel` yönlendirmesi
+   ve yarışa dayanıklı manuel devralma.
+7. Task 034 - gerçek staging kaynakları, aynı numarada WhatsApp Business
+   uygulaması/Cloud API birlikte kullanım uygunluğu ve uçtan uca kanıt.
+8. Task 035 - canary, failure injection, observability ve kontrollü pilot kapısı.
+
+Task 033 için ürün kararı: sistem arkadaş/müşteri ayrımını mesaj metninden veya
+AI tahmininden yapmayacak. Karışık kullanılan bir WhatsApp hesabı varsayılan
+olarak manuel kalacak; operatör yalnız seçtiği kişi için AI'yı açabilecek,
+belirli bir müşteriyi tekrar yalnız insana bırakabilecek ve önceden işaretlediği
+kişisel kişi için yeni mesaj içeriğinin VetAI'ye kaydedilmesini engelleyebilecek.
+Bu kontrol kendi başına insan mesajı göndermez. Aynı numaradan WhatsApp Business
+uygulamasıyla yanıt verme olanağı Task 034 gerçek staging'inde doğrulanamazsa,
+personel ekranından manuel Cloud API mesajı gönderme kontrollü pilot öncesi yeni
+bir bloklayıcı görev olur.
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm
