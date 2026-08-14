@@ -1,202 +1,273 @@
-# Current task — 031 Clinic profile, hours, and after-hours handoff
+# Current task — 032 Pilot staff ownership, status, and browser alerts
 
-Status: `COMPLETE`
+Status: `READY`
 
-Owner: Codex
+Owner: Claude Sonnet
 
 ## Goal
 
-Make clinic contact/hours behavior tenant-scoped, deterministic, and changeable
-without modifying the AI prompt:
+Turn the existing minimal `/staff` queue into a usable pilot operation without
+adding a framework or an external notification provider:
 
-1. store a clinic's public phone/address plus one weekly opening interval per
-   day and optional full-day closure dates;
-2. resolve `open | closed | unconfigured` for the conversation's own clinic
-   in `Europe/Istanbul`; and
-3. personalize only the existing non-emergency `human_handoff` reply with the
-   configured clinic name/phone and truthful open/closed wording.
+1. move each manual staff item through the closed workflow
+   `open -> seen -> in_progress -> resolved`;
+2. record the authenticated staff identity and database time for first view,
+   ownership, and manual resolution; and
+3. refresh the queue automatically and show a PII-free native browser alert
+   for newly visible work while the staff page is open.
 
-The AI still only extracts facts and intent. It must not choose operating
-policy, claim a clinic is open, create a pet, or book an appointment.
+This task does not change clinical decisions, customer-facing WhatsApp copy,
+AI behavior, or the creation rules for staff work items.
 
 ## Scope
 
 Allowed changes:
 
-- `supabase/migrations/20260814000100_clinic_operations.sql` (new)
-- `supabase/tests/031_clinic_operations.sql` (new, rollback-only)
-- `src/clinicOperations.ts` (new)
-- `src/intakeReply.ts`
-- `src/intakeConsumer.ts`
-- `test/clinicOperations.test.ts` (new)
-- `test/intakeReply.test.ts`
-- `test/intakeConsumer.test.ts`
-- `docs/clinic-operations.md` (new)
+- `supabase/migrations/20260814000200_staff_assignment_and_alerts.sql` (new)
+- `supabase/tests/032_staff_assignment_and_alerts.sql` (new, rollback-only)
+- `src/staffPage.ts`
+- `test/staffPage.test.ts`
+- `docs/staff-workflow.md`
+- `docs/staff-work-items.md`
 - `docs/database-schema.md`
-- `docs/ai-behavior-and-safety.md`
-- `docs/inbound-queue.md`
-- `docs/product-roadmap.md` — Task 031 status only
+- `docs/product-roadmap.md` — Task 032 status paragraph only
 - `CURRENT_TASK.md` — implementer fills only **Observed context** and
   **Delivery record**
 
 Do not change:
 
-- the OpenAI prompt/version, model, extraction schema/parser, eval corpora,
-  safety-signal set, deterministic safety precedence, or Luna selection;
-- pet creation, pet association, appointment tables/RPCs/behavior/copy,
-  staff-work-item behavior, outbound delivery, Queue message shape/bindings,
-  Cron, webhook verification/limits, environment bindings, dependencies, or
-  lockfile;
-- the existing emergency, safety-question, unsupported-media, appointment, or
-  generic fallback copy;
+- staff-work-item creation, deduplication, urgency, reason, tenant FK,
+  erasure cascade, or automatic provider-failure resolution behavior;
+- conversation, intake, safety, appointment, webhook, Queue, outbox, clinic
+  hours, OpenAI prompt/model/eval, or WhatsApp behavior;
+- Worker routes, environment bindings, Wrangler configuration, dependencies,
+  package-manager files, lockfile, or existing migrations;
+- Supabase Auth user/role management or clinic membership management;
 - production resources, secrets, deployments, or external service state.
 
-Do not add a generic policy framework, JSON settings bag, dormant
-`appointment_offer` option, notification, map/geocoding integration,
-split-shift editor, overnight interval, partial-day exception, holiday API, or
-admin UI.
+Do not add a UI framework, Supabase SDK, Realtime subscription, service
+worker, Push API backend, custom audio asset, e-mail/SMS/Slack/CRM integration,
+notes, staff messaging, supervisor console, reassignment/history table,
+analytics service, SLA engine, or generic workflow abstraction.
 
 ## Verified starting evidence
 
-- Task 030 and its fresh `2026-08-14.1` live evidence are committed at
-  `b301d9b` and `499a079`; the worktree was clean before this contract.
-- `public.clinics` currently stores only `id`, `name`, and timestamps.
-  Authenticated clinic staff have same-tenant read-only access; only
-  `service_role` may mutate clinic rows.
-- There is no clinic-hours table, closure table, operational-context RPC, or
-  runtime open/closed decision.
-- `planIntakeReply` returns closed fixed copy. The Queue consumer obtains a
-  tenant-scoped `conversationId` and already finalizes the resulting reply
-  atomically through the reviewed outbox path.
-- New/unregistered-pet requests currently become the existing
-  `human_handoff` decision. The reviewed appointment engine refuses to list or
-  hold a slot unless the conversation already has a tenant-owned `pet_id`.
-  Therefore this task must not pretend that a new-pet appointment mode exists.
-- The current generic handoff copy is the safe fallback when contact
-  configuration is absent, malformed, or unavailable.
+- Task 031 is complete and committed at `7f8277c`; the worktree was clean
+  before this contract.
+- `public.staff_work_items` currently has only `open | resolved` status,
+  `created_at`, and `resolved_at`. Authenticated staff have same-clinic SELECT
+  only; all direct INSERT/UPDATE/DELETE operations remain denied.
+- `public.resolve_staff_work_item(uuid)` is an authenticated-only,
+  tenant-checking `SECURITY DEFINER` RPC. It locks the exact row and currently
+  lets any same-clinic staff member resolve an open item.
+- `/staff` uses native browser APIs and direct Supabase Auth/PostgREST calls.
+  It stores only the access token in `sessionStorage`, lists only `status=open`
+  rows, refreshes manually, and has no ownership or notification behavior.
+- The staff list already sorts `priority.desc, created_at.asc, id.asc`, so
+  urgent work appears first without a schema/index redesign.
+- Automatic `provider_failed` closure is performed by the existing database
+  trigger and must remain a valid system resolution with no human resolver.
 
 ## Required behavior
 
-### 1. Database profile and schedule
+### 1. Minimal status and audit columns
 
-The migration must:
+The migration must extend `public.staff_work_items` with exactly these nullable
+columns:
 
-- add nullable `contact_phone_e164 text` and `public_address text` columns to
-  `public.clinics`;
-- constrain non-null phone values to canonical E.164
-  (`^\+[1-9]\d{1,14}$`);
-- constrain non-null addresses to trimmed, non-empty text of at most 500
-  characters;
-- create `public.clinic_weekly_hours` with exactly:
-  `clinic_id uuid`, `iso_weekday smallint`, `opens_at time without time
-  zone`, `closes_at time without time zone`, and timestamps;
-- use `(clinic_id, iso_weekday)` as the primary key, restrict weekdays to
-  1..7, require `opens_at < closes_at`, and cascade clinic erasure;
-- create `public.clinic_closure_dates` with `clinic_id uuid`,
-  `closed_on date`, and `created_at`; use `(clinic_id, closed_on)` as the
-  primary key and cascade clinic erasure;
-- enable RLS on both new tables, remove default/public/anon/authenticated
-  privileges, grant authenticated users read-only access through one
-  same-clinic `vetai_private.is_clinic_staff(clinic_id)` SELECT policy per
-  table, and grant `service_role` full table access;
-- alter default table privileges only if an existing repository pattern
-  requires it; do not broaden any role.
+- `first_seen_at timestamptz`
+- `first_seen_by uuid references auth.users(id) on delete set null`
+- `assigned_at timestamptz`
+- `assigned_to uuid references auth.users(id) on delete set null`
+- `resolved_by uuid references auth.users(id) on delete set null`
 
-MVP ceiling: one non-overnight interval per weekday and full-day closures only.
-Do not build split shifts or partial-day exceptions.
+Replace the existing status check so the only allowed values are:
 
-### 2. Tenant-safe operational-context RPC
+`open | seen | in_progress | resolved`.
 
-Create:
+Add named checks that enforce:
 
-`public.get_conversation_clinic_operational_context(
-  p_conversation_id uuid,
-  p_at timestamptz default pg_catalog.now()
-)`
+- `open`: no seen/assignment/resolution timestamps and no actor IDs;
+- `seen`: `first_seen_at` is present, assignment/resolution fields are null;
+- `in_progress`: `first_seen_at` and `assigned_at` are present,
+  `resolved_at/resolved_by` are null;
+- `resolved`: `resolved_at` is present; human audit fields may be null because
+  existing rows and the existing provider-status trigger can resolve work
+  automatically;
+- an actor UUID, when non-null, always has its matching timestamp.
 
-It must be `security invoker`, `stable`, `set search_path = ''`, executable
-only by `service_role`, and return exactly one row with:
+`ON DELETE SET NULL` may erase an actor UUID while retaining the event time.
+Therefore checks must not require an actor UUID whenever its timestamp exists.
+An `in_progress` row whose assignee was erased remains recoverable by a later
+claim.
 
-- `result text`: `configured | unconfigured | not_found`;
-- `clinic_name text`;
-- `contact_phone_e164 text`;
-- `public_address text`;
-- `is_open boolean`.
+Existing `open` and `resolved` rows must satisfy the new checks without an
+invented backfill identity or timestamp. Do not add an event/audit table or a
+new list index unless an actual new query requires it.
 
-Rules:
+The existing RLS policy and grants must remain unchanged: same-clinic
+authenticated users can SELECT these columns but still cannot mutate the table
+directly. Actor IDs are opaque operational identifiers and must never be
+interpolated into the page, logs, alerts, or customer messages.
 
-1. Null/invalid required input raises before reading data.
-2. Resolve `clinic_id` only through the exact conversation row; the caller
-   never supplies a clinic ID.
-3. Missing conversation returns `not_found` and four null payload fields.
-4. A profile is `configured` only when clinic name and phone are valid and at
-   least one weekly-hours row exists. Otherwise return `unconfigured` with
-   four null payload fields.
-5. Convert `p_at` to `Europe/Istanbul` inside PostgreSQL. `is_open=true`
-   only when the local ISO weekday/time falls inside that day's half-open
-   interval `[opens_at, closes_at)` and there is no matching full-day closure.
-6. A configured clinic with no interval for that weekday is closed.
-7. Never return another tenant's clinic data.
+### 2. Closed authenticated RPCs
 
-Do not use dynamic SQL or `SECURITY DEFINER`.
+Create these functions:
 
-### 3. Native-fetch client and strict response parser
+```text
+public.mark_staff_work_item_seen(p_work_item_id uuid)
+public.claim_staff_work_item(p_work_item_id uuid)
+```
 
-`src/clinicOperations.ts` must follow the existing native-fetch
-service-role client rules:
+Replace `public.resolve_staff_work_item(uuid)` without changing its signature.
 
-- HTTPS or loopback HTTP only; no dependency and no logging;
-- call only the fixed RPC above with `p_conversation_id`; runtime uses the
-  RPC's server-side default clock;
-- fail closed on missing configuration, network/non-2xx/JSON errors, arrays of
-  other than one row, non-plain rows, extra/missing keys, unknown results, or
-  incoherent nullability;
-- `not_found | unconfigured | failed` carry no clinic values;
-- `configured` requires a trimmed clinic name of 1..120 code points with no
-  C0 control characters, canonical E.164 phone, null or trimmed address of
-  1..500 code points with no C0 controls, and boolean `isOpen`;
-- return fresh closed-union objects and never expose response/provider bodies.
+All three functions must be `SECURITY DEFINER`, `VOLATILE`,
+`SET search_path = ''`, executable only by `authenticated`, and revoked from
+`PUBLIC`, `anon`, and `service_role`. Each must:
 
-### 4. Pure clinic-aware handoff reply
+- reject a null ID before reading data;
+- obtain `auth.uid()`, lock the exact work-item row, and authorize the locked
+  row through `vetai_private.is_clinic_staff(row.clinic_id)`;
+- return the same `not_found` result for absent and cross-clinic rows;
+- derive every actor from `auth.uid()`; callers never provide a clinic or user
+  ID;
+- return exactly one row with one `result text` field;
+- use no dynamic SQL and reveal no identifier, PII, message, or database error
+  detail in a success result.
 
-Add one pure function in `src/intakeReply.ts` that accepts an existing
-`IntakeReplyPlan` plus the operational-context result:
+#### `mark_staff_work_item_seen`
 
-- it may change only `{ kind: "send", category: "human_handoff" }`;
-- emergency, safety, media, appointment, other categories, and `none` return
-  behaviorally identical fresh values;
-- `unconfigured | not_found | failed` preserve the existing generic
-  `HUMAN_HANDOFF_TEXT`;
-- configured/open uses exactly:
+- `open` -> atomically set `status='seen'`, `first_seen_at=now()`, and
+  `first_seen_by=auth.uid()`; return `seen`.
+- `seen | in_progress` -> no mutation; return `already_seen`.
+- `resolved` -> no mutation; return `already_resolved`.
+- Closed result set: `seen | already_seen | already_resolved | not_found`.
 
-  `Bu talebi bot üzerinden yanıtlayamam. {clinicName} ile {phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`
+#### `claim_staff_work_item`
 
-- configured/closed uses exactly:
+- `open | seen` -> atomically set `status='in_progress'`, fill missing first-
+  seen fields with `now()/auth.uid()`, and set `assigned_at/assigned_to` to
+  `now()/auth.uid()`; return `claimed`.
+- `in_progress` with the same assignee -> no mutation; return
+  `already_claimed`.
+- `in_progress` with a different non-null assignee -> no mutation; return
+  `busy`.
+- `in_progress` with a null assignee left by Auth-user erasure -> assign the
+  current user, refresh `assigned_at`, and return `claimed`.
+- `resolved` -> no mutation; return `already_resolved`.
+- Closed result set:
+  `claimed | already_claimed | busy | already_resolved | not_found`.
 
-  `Bu talebi bot üzerinden yanıtlayamam. {clinicName} şu anda kapalı. Acil olmayan konular için çalışma saatleri içinde {phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`
+#### `resolve_staff_work_item`
 
-Only validated clinic configuration may be interpolated. Never interpolate
-owner, pet, complaint, message, address, provider, or model data.
+- Preserve `already_resolved | not_found` behavior.
+- `open | seen`, or an `in_progress` row with a null assignee -> no mutation;
+  return `not_claimed`.
+- `in_progress` assigned to another user -> no mutation; return `not_owner`.
+- Only the current assignee may set `status='resolved'`,
+  `resolved_at=now()`, and `resolved_by=auth.uid()`; return `resolved`.
+- Closed result set:
+  `resolved | already_resolved | not_claimed | not_owner | not_found`.
 
-### 5. Queue wiring
+The existing database trigger may still resolve `provider_failed` items
+without calling this RPC; such rows legitimately have `resolved_by = null`.
+True two-session lock contention is a Codex validation concern, not something
+the rollback-only fixture may claim to have executed.
 
-In `src/intakeConsumer.ts`:
+### 3. Staff identity and queue query
 
-1. Build the existing plan/base reply first, preserving all safety and
-   appointment precedence.
-2. Only when the base reply is `human_handoff`, call the operational-context
-   client and pass its closed result to the pure clinic-aware reply function.
-3. Operational-context failure or unconfigured data must fall back to the
-   existing generic handoff reply and continue finalization; it must not create
-   a retry/poison loop.
-4. Persist the selected reply through the existing atomic finalizer/outbox.
-5. Emergency copy must never be downgraded or personalized.
-6. No OpenAI request, prompt, safety decision, stage transition, work-item
-   priority, or appointment action may change.
+Keep the existing direct Supabase Auth architecture and access-token storage.
+After login and on session restoration, obtain the current authenticated user
+from the fixed `/auth/v1/user` endpoint using the existing token. Accept only
+a valid non-empty UUID `id`, hold it in memory, and never store email, user ID,
+or any additional auth response in `sessionStorage`.
 
-The new lookup is allowed only on turns whose already-planned reply category is
-`human_handoff`; ordinary intake, emergency, media, safety-question, and
-appointment paths must make no operational-context request.
+The list query must:
+
+- select only `id,kind,priority,reason,status,created_at,conversation_id,
+  first_seen_at,assigned_at,assigned_to`;
+- include every non-resolved status and exclude resolved rows;
+- preserve urgent-first, then oldest-first ordering and the 100-row bound;
+- remain RLS-scoped by the caller token.
+
+The rendered list must show fixed Turkish labels for `open`, `seen`, and
+`in_progress`, plus one of `Sahipsiz`, `Sizde`, or `Başka personelde` by
+comparing `assigned_to` with the in-memory current-user ID. Never display an
+actor UUID.
+
+### 4. View, claim, and resolve UI
+
+Opening a detail must call `mark_staff_work_item_seen` before loading owner,
+pet, conversation, or messages. Accept only its exact one-row closed result.
+On `already_resolved | not_found`, return to the refreshed list without
+loading detail. Network/HTTP/malformed failures show a generic error and do
+not broaden data access.
+
+Add a fixed `İşi üstlen` action:
+
+- it calls only `claim_staff_work_item` with the current work-item ID;
+- it is available for `open | seen`, for a recoverable null-assignee
+  `in_progress` row, and idempotently for the current assignee;
+- `busy` displays a fixed Turkish “başka personel üstlendi” status without an
+  identity;
+- success refreshes the selected item's state.
+
+The existing resolve action must be enabled only when the item is
+`in_progress` and assigned to the current user. Keep its fixed confirmation.
+Accept the expanded closed resolve result set; `not_claimed | not_owner` must
+show generic fixed Turkish guidance and refresh state rather than leaking any
+actor or raw response.
+
+All dynamic database values continue to use `textContent` and native DOM
+construction only. Do not add `innerHTML`, log calls, unrestricted selects,
+raw provider bodies, or secret/service-role references.
+
+### 5. Automatic refresh and PII-free browser alerts
+
+Use only native browser APIs:
+
+- while authenticated and the page remains open, fetch the bounded work list
+  every 30 seconds;
+- prevent overlapping refresh requests;
+- stop the interval on logout/session failure and do not create multiple
+  intervals after repeated login/navigation;
+- continue polling while the detail view is open, but do not replace its DOM;
+- the first successful list load establishes a baseline and emits no alert;
+- on later successful loads, alert only for work-item IDs not in the previous
+  successful open-set baseline; status/ownership changes of an existing ID do
+  not alert;
+- a failed refresh does not erase the last successful baseline and does not
+  generate a notification.
+
+Add a fixed `Bildirimleri aç` button. Request `Notification` permission only
+from that explicit user action—never at page load/login. Unsupported, denied,
+or default permission states must remain non-fatal and show fixed Turkish
+status text.
+
+When permission is already `granted`, a later newly visible item may create
+one native notification with only:
+
+- title: `VetAI personel kuyruğu`
+- body `Yeni acil personel işi var.` when at least one new item is urgent;
+- otherwise body: `Yeni personel işi var.`
+
+Do not place work-item IDs, clinic/owner/pet names, phone numbers, reasons,
+message content, counts, URLs, tokens, or other data in the notification.
+Do not set `silent: true`; actual sound remains controlled by the browser and
+operating system and is not guaranteed by this application.
+
+The visible page status region must still report the current open-work count.
+Manual refresh remains available.
+
+### 6. Explicit product ceiling
+
+This task's notification is only an active-page pilot aid. It does not prove a
+person saw the work, and it does not operate reliably after the page/browser
+is closed. General sale still requires a separate, PII-free external
+notification path plus measured staging/pilot evidence.
+
+No customer-facing text may claim that staff were notified, assigned, or will
+respond within a time window.
 
 ## Required tests
 
@@ -204,52 +275,81 @@ appointment paths must make no operational-context request.
 
 The rollback-only SQL test must prove:
 
-- phone/address/schedule/closure constraints;
-- open inside `[opens_at, closes_at)`, closed exactly at `closes_at`, closed
-  before opening, closed on an unscheduled weekday, and closure-date override;
-- `Europe/Istanbul` evaluation with fixed `timestamptz` inputs;
-- configured, unconfigured, and not_found null coherence;
-- two conversations in different clinics never return one another's profile;
-- service-role success, anon/authenticated RPC denial, authenticated same-clinic
-  SELECT only, authenticated write denial, cross-clinic SELECT denial;
-- clinic erasure cascades both schedule tables;
-- zero fixture residue after rollback.
+- the new status and audit checks, including existing open/resolved row
+  compatibility and Auth-user `ON DELETE SET NULL` behavior;
+- same-clinic authenticated `open -> seen -> in_progress -> resolved` with
+  exact first-seen/assignment/resolver identity and timestamps;
+- idempotent seen/claim/resolve results;
+- claim directly from `open` fills first-seen fields;
+- a second same-clinic user receives `busy`/`not_owner` and cannot mutate the
+  current owner's row;
+- an erased assignee can be reclaimed by another same-clinic user;
+- absent and cross-tenant IDs are indistinguishable as `not_found` with zero
+  mutation;
+- null IDs fail before lookup;
+- automatic `provider_failed` resolution remains valid with
+  `resolved_by is null`;
+- authenticated direct table INSERT/UPDATE/DELETE remains denied, SELECT
+  remains same-clinic only, and `anon`/`service_role` cannot execute the three
+  staff RPCs;
+- function security/search-path/grant shape and zero fixture residue after
+  rollback.
 
-Static function-body regex is not a substitute for the behavioral time cases.
+The sequential fixture may verify row-state outcomes but must state that it
+does not execute real two-session lock contention.
 
-### TypeScript tests
+### TypeScript/browser-source tests
 
-Cover:
+Extend the existing dependency-free tests to cover:
 
-- every accepted and rejected RPC response shape and transport/config failure;
-- C0/length/E.164 validation and no logging;
-- pure reply behavior for open, closed, every fallback result, all untouched
-  categories, fresh objects, determinism, and non-mutation;
-- consumer open/closed personalization, fallback on client failure and
-  unconfigured profile, exactly one lookup only for `human_handoff`, no lookup
-  for emergency/ordinary/media/appointment paths, unchanged ack/retry results,
-  and no extra OpenAI call.
+- the exact non-resolved list projection/order/limit;
+- current-user loading, UUID rejection, access-token-only session storage,
+  and session clearing on 401/403;
+- all three RPC paths and every accepted/rejected closed result;
+- exact list ownership/status labels without rendering actor UUIDs;
+- mark-seen-before-detail ordering, claim/busy behavior, and owner-only
+  resolve enablement;
+- one 30-second interval, overlap prevention, logout/session cleanup, manual
+  refresh preservation, and polling during detail view without replacing it;
+- baseline/no-initial-alert, new-ID alert, no alert for existing-ID status
+  changes, urgent precedence, and baseline retention after failure;
+- explicit permission request only, unsupported/denied behavior, and exact
+  PII-free notification title/body;
+- no `console`, dynamic HTML sink, service-role key, refresh-token storage,
+  unrestricted select, arbitrary URL, or notification interpolation.
+
+Do not add a DOM/test framework dependency merely to test this fixed page.
+Reuse the existing source-level page test style and extract a tiny pure helper
+only if it materially improves behavioral proof without widening runtime
+surface.
 
 ## Documentation
 
-`docs/clinic-operations.md` must explain:
+Update the staff docs to explain:
 
-- which clinic data is public operational configuration;
-- `Europe/Istanbul` and half-open interval semantics;
-- full-day closure precedence;
-- fail-closed generic-copy behavior;
-- the one-interval/no-overnight MVP ceiling;
-- profile changes affect future handoff replies without prompt edits;
-- this is controlled configuration, not arbitrary AI behavior.
+- the four statuses and which RPC performs each manual transition;
+- first-seen, current-owner, assignment, resolver, and timestamp semantics;
+- actor UUIDs are same-clinic operational/audit data, not display names, and
+  are nulled when the Auth user is erased while timestamps remain;
+- automatic provider resolution has no human resolver;
+- urgent-first ordering and current `Sahipsiz | Sizde | Başka personelde`
+  display;
+- automatic 30-second refresh and the exact PII-free alert boundary;
+- notification permission is explicit, OS/browser sound is not guaranteed,
+  and the page must remain open;
+- the pilot procedure: one named staff operator keeps the page open during
+  clinic hours, enables notifications, claims before working, resolves after
+  action, and hands page-monitoring duty to another authenticated staff member
+  at shift change; an already claimed item remains with its recorded owner
+  because this MVP has no release/reassignment flow;
+- no response-time promise is made to customers; `first_seen_at`,
+  `assigned_at`, and `resolved_at` only enable later measurement;
+- no external/background notification, full immutable event history,
+  reassignment UI, notes, staff reply, or admin/user-management UI exists.
 
-Also state plainly:
-
-- no clinic/admin edit UI exists yet;
-- no appointment is offered to an unregistered pet;
-- changing new-pet handoff into booking needs a separate implemented flow with
-  safe pet creation/verification and explicit appointment confirmation;
-- the new Turkish copy still requires clinic-veterinarian and Turkish
-  legal/KVKK approval before production.
+State that staff actor IDs and operational timestamps are personal/audit data
+whose retention and access must be covered by the Turkish legal/KVKK review
+before production.
 
 ## Required verification
 
@@ -263,170 +363,34 @@ pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
 git diff --check
 ```
 
-Migration apply and `supabase/tests/031_clinic_operations.sql` are
-`NOT RUN` for Sonnet. Codex applies/tests them only on disposable
-`vetai-test` after review.
+Migration apply and `supabase/tests/032_staff_assignment_and_alerts.sql` are
+`NOT RUN` for Sonnet. Codex applies/tests them only on disposable `vetai-test`
+after review.
 
-Do not run either paid OpenAI eval: this task does not change the prompt,
-model, extraction contract, or model context.
+Do not run paid OpenAI evals: this task changes no prompt, model, extraction
+contract, model context, safety decision, or customer reply.
 
-No commit, push, deploy, database mutation, real service call, plugin
-installation, or external resource change is authorized for the implementer.
+No commit, push, deploy, database mutation, real notification, real service
+call, plugin installation, or external resource change is authorized for the
+implementer.
 
 ## Review gates
 
-1. Codex reviews the complete migration/RLS/RPC/client/Queue path, runs local
-   checks, and validates the migration plus rollback fixture on disposable
+1. Codex reviews the full schema/RLS/RPC/browser path, reruns local checks,
+   and validates the migration plus rollback fixture on disposable
    `vetai-test`.
-2. Claude Opus performs one read-only review of tenant isolation, hours/time
-   semantics, emergency precedence, and truthful Turkish copy.
+2. Claude Opus performs one read-only review because this task changes
+   authenticated `SECURITY DEFINER` mutations, tenant-visible actor IDs, and
+   notification/privacy behavior.
 3. Codex applies only verified targeted fixes, updates `PROJECT_CONTEXT.md`,
    and commits after all gates pass.
-4. Veterinarian and Turkish legal/KVKK review remain external production gates.
+4. Turkish legal/KVKK review remains an external production gate.
 
 ## Observed context
 
-- Starting worktree matched "Verified starting evidence": Task 030/029
-  evidence committed at `b301d9b`/`499a079`; `public.clinics` had only `id`,
-  `name`, timestamps; no clinic-hours/closure table, no operational-context
-  RPC; `planIntakeReply` returned closed fixed copy; the Queue consumer
-  already obtained a tenant-scoped `conversationId` and finalized replies
-  atomically through the reviewed outbox path (`finalize_intake_queue_job`).
-- `supabase/migrations/20260814000100_clinic_operations.sql` was already
-  present untracked in the worktree at session start (170 lines); it was
-  read and checked against every rule in "Required behavior §1-2" (column
-  types/constraints, `(clinic_id, iso_weekday)` / `(clinic_id, closed_on)`
-  primary keys, `opens_at < closes_at`, RLS + `vetai_private.is_clinic_staff`
-  read policy, `service_role`-only writes, `security invoker` / `stable` /
-  `set search_path = ''` RPC, no `SECURITY DEFINER`, no dynamic SQL) but was
-  **not executed against any database** — no `supabase db` command, no SQL
-  client, no migration apply was run this session.
-- `supabase/tests/031_clinic_operations.sql` was already present untracked
-  and was **not executed** against any database (disposable `vetai-test` or
-  otherwise) this session.
-- The three Queue-consumer reply-finalization sites in
-  `src/intakeConsumer.ts` (unsupported-media branch, early
-  ceiling/already-`human_handoff`-stage branch, main extraction/planning
-  branch) were located and confirmed structurally distinct from the
-  appointment-offer/appointment-decision branches, which never call
-  `finalize_intake_queue_job` and are therefore unaffected by this task.
+_Implementer: fill from repository evidence before editing._
 
 ## Delivery record
 
-Implemented by Claude Sonnet, 2026-08-14.
-
-**Files added** (all within declared scope): `src/clinicOperations.ts`,
-`test/clinicOperations.test.ts`, `docs/clinic-operations.md`.
-`supabase/migrations/20260814000100_clinic_operations.sql` and
-`supabase/tests/031_clinic_operations.sql` were present in the worktree and
-reviewed for contract compliance but not modified, applied, or executed.
-
-**Files changed** (all within declared scope): `src/intakeReply.ts` (added
-pure `applyClinicHandoffContext`), `src/intakeConsumer.ts` (wired the
-operational-context lookup into all three finalize sites via a
-`personalizeHandoffReply` helper, gated on the resolved reply already being
-`{ kind: "send", category: "human_handoff" }`), `test/intakeReply.test.ts`
-(added `applyClinicHandoffContext` coverage: open/closed/every fallback
-result, all 9 untouched categories return fresh-but-equal plans, purity/
-determinism/no-address-leak), `test/intakeConsumer.test.ts` (added clinic
-route plumbing, a `clinicRow` fixture, fixed 10 pre-existing tests whose
-fetch-call indices shifted because of the new clinic RPC call, and added a
-dedicated `describe` block covering open/closed personalization exact text,
-fallback to the generic handoff text on RPC failure/`unconfigured`/
-`not_found`, zero clinic calls for non-`human_handoff` and `emergency_handoff`
-replies, and personalization at both the ceiling/early-branch and
-unsupported-media sites), `docs/database-schema.md` (new "Clinic operational
-profile and hours" section), `docs/ai-behavior-and-safety.md` (new "Clinic
-contact/hours personalization of `human_handoff`" section), `docs/inbound-queue.md`
-(new "Clinic personalization of `human_handoff` replies" section),
-`docs/product-roadmap.md` (Task 031 status paragraph only, Turkish, matching
-the existing Task 029/030 status-paragraph convention).
-
-**Verification run this session** (see command list under "Required
-verification"):
-
-- `pnpm install --frozen-lockfile` — already up to date, exit 0.
-- `pnpm typecheck` (`tsc --noEmit`) — clean, no errors.
-- `pnpm test` (vitest) — 31/31 test files, 1262 passed, 2 pre-existing
-  skips, 0 failed.
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — bundled
-  successfully (Total Upload 115.21 KiB / gzip 24.29 KiB), listed only the
-  three pre-existing bindings, exited on `--dry-run` without deploying.
-- `git diff --check` — exit 0, no whitespace errors (only CRLF/LF
-  line-ending advisories, not check failures).
-- `git status --porcelain` after all edits shows only files inside the
-  declared scope list (8 modified, 5 new); nothing outside scope was
-  touched; nothing was staged or committed.
-
-**Explicitly not run this session**, per contract: migration apply,
-`supabase/tests/031_clinic_operations.sql`, any SQL/database command, either
-paid OpenAI eval, and any commit/push/deploy/plugin-install/external-resource
-change. These remain for the Codex review gate on disposable `vetai-test`.
-
-## Codex review record
-
-Reviewed by Codex on 2026-08-14. Decision: `PASS_FOR_OPUS`; the task remains
-`IN_REVIEW` until the required read-only Claude Opus gate completes.
-
-Codex traced all three `finalize_intake_queue_job` reply sites and confirmed
-that the operational-context RPC is called exactly once only after the
-resolved reply is `human_handoff`. Emergency, ordinary intake, normal media,
-and appointment paths do not perform this lookup. The existing deterministic
-safety decision and atomic outbox finalization remain unchanged.
-
-Targeted fixes applied during review:
-
-- hardened `src/clinicOperations.ts` to reject non-plain rows, symbol/
-  non-enumerable extra keys, throwing accessors, and truly absent runtime
-  bindings without throwing;
-- bounded the optional operational-context request with a five-second native
-  `AbortSignal` timeout so a stalled personalization lookup falls back rather
-  than consuming the intake lease indefinitely;
-- made the database RPC treat untrimmed, over-120-character, or C0-control
-  clinic names as `unconfigured`, matching the client trust boundary;
-- extended unit/SQL regression coverage for those cases and for null
-  `p_at`; and
-- corrected migration/test/documentation validation markers after real
-  disposable-project execution.
-
-Disposable database evidence: Codex applied
-`20260814000100_clinic_operations.sql` to `vetai-test`, then ran
-`supabase/tests/031_clinic_operations.sql`. The fixture returned `PASS` with
-`remaining_test_clinics=0`, `remaining_test_users=0`,
-`remaining_test_hours=0`, and `remaining_test_closures=0`. No production
-database was touched.
-
-Final local verification after fixes:
-
-- `pnpm install --frozen-lockfile` — PASS, already up to date;
-- `pnpm typecheck` — PASS;
-- `pnpm test` — PASS, 31/31 files, 1267 passed, 2 opt-in live evals skipped;
-- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — PASS,
-  dry-run only, existing bindings unchanged;
-- `git diff --check` — PASS (line-ending advisories only).
-
-Neither paid OpenAI eval was run because Task 031 changes no prompt, model,
-extraction schema, or model context. No commit, push, production deploy, or
-production database mutation has occurred. Claude Opus should now perform the
-contract's single read-only review of tenant isolation, Istanbul time/hour
-semantics, emergency precedence, strict interpolation, and truthful Turkish
-copy.
-
-## Claude Opus review and final closure
-
-Claude Opus completed the required read-only review on 2026-08-14 and returned
-`PASS` with no blocking finding. It independently confirmed tenant derivation,
-RLS/grants/cascades, Istanbul half-open interval semantics, closure precedence,
-strict client parsing, three-site `human_handoff`-only wiring, emergency
-precedence, fixed Turkish copy, and the absence of address/conversation-data
-interpolation.
-
-Codex closed Opus's optional address-validation finding in the same task by
-adding the database-side control-character prohibition already enforced by
-the client. The SQL fixture now also proves an exact `opens_at` instant,
-control-character address rejection, and untrimmed/overlong/control-character
-clinic names. The updated fixture passed on disposable `vetai-test` with
-`PASS 0/0/0/0`. Final typecheck, all 1,267 normal tests, Worker dry-run, and
-`git diff --check` passed again. The remaining veterinary and Turkish
-legal/KVKK approvals are external production gates, not incomplete software
-review work for Task 031.
+_Implementer: fill after verification. Do not commit, push, deploy, mutate a
+database, send a real notification, or call an external service._
