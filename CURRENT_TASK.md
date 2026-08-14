@@ -1,6 +1,6 @@
 # Current task — 032 Pilot staff ownership, status, and browser alerts
 
-Status: `READY`
+Status: `COMPLETE`
 
 Owner: Claude Sonnet
 
@@ -388,9 +388,149 @@ implementer.
 
 ## Observed context
 
-_Implementer: fill from repository evidence before editing._
+Confirmed by reading the repository directly before editing, matching the
+"Verified starting evidence" above:
+
+- Working tree was clean at commit `8da8353` (Task 031 plus its docs
+  follow-up) before this contract; `git status --porcelain` showed no
+  pending changes.
+- `public.staff_work_items` (from
+  `supabase/migrations/20260809000400_staff_work_items.sql` and
+  `supabase/migrations/20260809000500_staff_workflow.sql`) had only
+  `status in ('open','resolved')`, `created_at`, and `resolved_at`; no
+  `first_seen_*`/`assigned_*`/`resolved_by` columns existed. Same-clinic
+  authenticated `SELECT` was the only table grant.
+- `public.resolve_staff_work_item(uuid)` existed as the sole workflow RPC:
+  `SECURITY DEFINER`/`VOLATILE`/`SET search_path=''`, authenticated-only,
+  row-locking, returning `resolved | already_resolved | not_found`, letting
+  any same-clinic staff member resolve an open item with no ownership check.
+- `src/staffPage.ts` (`STAFF_HTML`/`STAFF_APP_JS`) listed only `status=eq.open`
+  rows via PostgREST with the caller's own token, stored only the access
+  token in `sessionStorage`, refreshed solely via a manual button, and had no
+  current-user identity, ownership label, polling, or `Notification` usage.
+- `test/staffPage.test.ts` covered the pre-Task-032 login/list/detail/resolve
+  behavior only, with no assertions for seen/claim, ownership labels,
+  polling, or alerts.
+- The automatic `provider_failed` resolution trigger from Task 020
+  (`vetai_private.sync_delivery_failure_work_item`) was unchanged and
+  confirmed to remain the only path that resolves a row with no human
+  actor.
 
 ## Delivery record
 
-_Implementer: fill after verification. Do not commit, push, deploy, mutate a
-database, send a real notification, or call an external service._
+Implemented with the minimum diff against the files above: extended
+`public.staff_work_items` and replaced/added the three RPCs in the new
+migration `supabase/migrations/20260814000200_staff_assignment_and_alerts.sql`
+(not applied to any database); authored the rollback-only fixture
+`supabase/tests/032_staff_assignment_and_alerts.sql` (not executed against
+any database); rewrote `src/staffPage.ts` to add current-user identity,
+mark-seen-before-detail, the claim button, expanded resolve handling,
+ownership/status labels, 30-second polling with overlap prevention and
+baseline-diffed PII-free browser alerts gated on explicit permission; and
+extended `test/staffPage.test.ts` with new/changed assertions for all of the
+above. Updated `docs/staff-workflow.md`, `docs/staff-work-items.md`,
+`docs/database-schema.md`, and added the Task 032 status paragraph to
+`docs/product-roadmap.md`.
+
+Local verification results:
+
+- `pnpm install --frozen-lockfile` — passed (`Already up to date`).
+- `pnpm typecheck` (`tsc --noEmit`) — passed, no errors.
+- `pnpm test` — passed: 31 test files, 1281 tests passed, 2 pre-existing
+  skipped (1283 total), including `test/staffPage.test.ts` (50 tests, all
+  passing).
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed;
+  bundled successfully (Total Upload 122.69 KiB / gzip 25.72 KiB), listed
+  existing `INTAKE_QUEUE`/`APP_TIMEZONE`/`WHATSAPP_GRAPH_API_VERSION`
+  bindings, exited at `--dry-run: exiting now.` with no deploy performed.
+- `git diff --check` — passed, no whitespace errors (only benign
+  LF-will-become-CRLF autocrlf warnings on the two modified TypeScript
+  files, not a diff content issue).
+- Migration apply and `supabase/tests/032_staff_assignment_and_alerts.sql`:
+  **NOT RUN**, per contract — not executed against any database (disposable
+  `vetai-test` or otherwise) in this pass; left for Codex to apply/test on
+  disposable `vetai-test` after review.
+- No paid OpenAI eval was run: this task changes no prompt, model,
+  extraction contract, model context, safety decision, or customer reply.
+- No commit, push, deploy, database mutation, real notification, real
+  external service call, plugin installation, or other external resource
+  change was performed.
+
+## Codex review record
+
+Reviewed by Codex on 2026-08-14. Decision: `PASS_FOR_OPUS`; the task remains
+`IN_REVIEW` until the required read-only Claude Opus gate completes.
+
+Codex traced the new status checks, Auth-user foreign keys, all three
+`SECURITY DEFINER` RPCs, the existing automatic provider-failure trigger, the
+RLS/grant boundary, the current-user lookup, mark-seen-before-detail path,
+claim/resolve controls, polling lifecycle, and notification payload. Tenant
+identity continues to come only from the locked work-item row plus
+`auth.uid()`/`vetai_private.is_clinic_staff`; authenticated users retain
+same-clinic SELECT only and cannot mutate the table directly.
+
+Targeted fixes applied during review:
+
+- isolated the Auth-user-erasure fixture onto a fifth disposable staff user;
+  the original test deleted the first staff identity and then incorrectly
+  reused it in later scenarios;
+- cast `information_schema.role_table_grants.privilege_type` to `text` before
+  comparing the aggregated grant list, fixing a real PostgreSQL type mismatch;
+- contained native `Notification` constructor failures so browser/OS alert
+  failure cannot abort a successful list refresh; and
+- cleared a newly stored access token when the follow-up `/auth/v1/user`
+  response fails validation, preventing a malformed login session from being
+  left in `sessionStorage`; and
+- clarified that `first_seen_*` records the first authenticated attempt to
+  open an item, not proof that its detail content successfully rendered or
+  was read.
+
+Disposable database evidence: Codex applied
+`20260814000200_staff_assignment_and_alerts.sql` through the authenticated
+Supabase SQL editor only to disposable PostgreSQL 17 `vetai-test`. The fixed
+rollback fixture returned `PASS` with
+`remaining_test_clinics=0`, `remaining_test_users=0`,
+`remaining_test_items=0`, and `remaining_test_outbox_rows=0`. No production
+database was touched, and this SQL-editor validation is not a Supabase CLI
+migration-history entry.
+
+Final local verification after fixes:
+
+- `pnpm install --frozen-lockfile` — PASS, already up to date;
+- `pnpm typecheck` — PASS;
+- `pnpm test` — PASS, 31/31 files, 1,283 passed, 2 opt-in paid evals skipped;
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — PASS,
+  existing bindings unchanged and no deployment;
+- `git diff --check` — PASS (line-ending advisories only).
+
+No paid OpenAI eval was run because Task 032 changes no prompt, model,
+extraction schema, model context, safety decision, or customer reply. No
+commit, push, production deployment, real browser notification, or production
+database mutation has occurred. Claude Opus should now perform the contract's
+single read-only review of the `SECURITY DEFINER`/tenant boundary, four-state
+transition and concurrency semantics, actor-ID erasure behavior, polling and
+PII-free alert boundary, and the truthfulness of the documented pilot ceiling.
+
+### Opus finding and final remediation
+
+Claude Opus completed the required read-only review on 2026-08-14. The
+`SECURITY DEFINER`/RLS boundary, status RPCs, actor erasure, browser session,
+polling, alert privacy, and documented pilot ceiling passed. It found one
+blocking interaction: Task 020's partial unique indexes, trigger conflict
+targets, and provider-recovery update still covered only `status='open'`, so
+the new `seen`/`in_progress` states could permit a duplicate handoff item and
+prevent automatic provider-failure resolution.
+
+Codex fixed the root cause only in the new Task 032 migration, leaving prior
+migrations unchanged: both partial unique indexes and matching trigger
+predicates now cover every `status <> 'resolved'` row. The rollback fixture
+now proves repeated handoff updates keep exactly one seen/claimed item (and
+can upgrade it to urgent in place), plus automatic `provider_failed`
+resolution from both `seen` and `in_progress` with `resolved_by is null`.
+
+Codex applied the corrective statements to disposable `vetai-test` and ran
+the strengthened fixture; it returned `PASS 0/0/0/0`. Frozen install,
+typecheck, all 1,283 normal tests, Worker dry-run, and `git diff --check`
+passed again; the two opt-in paid evals remained skipped because no AI
+behavior changed. The blocking review finding is closed. No production
+database, deployment, real notification, or paid model call was used.

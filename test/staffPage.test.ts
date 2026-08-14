@@ -97,7 +97,22 @@ describe("handleStaffShell", () => {
   });
 
   it("HTML declares the required semantic regions and only the self-hosted script, with no inline script", () => {
-    for (const id of ["login-section", "queue-section", "detail-section", "refresh-button", "logout-button", "resolve-button", "status-region", "error-region", "login-form", "back-button"]) {
+    for (const id of [
+      "login-section",
+      "queue-section",
+      "detail-section",
+      "refresh-button",
+      "logout-button",
+      "notify-button",
+      "notify-status",
+      "resolve-button",
+      "claim-button",
+      "workitem-status-region",
+      "status-region",
+      "error-region",
+      "login-form",
+      "back-button",
+    ]) {
       expect(STAFF_HTML).toContain(`id="${id}"`);
     }
     const scriptTags = STAFF_HTML.match(/<script[^>]*>/g) ?? [];
@@ -126,8 +141,12 @@ describe("handleStaffScript", () => {
     expect(STAFF_APP_JS).toContain('"/auth/v1/token?grant_type=password"');
   });
 
-  it("queries the open-work list with the exact required shape", () => {
-    expect(STAFF_APP_JS).toContain("status=eq.open");
+  it("queries the non-resolved work list with the exact required shape", () => {
+    expect(STAFF_APP_JS).toContain(
+      "id,kind,priority,reason,status,created_at,conversation_id,first_seen_at,assigned_at,assigned_to",
+    );
+    expect(STAFF_APP_JS).toContain("status=neq.resolved");
+    expect(STAFF_APP_JS).not.toContain("status=eq.open");
     expect(STAFF_APP_JS).toContain("order=priority.desc,created_at.asc,id.asc");
     expect(STAFF_APP_JS).toContain("limit=100");
   });
@@ -136,11 +155,52 @@ describe("handleStaffScript", () => {
     expect(STAFF_APP_JS).toContain("&order=created_at.desc&limit=20");
   });
 
-  it("calls the closed resolve RPC and only accepts its exact result set", () => {
-    expect(STAFF_APP_JS).toContain("/rest/v1/rpc/resolve_staff_work_item");
-    expect(STAFF_APP_JS).toContain('body: JSON.stringify({ p_work_item_id: currentWorkItemId })');
-    expect(STAFF_APP_JS).toContain('result !== "resolved" && result !== "already_resolved" && result !== "not_found"');
+  it("calls all three work-item RPCs through one shared closed-result helper", () => {
+    expect(STAFF_APP_JS).toContain("async function callWorkItemRpc(rpcName, workItemId, allowedResults)");
+    expect(STAFF_APP_JS).toContain('"/rest/v1/rpc/" + rpcName');
+    expect(STAFF_APP_JS).toContain("body: JSON.stringify({ p_work_item_id: workItemId })");
+    expect(STAFF_APP_JS).toContain("allowedResults.indexOf(rows[0].result) === -1");
     expect(STAFF_APP_JS).toContain("Object.keys(rows[0]).length !== 1");
+    expect(STAFF_APP_JS).toContain('callWorkItemRpc("mark_staff_work_item_seen", workItemId, [');
+    expect(STAFF_APP_JS).toContain('callWorkItemRpc("claim_staff_work_item", currentWorkItemId, [');
+    expect(STAFF_APP_JS).toContain('callWorkItemRpc("resolve_staff_work_item", currentWorkItemId, [');
+  });
+
+  it("accepts the exact closed result set for each work-item RPC", () => {
+    expect(STAFF_APP_JS).toMatch(/"seen",\s*"already_seen",\s*"already_resolved",\s*"not_found",/);
+    expect(STAFF_APP_JS).toMatch(/"claimed",\s*"already_claimed",\s*"busy",\s*"already_resolved",\s*"not_found",/);
+    expect(STAFF_APP_JS).toMatch(/"resolved",\s*"already_resolved",\s*"not_claimed",\s*"not_owner",\s*"not_found",/);
+  });
+
+  it("marks a work item seen before loading detail, and stops on already_resolved/not_found", () => {
+    expect(STAFF_APP_JS).toContain("async function openDetail(workItemId, conversationId) {");
+    const openDetailBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function openDetail(workItemId, conversationId) {"),
+    );
+    const seenCallIndex = openDetailBody.indexOf("callWorkItemRpc(\"mark_staff_work_item_seen\"");
+    const convFetchIndex = openDetailBody.indexOf("/rest/v1/conversations?id=eq.");
+    expect(seenCallIndex).toBeGreaterThan(-1);
+    expect(convFetchIndex).toBeGreaterThan(-1);
+    expect(seenCallIndex).toBeLessThan(convFetchIndex);
+    expect(openDetailBody.indexOf('seenResult === "already_resolved" || seenResult === "not_found"')).toBeGreaterThan(-1);
+  });
+
+  it("gates claim availability and owner-only resolve from work-item state", () => {
+    expect(STAFF_APP_JS).toContain("function applyWorkItemState(state)");
+    expect(STAFF_APP_JS).toContain('state.status === "open" ||');
+    expect(STAFF_APP_JS).toContain('state.status === "seen" ||');
+    expect(STAFF_APP_JS).toContain(
+      '(state.status === "in_progress" && (state.assigned_to === null || state.assigned_to === currentUserId))',
+    );
+    expect(STAFF_APP_JS).toContain("claimButton.disabled = !claimable;");
+    expect(STAFF_APP_JS).toContain(
+      'resolveButton.disabled = !(state.status === "in_progress" && state.assigned_to === currentUserId);',
+    );
+  });
+
+  it("shows a fixed busy status and generic not_claimed/not_owner guidance without leaking an actor", () => {
+    expect(STAFF_APP_JS).toContain('if (result === "busy") {');
+    expect(STAFF_APP_JS).toContain('if (result === "not_claimed" || result === "not_owner") {');
   });
 
   it("requires a fixed confirmation before resolving", () => {
@@ -153,6 +213,14 @@ describe("handleStaffScript", () => {
 
   it("clears the session on 401/403 responses", () => {
     expect(STAFF_APP_JS).toContain("if (res.status === 401 || res.status === 403) {");
+  });
+
+  it("clears a newly stored session if current-user validation fails during login", () => {
+    const loginHandler = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
+      STAFF_APP_JS.indexOf('refreshButton.addEventListener("click"'),
+    );
+    expect(loginHandler).toMatch(/catch \{\s+clearSession\(\);\s+showError\("Giri\\u015f/);
   });
 
   it("never references the service-role credential", () => {
@@ -192,6 +260,112 @@ describe("handleStaffScript", () => {
     expect(STAFF_APP_JS).toContain("petP.textContent =");
     expect(STAFF_APP_JS).toContain("statusP.textContent =");
     expect(STAFF_APP_JS).toContain("li.textContent =");
+    expect(STAFF_APP_JS).toContain("workItemStatusRegion.textContent =");
+  });
+
+  it("loads the current user from /auth/v1/user and validates a UUID id, in memory only", () => {
+    expect(STAFF_APP_JS).toContain('async function fetchCurrentUser() {\n  const res = await authedFetch("/auth/v1/user"');
+    expect(STAFF_APP_JS).toContain("const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;");
+    expect(STAFF_APP_JS).toContain("!UUID_PATTERN.test(data.id)");
+    expect(STAFF_APP_JS).toContain("let currentUserId = null;");
+    expect(STAFF_APP_JS).toContain("currentUserId = await fetchCurrentUser();");
+    expect(STAFF_APP_JS).not.toMatch(/sessionStorage\.setItem\(SESSION_STORAGE_KEY, data\.id\)/);
+    expect(STAFF_APP_JS).not.toMatch(/sessionStorage\.setItem\(SESSION_STORAGE_KEY, data\.email\)/);
+  });
+
+  it("labels ownership as Sahipsiz/Sizde/Başka personelde by comparing assigned_to to the current user, never a raw UUID", () => {
+    expect(STAFF_APP_JS).toContain("function ownershipLabel(assignedTo) {");
+    expect(STAFF_APP_JS).toContain('return "Sahipsiz";');
+    expect(STAFF_APP_JS).toContain('return assignedTo === currentUserId ? "Sizde" : "Ba\\u015fka personelde";');
+    expect(STAFF_APP_JS).toContain("ownershipLabel(item.assigned_to)");
+    expect(STAFF_APP_JS).toContain("ownershipLabel(state.assigned_to)");
+    expect(STAFF_APP_JS).not.toMatch(/textContent\s*=[^;]*\.assigned_to(?!\s*[=)])/);
+  });
+
+  it("polls the queue on one 30-second interval and prevents overlapping refresh requests", () => {
+    expect(STAFF_APP_JS).toContain("const POLL_INTERVAL_MS = 30000;");
+    expect(STAFF_APP_JS).toContain("pollIntervalId = setInterval(pollQueue, POLL_INTERVAL_MS);");
+    expect(STAFF_APP_JS).toContain("function startPolling() {\n  if (pollIntervalId !== null) {\n    return;\n  }");
+    expect(STAFF_APP_JS).toContain("if (queueLoadInFlight) {\n    return;\n  }\n  queueLoadInFlight = true;");
+  });
+
+  it("stops polling on logout/session failure and clears the baseline", () => {
+    expect(STAFF_APP_JS).toContain("function stopPolling() {\n  if (pollIntervalId !== null) {\n    clearInterval(pollIntervalId);\n    pollIntervalId = null;\n  }\n  knownWorkItemIds = null;\n}");
+    const clearSessionBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function clearSession() {"),
+      STAFF_APP_JS.indexOf("function clearSession() {") + 200,
+    );
+    expect(clearSessionBody).toContain("stopPolling();");
+  });
+
+  it("keeps manual refresh working and continues polling during detail view without replacing its DOM", () => {
+    expect(STAFF_APP_JS).toContain("async function refreshQueue() {\n  await loadQueue(true);\n}");
+    expect(STAFF_APP_JS).toContain("async function pollQueue() {\n  await loadQueue(false);\n}");
+    expect(STAFF_APP_JS).toContain("if (!queueSection.hidden) {\n      renderQueue(items);\n    }");
+  });
+
+  it("establishes a no-alert baseline on first load, then alerts only for new IDs and retains the baseline after a failed refresh", () => {
+    expect(STAFF_APP_JS).toContain("let knownWorkItemIds = null;");
+    expect(STAFF_APP_JS).toContain("function computeNewItems(items) {");
+    expect(STAFF_APP_JS).toContain(
+      "const newItems = knownWorkItemIds === null ? [] : items.filter((item) => !knownWorkItemIds.has(item.id));",
+    );
+    expect(STAFF_APP_JS).toContain("knownWorkItemIds = currentIds;");
+    // computeNewItems() (which reassigns the baseline) runs before the catch block that would leave it untouched on failure.
+    const loadQueueBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function loadQueue(showLoadingStatus) {"),
+      STAFF_APP_JS.indexOf("async function refreshQueue()"),
+    );
+    expect(loadQueueBody).toContain("const newItems = computeNewItems(items);");
+    expect(loadQueueBody.indexOf("try {")).toBeLessThan(loadQueueBody.indexOf("computeNewItems(items)"));
+  });
+
+  it("requests Notification permission only from an explicit button click, never at load/login", () => {
+    expect(STAFF_APP_JS).toContain('notifyButton.addEventListener("click", async () => {');
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('notifyButton.addEventListener("click", async () => {'),
+    );
+    expect(clickBody).toContain("Notification.requestPermission()");
+    expect(STAFF_APP_JS.indexOf("Notification.requestPermission()")).toBe(clickBody.indexOf("Notification.requestPermission()") + STAFF_APP_JS.indexOf('notifyButton.addEventListener("click", async () => {'));
+    const initBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("async function init() {"));
+    expect(initBody).not.toContain("requestPermission");
+    const loginBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'));
+    expect(loginBody.slice(0, loginBody.indexOf("refreshButton.addEventListener"))).not.toContain("requestPermission");
+  });
+
+  it("treats unsupported/denied/default notification permission as non-fatal with fixed Turkish status text", () => {
+    expect(STAFF_APP_JS).toContain('typeof Notification === "undefined"');
+    expect(STAFF_APP_JS).toContain("Bu taray\\u0131c\\u0131da bildirim desteklenmiyor.");
+    expect(STAFF_APP_JS).toContain("Bildirim izni reddedildi.");
+    expect(STAFF_APP_JS).toContain("Bildirim izni verilmedi.");
+    expect(STAFF_APP_JS).toContain("Bildirimler a\\u00e7\\u0131k.");
+  });
+
+  it("emits a PII-free notification with only the fixed title and urgent/normal body", () => {
+    expect(STAFF_APP_JS).toContain("function requestNotificationIfNeeded(newItems) {");
+    expect(STAFF_APP_JS).toContain('new Notification("VetAI personel kuyru\\u011fu", {');
+    expect(STAFF_APP_JS).toContain('body: hasUrgent ? "Yeni acil personel i\\u015fi var." : "Yeni personel i\\u015fi var.",');
+    expect(STAFF_APP_JS).not.toMatch(/silent\s*:/);
+    const notifyBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function requestNotificationIfNeeded(newItems) {"),
+      STAFF_APP_JS.indexOf("function requestNotificationIfNeeded(newItems) {") + 500,
+    );
+    expect(notifyBody).not.toMatch(/item\.id|item\.reason|item\.conversation_id|\.full_name|\.phone_e164/);
+  });
+
+  it("keeps a browser/OS notification failure from blocking the queue refresh", () => {
+    const notifyBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function requestNotificationIfNeeded(newItems) {"),
+      STAFF_APP_JS.indexOf("async function loadConfig()"),
+    );
+    expect(notifyBody).toMatch(/try \{\s+new Notification\(/);
+    expect(notifyBody).toMatch(
+      /catch \{\s+\/\/ A browser\/OS notification failure must not block the queue refresh\.\s+\}/,
+    );
+  });
+
+  it("never interpolates a work-item ID, name, phone, or reason into the notification", () => {
+    expect(STAFF_APP_JS).not.toMatch(/Notification\([^)]*\+[^)]*item\./s);
   });
 });
 

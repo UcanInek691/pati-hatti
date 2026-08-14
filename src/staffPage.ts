@@ -77,12 +77,16 @@ export const STAFF_HTML = `<!doctype html>
   <h2 id="queue-heading">Açık işler</h2>
   <button type="button" id="refresh-button">Yenile</button>
   <button type="button" id="logout-button">Çıkış yap</button>
+  <button type="button" id="notify-button">Bildirimleri aç</button>
+  <span id="notify-status"></span>
   <ul id="queue-list"></ul>
 </section>
 
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
   <h2 id="detail-heading">Detay</h2>
+  <p id="workitem-status-region"></p>
   <div id="detail-content"></div>
+  <button type="button" id="claim-button">İşi üstlen</button>
   <button type="button" id="resolve-button">Çözüldü olarak işaretle</button>
   <button type="button" id="back-button">Listeye dön</button>
 </section>
@@ -95,6 +99,8 @@ export const STAFF_HTML = `<!doctype html>
 export const STAFF_APP_JS = `"use strict";
 
 const SESSION_STORAGE_KEY = "vetai_staff_access_token";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const POLL_INTERVAL_MS = 30000;
 
 const statusRegion = document.getElementById("status-region");
 const errorRegion = document.getElementById("error-region");
@@ -106,8 +112,12 @@ const emailInput = document.getElementById("email-input");
 const passwordInput = document.getElementById("password-input");
 const refreshButton = document.getElementById("refresh-button");
 const logoutButton = document.getElementById("logout-button");
+const notifyButton = document.getElementById("notify-button");
+const notifyStatus = document.getElementById("notify-status");
 const queueList = document.getElementById("queue-list");
+const workItemStatusRegion = document.getElementById("workitem-status-region");
 const detailContent = document.getElementById("detail-content");
+const claimButton = document.getElementById("claim-button");
 const resolveButton = document.getElementById("resolve-button");
 const backButton = document.getElementById("back-button");
 
@@ -118,9 +128,14 @@ const REASON_LABELS = {
   send_attempts_exhausted: "G\\u00f6nderim denemeleri t\\u00fckendi",
   provider_failed: "Sa\\u011flay\\u0131c\\u0131 hatas\\u0131",
 };
+const STATUS_LABELS = { open: "A\\u00e7\\u0131k", seen: "G\\u00f6r\\u00fcld\\u00fc", in_progress: "\\u0130\\u015fleniyor" };
 
 let config = null;
+let currentUserId = null;
 let currentWorkItemId = null;
+let queueLoadInFlight = false;
+let knownWorkItemIds = null;
+let pollIntervalId = null;
 
 function showError(message) {
   errorRegion.textContent = message;
@@ -153,11 +168,64 @@ function showDetailView() {
   detailSection.hidden = false;
 }
 
+function stopPolling() {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+  knownWorkItemIds = null;
+}
+
+function startPolling() {
+  if (pollIntervalId !== null) {
+    return;
+  }
+  pollIntervalId = setInterval(pollQueue, POLL_INTERVAL_MS);
+}
+
 function clearSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  currentUserId = null;
   currentWorkItemId = null;
+  stopPolling();
   clearMessages();
   showLoginView();
+}
+
+function ownershipLabel(assignedTo) {
+  if (!assignedTo) {
+    return "Sahipsiz";
+  }
+  return assignedTo === currentUserId ? "Sizde" : "Ba\\u015fka personelde";
+}
+
+function updateNotifyStatus() {
+  if (typeof Notification === "undefined") {
+    notifyStatus.textContent = "Bu taray\\u0131c\\u0131da bildirim desteklenmiyor.";
+    notifyButton.disabled = true;
+    return;
+  }
+  if (Notification.permission === "granted") {
+    notifyStatus.textContent = "Bildirimler a\\u00e7\\u0131k.";
+  } else if (Notification.permission === "denied") {
+    notifyStatus.textContent = "Bildirim izni reddedildi.";
+  } else {
+    notifyStatus.textContent = "Bildirim izni verilmedi.";
+  }
+}
+
+function requestNotificationIfNeeded(newItems) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted" || newItems.length === 0) {
+    return;
+  }
+  const hasUrgent = newItems.some((item) => item.priority === "urgent");
+  try {
+    new Notification("VetAI personel kuyru\\u011fu", {
+      body: hasUrgent ? "Yeni acil personel i\\u015fi var." : "Yeni personel i\\u015fi var.",
+    });
+  } catch {
+    // A browser/OS notification failure must not block the queue refresh.
+  }
 }
 
 async function loadConfig() {
@@ -210,10 +278,85 @@ async function authedFetch(path, init) {
   return res;
 }
 
-async function fetchOpenItems() {
-  const columns = "id,kind,priority,reason,created_at,conversation_id";
+async function fetchCurrentUser() {
+  const res = await authedFetch("/auth/v1/user", { headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    throw new Error("current user fetch failed");
+  }
+  const data = await res.json();
+  if (typeof data.id !== "string" || !UUID_PATTERN.test(data.id)) {
+    throw new Error("malformed current user response");
+  }
+  return data.id;
+}
+
+async function callWorkItemRpc(rpcName, workItemId, allowedResults) {
+  const res = await authedFetch("/rest/v1/rpc/" + rpcName, {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ p_work_item_id: workItemId }),
+  });
+  if (!res.ok) {
+    throw new Error("rpc request failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length !== 1 ||
+    typeof rows[0] !== "object" ||
+    rows[0] === null ||
+    Array.isArray(rows[0]) ||
+    Object.keys(rows[0]).length !== 1 ||
+    typeof rows[0].result !== "string" ||
+    allowedResults.indexOf(rows[0].result) === -1
+  ) {
+    throw new Error("malformed rpc response");
+  }
+  return rows[0].result;
+}
+
+async function fetchWorkItemState(workItemId) {
+  const res = await authedFetch(
+    "/rest/v1/staff_work_items?id=eq." + encodeURIComponent(workItemId) + "&select=status,assigned_to",
+    { headers: { Accept: "application/json" } }
+  );
+  if (!res.ok) {
+    throw new Error("work item state fetch failed");
+  }
+  const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length !== 1) {
+    throw new Error("work item state unavailable");
+  }
+  return rows[0];
+}
+
+function applyWorkItemState(state) {
+  const statusLabel = STATUS_LABELS[state.status] || state.status;
+  workItemStatusRegion.textContent = statusLabel + " \\u2014 " + ownershipLabel(state.assigned_to);
+  const claimable =
+    state.status === "open" ||
+    state.status === "seen" ||
+    (state.status === "in_progress" && (state.assigned_to === null || state.assigned_to === currentUserId));
+  claimButton.disabled = !claimable;
+  resolveButton.disabled = !(state.status === "in_progress" && state.assigned_to === currentUserId);
+}
+
+async function refreshWorkItemState() {
+  if (!currentWorkItemId) {
+    return;
+  }
+  try {
+    applyWorkItemState(await fetchWorkItemState(currentWorkItemId));
+  } catch {
+    showError("\\u0130\\u015f durumu g\\u00fcncellenemedi.");
+  }
+}
+
+async function fetchQueueItems() {
+  const columns =
+    "id,kind,priority,reason,status,created_at,conversation_id,first_seen_at,assigned_at,assigned_to";
   const query =
-    "select=" + columns + "&status=eq.open&order=priority.desc,created_at.asc,id.asc&limit=100";
+    "select=" + columns + "&status=neq.resolved&order=priority.desc,created_at.asc,id.asc&limit=100";
   const res = await authedFetch("/rest/v1/staff_work_items?" + query, {
     headers: { Accept: "application/json" },
   });
@@ -227,6 +370,16 @@ async function fetchOpenItems() {
   return rows;
 }
 
+function computeNewItems(items) {
+  const currentIds = new Set();
+  for (const item of items) {
+    currentIds.add(item.id);
+  }
+  const newItems = knownWorkItemIds === null ? [] : items.filter((item) => !knownWorkItemIds.has(item.id));
+  knownWorkItemIds = currentIds;
+  return newItems;
+}
+
 function renderQueue(items) {
   queueList.textContent = "";
   for (const item of items) {
@@ -236,8 +389,19 @@ function renderQueue(items) {
     const urgentPrefix = item.priority === "urgent" ? "[ACIL] " : "";
     const kindLabel = KIND_LABELS[item.kind] || item.kind;
     const reasonLabel = REASON_LABELS[item.reason] || item.reason;
+    const statusLabel = STATUS_LABELS[item.status] || item.status;
     const created = new Date(item.created_at).toLocaleString("tr-TR");
-    label.textContent = urgentPrefix + kindLabel + " \\u2014 " + reasonLabel + " \\u2014 " + created;
+    label.textContent =
+      urgentPrefix +
+      kindLabel +
+      " \\u2014 " +
+      reasonLabel +
+      " \\u2014 " +
+      statusLabel +
+      " \\u2014 " +
+      ownershipLabel(item.assigned_to) +
+      " \\u2014 " +
+      created;
     li.appendChild(label);
 
     const detailButton = document.createElement("button");
@@ -252,16 +416,38 @@ function renderQueue(items) {
   }
 }
 
-async function refreshQueue() {
-  showStatus("Y\\u00fckleniyor...");
-  errorRegion.textContent = "";
+async function loadQueue(showLoadingStatus) {
+  if (queueLoadInFlight) {
+    return;
+  }
+  queueLoadInFlight = true;
+  if (showLoadingStatus) {
+    showStatus("Y\\u00fckleniyor...");
+    errorRegion.textContent = "";
+  }
   try {
-    const items = await fetchOpenItems();
-    renderQueue(items);
+    const items = await fetchQueueItems();
+    const newItems = computeNewItems(items);
+    requestNotificationIfNeeded(newItems);
+    if (!queueSection.hidden) {
+      renderQueue(items);
+    }
     showStatus(items.length + " a\\u00e7\\u0131k i\\u015f");
   } catch {
-    showError("Liste y\\u00fcklenemedi.");
+    if (showLoadingStatus) {
+      showError("Liste y\\u00fcklenemedi.");
+    }
+  } finally {
+    queueLoadInFlight = false;
   }
+}
+
+async function refreshQueue() {
+  await loadQueue(true);
+}
+
+async function pollQueue() {
+  await loadQueue(false);
 }
 
 function renderDetail(owner, pet, conversation, messages) {
@@ -295,6 +481,26 @@ async function openDetail(workItemId, conversationId) {
   currentWorkItemId = workItemId;
   errorRegion.textContent = "";
   try {
+    const seenResult = await callWorkItemRpc("mark_staff_work_item_seen", workItemId, [
+      "seen",
+      "already_seen",
+      "already_resolved",
+      "not_found",
+    ]);
+    if (seenResult === "already_resolved" || seenResult === "not_found") {
+      currentWorkItemId = null;
+      showError(
+        seenResult === "not_found"
+          ? "\\u0130\\u015f bulunamad\\u0131."
+          : "\\u0130\\u015f zaten \\u00e7\\u00f6z\\u00fcld\\u00fc olarak i\\u015faretlenmi\\u015f."
+      );
+      showQueueView();
+      await refreshQueue();
+      return;
+    }
+
+    applyWorkItemState(await fetchWorkItemState(workItemId));
+
     const convRes = await authedFetch(
       "/rest/v1/conversations?id=eq." + encodeURIComponent(conversationId) + "&select=owner_id,pet_id,status,intake_stage",
       { headers: { Accept: "application/json" } }
@@ -365,9 +571,12 @@ loginForm.addEventListener("submit", async (event) => {
   try {
     await login(emailInput.value, passwordInput.value);
     passwordInput.value = "";
+    currentUserId = await fetchCurrentUser();
     showQueueView();
     await refreshQueue();
+    startPolling();
   } catch {
+    clearSession();
     showError("Giri\\u015f ba\\u015far\\u0131s\\u0131z.");
   }
 });
@@ -380,9 +589,51 @@ logoutButton.addEventListener("click", () => {
   clearSession();
 });
 
+notifyButton.addEventListener("click", async () => {
+  if (typeof Notification === "undefined") {
+    updateNotifyStatus();
+    return;
+  }
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // Ignore: unsupported or blocked permission requests remain non-fatal.
+  }
+  updateNotifyStatus();
+});
+
 backButton.addEventListener("click", () => {
   currentWorkItemId = null;
   showQueueView();
+});
+
+claimButton.addEventListener("click", async () => {
+  if (!currentWorkItemId) {
+    return;
+  }
+  claimButton.disabled = true;
+  try {
+    const result = await callWorkItemRpc("claim_staff_work_item", currentWorkItemId, [
+      "claimed",
+      "already_claimed",
+      "busy",
+      "already_resolved",
+      "not_found",
+    ]);
+    if (result === "not_found" || result === "already_resolved") {
+      currentWorkItemId = null;
+      showQueueView();
+      await refreshQueue();
+      return;
+    }
+    if (result === "busy") {
+      showError("Bu i\\u015fi ba\\u015fka personel \\u00fcstlendi.");
+    }
+    await refreshWorkItemState();
+  } catch {
+    showError("\\u0130\\u015f \\u00fcstlenilirken bir hata olu\\u015ftu.");
+    claimButton.disabled = false;
+  }
 });
 
 resolveButton.addEventListener("click", async () => {
@@ -395,32 +646,22 @@ resolveButton.addEventListener("click", async () => {
   }
   resolveButton.disabled = true;
   try {
-    const res = await authedFetch("/rest/v1/rpc/resolve_staff_work_item", {
-      method: "POST",
-      headers: { "content-type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ p_work_item_id: currentWorkItemId }),
-    });
-    if (!res.ok) {
-      throw new Error("resolve request failed");
+    const result = await callWorkItemRpc("resolve_staff_work_item", currentWorkItemId, [
+      "resolved",
+      "already_resolved",
+      "not_claimed",
+      "not_owner",
+      "not_found",
+    ]);
+    if (result === "not_found" || result === "already_resolved") {
+      currentWorkItemId = null;
+      showQueueView();
+      await refreshQueue();
+      return;
     }
-    const rows = await res.json();
-    if (
-      !Array.isArray(rows) ||
-      rows.length !== 1 ||
-      typeof rows[0] !== "object" ||
-      rows[0] === null ||
-      Array.isArray(rows[0]) ||
-      Object.keys(rows[0]).length !== 1 ||
-      typeof rows[0].result !== "string"
-    ) {
-      throw new Error("malformed resolve response");
-    }
-    const result = rows[0].result;
-    if (result !== "resolved" && result !== "already_resolved" && result !== "not_found") {
-      throw new Error("unexpected resolve result");
-    }
-    if (result === "not_found") {
-      showError("I\\u015f bulunamad\\u0131.");
+    if (result === "not_claimed" || result === "not_owner") {
+      showError("Bu i\\u015fi \\u00e7\\u00f6zmeden \\u00f6nce \\u00fcstlenmeniz gerekiyor.");
+      await refreshWorkItemState();
       return;
     }
     currentWorkItemId = null;
@@ -428,7 +669,6 @@ resolveButton.addEventListener("click", async () => {
     await refreshQueue();
   } catch {
     showError("\\u0130\\u015f \\u00e7\\u00f6z\\u00fcl\\u00fcrken bir hata olu\\u015ftu.");
-  } finally {
     resolveButton.disabled = false;
   }
 });
@@ -440,9 +680,16 @@ async function init() {
     showError("Yap\\u0131land\\u0131rma y\\u00fcklenemedi.");
     return;
   }
+  updateNotifyStatus();
   if (sessionStorage.getItem(SESSION_STORAGE_KEY)) {
-    showQueueView();
-    await refreshQueue();
+    try {
+      currentUserId = await fetchCurrentUser();
+      showQueueView();
+      await refreshQueue();
+      startPolling();
+    } catch {
+      clearSession();
+    }
   } else {
     showLoginView();
   }

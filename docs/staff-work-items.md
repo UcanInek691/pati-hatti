@@ -1,6 +1,6 @@
 # Durable staff work queue (Task 020)
 
-Last verified: 2026-08-09.
+Last verified: 2026-08-14.
 
 ## What this step does
 
@@ -36,12 +36,12 @@ whatever keys are present with `jsonb_each`, never by naming a specific
 signal — so a future new signal name is caught for free. Absent or
 non-object safety data is tolerated and treated as no true signal, not as an
 error. A single `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` upserts
-against the partial unique index on `(clinic_id, conversation_id)` for open
-handoff items: a repeated handoff-stage update while one item is already
-open leaves it unchanged (or upgrades it from `normal` to `urgent` if a
-later message carries a true signal), and never downgrades or duplicates.
-Once staff resolve an item (a later task), the next handoff-stage update
-opens a new one.
+against the partial unique index on `(clinic_id, conversation_id)` for
+non-resolved handoff items: a repeated handoff-stage update while an item is
+`open`, `seen`, or `in_progress` leaves it unchanged (or upgrades it from
+`normal` to `urgent` if a later message carries a true signal), and never
+downgrades or duplicates.
+Once staff resolve an item, the next handoff-stage update opens a new one.
 
 The migration backfills one coherent item for every conversation already at
 `intake_stage = 'human_handoff'`, using the identical priority/reason rule.
@@ -55,8 +55,10 @@ about: `delivery_status` newly `failed` (bounded send attempts exhausted),
 has failure evidence from Meta), and a prior `provider_delivery_status =
 'failed'` superseded by `delivered` or `read`. The first two each open one
 `delivery_failure` item with the matching reason, deduplicated by the
-partial unique index on `(clinic_id, source_outbox_id)` for open delivery
-items. The third resolves only the open `provider_failed` item — it never
+partial unique index on `(clinic_id, source_outbox_id)` for current delivery
+items. Task 032 widens that uniqueness domain from `open` to every
+non-resolved status.
+The third resolves the current non-resolved `provider_failed` item — it never
 touches a `send_attempts_exhausted` item, because a send-attempt exhaustion
 is a durable fact about what this system did, not something a later provider
 callback can retroactively undo. Unrelated, `accepted`, `sent`, `delivered`,
@@ -111,6 +113,24 @@ one explicit resolution path: `public.resolve_staff_work_item`, a
 anything described in this document — the table grants, RLS policy, and both
 triggers above are unchanged; `authenticated` still has no direct table
 `UPDATE`.
+
+Task 032 (see [`docs/staff-workflow.md`](staff-workflow.md)) later adds a
+`seen` and `in_progress` status between `open` and `resolved`, five nullable
+audit columns (`first_seen_at`/`first_seen_by`, `assigned_at`/`assigned_to`,
+`resolved_by`), and two more closed `authenticated`-only RPCs
+(`mark_staff_work_item_seen`, `claim_staff_work_item`) alongside a replaced
+`resolve_staff_work_item`. It adds no backfill for existing rows (they keep
+the new columns null) and does not change the table grants or RLS policy —
+`authenticated` still has no direct table `INSERT`/`UPDATE`/`DELETE`. It
+replaces the two partial unique indexes and trigger predicates so `seen` and
+`in_progress` stay in the same non-resolved deduplication and automatic
+provider-failure resolution domain as `open`; creation, urgency, reason, and
+resolution semantics are otherwise unchanged. The three actor columns follow
+the existing `on delete cascade` conventions used elsewhere in this table for
+`on delete set null` instead: deleting the `auth.users` row that performed an
+action erases only the actor id, not the timestamp, so audit history survives
+staff account deletion. See [`docs/staff-workflow.md`](staff-workflow.md) for
+the full status machine, identity semantics, and browser-alert boundary.
 
 ## Durable visibility is not notification
 

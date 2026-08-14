@@ -354,6 +354,30 @@ rollback fixture disposable `vetai-test` üzerinde sıfır kalıntıyla geçti;
 model, çıkarım şeması ve güvenlik önceliği değişmedi; ücretli eval gerekmedi.
 Klinik veterineri ve KVKK onayları yeni Türkçe metin için hâlâ zorunludur.
 
+Task 032 tamamlandı; Codex incelemesi, disposable `vetai-test` doğrulaması ve
+Opus'un salt-okunur güvenlik/KVKK incelemesi geçti:
+`staff_work_items` artık dört durumlu
+`open -> seen -> in_progress -> resolved` akışını ve ilk görülme/atama/çözen
+kimliğini ve zaman damgasını (auth kullanıcısı silinirse yalnız kimlik `on
+delete set null` ile temizlenir, zaman damgası kalır) izliyor; üç kapalı
+`authenticated`-only RPC (`mark_staff_work_item_seen`,
+`claim_staff_work_item`, genişletilmiş `resolve_staff_work_item`) bu geçişleri
+yönetiyor. Personel sayfası artık kapalı-olmayan tüm işleri ve sahiplenme
+etiketini ("Sahipsiz" / "Sizde" / "Başka personelde") gösteriyor, 30 saniyede
+bir otomatik olarak yeniliyor ve yalnız açık kullanıcı izniyle, kimlik/telefon/
+neden/sayı içermeyen tek bir sabit tarayıcı bildirimi verebiliyor — bu yalnız
+sayfa açıkken çalışan bir pilot yardımcısıdır, personelin gördüğünü veya
+yanıt vereceğini kanıtlamaz ve müşteriye böyle bir vaat eklenmedi. Prompt,
+model, çıkarım şeması ve güvenlik önceliği değişmedi; ücretli eval gerekmedi.
+`pnpm typecheck`, tam `pnpm test` (1.283 test geçti, 2 atlandı) ve Worker
+dry-run yerelde geçti; migration disposable `vetai-test` üzerinde uygulandı
+ve güçlendirilmiş rollback fixture `PASS 0/0/0/0` döndürdü. Opus'un bulduğu
+tek bloklayıcı regresyon da kapandı: dedup indeksleri ve trigger yüklemleri
+artık yalnız `open` yerine bütün kapanmamış durumları kapsıyor; böylece
+`seen/in_progress` işler yinelenmiyor ve `provider_failed` işi daha sonra
+`delivered/read` olduğunda otomatik kapanıyor. Personel kimlik/zaman damgası
+verileri için Türk hukuk/KVKK incelemesi hâlâ ayrı ve zorunludur.
+
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
 zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una

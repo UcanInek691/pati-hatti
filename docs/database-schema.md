@@ -427,6 +427,60 @@ fixture passed on disposable `vetai-test` on 2026-08-09 with zero fixture
 residue; they have not been applied to production or recorded in Supabase
 migration history.
 
+## Staff ownership, status, and alerts (Task 032)
+
+Defined in
+`supabase/migrations/20260814000200_staff_assignment_and_alerts.sql`. Adds
+five nullable columns to `public.staff_work_items` — `first_seen_at
+timestamptz`, `first_seen_by uuid references auth.users (id) on delete set
+null`, `assigned_at timestamptz`, `assigned_to uuid references auth.users
+(id) on delete set null`, `resolved_by uuid references auth.users (id) on
+delete set null` — with no backfill for existing rows. Replaces the status
+check with a four-value `open | seen | in_progress | resolved` enum, adds a
+named per-status CHECK constraint requiring each status's exact set of
+timestamp/actor fields, and three actor-implies-timestamp CHECK constraints
+that stay valid after `on delete set null` erases an actor id but leaves its
+timestamp. Table RLS, policy, and grants are unchanged from Task 020.
+The two partial unique indexes and their trigger predicates now cover every
+non-resolved status rather than only `open`; this preserves one current item
+per conversation/outbox row after a person marks it seen or claims it, and a
+later `delivered`/`read` callback still automatically resolves a seen or
+claimed `provider_failed` item.
+
+Adds two new closed `SECURITY DEFINER`, `VOLATILE`, `SET search_path = ''`
+RPCs, revoked from `PUBLIC`/`anon`/`service_role`, granted only to
+`authenticated`:
+
+- `public.mark_staff_work_item_seen(p_work_item_id uuid) returns
+  table(result text)` — `open` → `seen`; `seen`/`in_progress` → already
+  `already_seen`; `resolved` → `already_resolved`; absent/cross-clinic →
+  `not_found`.
+- `public.claim_staff_work_item(p_work_item_id uuid) returns table(result
+  text)` — `open`/`seen` → `claimed` (filling any missing first-seen
+  fields); `in_progress` with the caller already assigned → `already_claimed`;
+  `in_progress` with a different live assignee → `busy`; `in_progress` with
+  an erased assignee → `claimed` (reclaim); `resolved` → `already_resolved`;
+  absent/cross-clinic → `not_found`.
+
+Also replaces `public.resolve_staff_work_item` (same signature; see above)
+with an expanded version returning `resolved | already_resolved |
+not_claimed | not_owner | not_found`: `not_claimed` when the item is not
+currently claimed by anyone with a live assignee, `not_owner` when it is
+claimed by a different user, `resolved` (setting `resolved_by` to the
+caller) only for the item's current live assignee.
+
+All three RPCs reject a null work-item id before lookup, lock the row,
+authorize via the same `vetai_private.is_clinic_staff` helper, derive the
+acting identity only from `auth.uid()`, and return exactly one row with one
+`result` field from a fixed closed set — never a raw identifier, PII, or
+database error detail. See [`docs/staff-workflow.md`](staff-workflow.md) for
+the full status machine, ownership-label UI, 30-second poll, and the
+PII-free active-page browser-alert boundary. Codex applied the migration to
+disposable PostgreSQL 17 `vetai-test` on 2026-08-14 and the rollback fixture
+(`supabase/tests/032_staff_assignment_and_alerts.sql`) returned
+`PASS 0/0/0/0`. They have not been applied to production or recorded in
+Supabase migration history.
+
 ## Appointment booking engine
 
 Defined in `supabase/migrations/20260810000100_appointment_booking_engine.sql`:

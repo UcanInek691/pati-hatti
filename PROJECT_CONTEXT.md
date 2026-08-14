@@ -360,6 +360,25 @@ The secure Worker baseline is committed on `main`:
   boundaries, closure precedence, invalid-name/address fail-closed behavior,
   RLS/grants, tenant isolation, erasure cascades, and zero fixture residue. No
   production migration, deployment, or paid model call occurred.
+- Task 032 is complete. The dependency-free staff page now shows every
+  non-resolved work item, records first-open attempt, explicit ownership, and
+  manual resolver identity through a closed
+  `open -> seen -> in_progress -> resolved` workflow, polls every 30 seconds,
+  and can emit one explicitly permitted PII-free native browser alert while
+  the page remains open. Actor UUIDs come only from `auth.uid()`, are never
+  rendered, and become null on Auth-user erasure while timestamps remain.
+- The two work-item partial unique indexes and trigger conflict predicates now
+  cover all non-resolved statuses. Replayed handoff updates therefore cannot
+  duplicate a seen/claimed item, and later delivered/read evidence still
+  automatically resolves a seen/claimed `provider_failed` item with no human
+  resolver. This correction closed the sole blocking finding from Claude
+  Opus's Task 032 review.
+- Task 032 passed frozen install, strict typecheck, 1,283 tests with 2 opt-in
+  paid evals skipped, Worker dry-run, Codex review, and the required Claude
+  Opus architecture/RLS/KVKK review. Its migration plus reviewed corrective
+  statements and strengthened rollback fixture passed on disposable
+  `vetai-test`; the final fixture returned `PASS 0/0/0/0`. No production
+  migration, deployment, real notification, or paid model call occurred.
 
 Verified evidence before the context-system change:
 
@@ -375,8 +394,8 @@ Verified evidence before the context-system change:
 
 - No general-purpose application query interface exists; runtime database
   access remains limited to predefined validated RPCs.
-- Operational alerts/notifications, staff assignment, and administrative user
-  or clinic management.
+- External/background staff notification and administrative user or clinic
+  management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
@@ -392,14 +411,14 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Tasks 028 through 031 are complete, including the authorized synthetic
+Tasks 028 through 032 are complete, including the authorized synthetic
 Luna/Terra live runs, bounded multi-turn interpretation, no-model budget stops,
 finite no-progress/media handoff, safe new-pet routing, unsupported-media
-handling, clinic operational hours/contact configuration, and the $5 OpenAI
-hard-limit setup. Luna remains the production
+handling, clinic operational hours/contact configuration, pilot staff
+ownership/status/browser alerts, and the $5 OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. The next planned technical task is Task 032:
-minimal staff status, ownership, and notification operations.
+evidence for prompt `2026-08-14.1`. The next planned technical task is Task 033:
+real staging resources and end-to-end integration evidence.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production
@@ -466,6 +485,14 @@ occurred.
   `urgent` precedes `normal`. Work-item durability is intentionally bounded by
   source conversation/outbox lifetime because KVKK erasure cascades take
   precedence over an immutable audit trail.
+- A staff work item's deduplication domain is every non-resolved status, not
+  only `open`. Handoff replays must update that one current item in place, and
+  provider delivery recovery must automatically resolve a seen or claimed
+  `provider_failed` item without inventing a human resolver.
+- Native browser alerts are an active-page pilot aid, not proof of staff
+  awareness. They require explicit permission and an open authenticated page;
+  no customer-facing copy may claim notification, assignment, or response
+  time from this mechanism.
 - The one-open-delivery-item invariant currently depends on the protected
   outbox CHECK that makes exhausted-send and provider-failed states mutually
   exclusive. A future relaxation of that CHECK must revisit the partial unique
