@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { planIntakeReply, planUnsupportedMediaReply } from "../src/intakeReply";
-import type { IntakeReplyCategory } from "../src/intakeReply";
+import { applyClinicHandoffContext, planIntakeReply, planUnsupportedMediaReply } from "../src/intakeReply";
+import type { IntakeReplyCategory, IntakeReplyPlan } from "../src/intakeReply";
+import type { ClinicOperationalContextResult } from "../src/clinicOperations";
 import type { IntakeStage } from "../src/conversationState";
 import type { PetResolution } from "../src/intakeExtraction";
 import type { PersistedIntakeData, PlanResult } from "../src/intakeTurn";
@@ -322,5 +323,95 @@ describe("planUnsupportedMediaReply (Task 030)", () => {
     if (generic.kind !== "send") return;
     expect(generic.category).toBe("intake_received");
     expect(planUnsupportedMediaReply()).not.toEqual(generic);
+  });
+});
+
+describe("applyClinicHandoffContext (Task 031)", () => {
+  const HUMAN_HANDOFF_TEXT =
+    "Bu talebi bot üzerinden yanıtlayamam. Lütfen kliniğimizi telefonla arayın. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.";
+
+  const configuredOpen: ClinicOperationalContextResult = {
+    result: "configured",
+    clinicName: "Merkez Veteriner Klinigi",
+    phone: "+905551112233",
+    address: "Bagdat Cad. No 1",
+    isOpen: true,
+  };
+  const configuredClosed: ClinicOperationalContextResult = { ...configuredOpen, isOpen: false };
+  const notFound: ClinicOperationalContextResult = { result: "not_found" };
+  const unconfigured: ClinicOperationalContextResult = { result: "unconfigured" };
+  const failed: ClinicOperationalContextResult = { result: "failed" };
+
+  const humanHandoffPlan: IntakeReplyPlan = { kind: "send", category: "human_handoff", text: HUMAN_HANDOFF_TEXT };
+
+  it("personalizes an open clinic with its name and phone, and keeps the off-bot emergency line", () => {
+    const result = applyClinicHandoffContext(humanHandoffPlan, configuredOpen);
+    expect(result).toEqual({
+      kind: "send",
+      category: "human_handoff",
+      text: "Bu talebi bot üzerinden yanıtlayamam. Merkez Veteriner Klinigi ile +905551112233 numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.",
+    });
+  });
+
+  it("personalizes a closed clinic with truthful closed wording and the off-bot emergency line", () => {
+    const result = applyClinicHandoffContext(humanHandoffPlan, configuredClosed);
+    expect(result).toEqual({
+      kind: "send",
+      category: "human_handoff",
+      text: "Bu talebi bot üzerinden yanıtlayamam. Merkez Veteriner Klinigi şu anda kapalı. Acil olmayan konular için çalışma saatleri içinde +905551112233 numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.",
+    });
+  });
+
+  it.each([
+    ["not_found", notFound],
+    ["unconfigured", unconfigured],
+    ["failed", failed],
+  ])("falls back to the generic human_handoff copy when the operational context is %s", (_label, context) => {
+    expect(applyClinicHandoffContext(humanHandoffPlan, context)).toEqual({
+      kind: "send",
+      category: "human_handoff",
+      text: HUMAN_HANDOFF_TEXT,
+    });
+  });
+
+  it("never interpolates the clinic's public address into the reply text", () => {
+    const result = applyClinicHandoffContext(humanHandoffPlan, configuredOpen);
+    expect(result.kind).toBe("send");
+    if (result.kind !== "send") return;
+    expect(result.text).not.toContain(configuredOpen.address as string);
+  });
+
+  it.each<[IntakeReplyCategory, string]>([
+    ["emergency_handoff", "Bu durum acil olabilir metni"],
+    ["safety_questions", "Guvenlik sorusu metni"],
+    ["pet_identity", "Hangi evcil hayvan metni"],
+    ["complaint", "Sikayet metni"],
+    ["intake_received", "Bilgi alindi metni"],
+    ["appointment_offer", "Randevu teklifi metni"],
+    ["appointment_confirmed", "Randevu onay metni"],
+    ["appointment_declined", "Randevu red metni"],
+    ["appointment_unavailable", "Randevu uygun degil metni"],
+  ])("returns a fresh, behaviorally identical plan for the untouched %s category", (category, text) => {
+    const plan: IntakeReplyPlan = { kind: "send", category, text };
+    const result = applyClinicHandoffContext(plan, configuredOpen);
+    expect(result).toEqual(plan);
+    expect(result).not.toBe(plan);
+  });
+
+  it("returns a fresh 'none' plan when the base plan is 'none', regardless of context", () => {
+    const result = applyClinicHandoffContext({ kind: "none" }, configuredOpen);
+    expect(result).toEqual({ kind: "none" });
+    expect(result).not.toBe(humanHandoffPlan);
+  });
+
+  it("returns a fresh object even for a human_handoff plan (never the same reference)", () => {
+    const result = applyClinicHandoffContext(humanHandoffPlan, configuredOpen);
+    expect(result).not.toBe(humanHandoffPlan);
+  });
+
+  it("is pure and deterministic: repeated calls with equal inputs return equal plans", () => {
+    const first = applyClinicHandoffContext(humanHandoffPlan, configuredOpen);
+    const second = applyClinicHandoffContext(humanHandoffPlan, configuredOpen);
+    expect(first).toEqual(second);
   });
 });

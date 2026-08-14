@@ -551,3 +551,68 @@ reply or otherwise implies a message was sent to the owner.
 Worker helper following the same transport and untrusted-response rules as
 the other functions on this page; it is wired into the Worker's `queue()`
 handler for the `vetai-intake-dlq` queue only.
+
+## Clinic operational profile and hours (Task 031)
+
+`supabase/migrations/20260814000100_clinic_operations.sql`.
+
+> **Disposable validation passed (2026-08-14).** Codex applied the migration
+> to `vetai-test`; `supabase/tests/031_clinic_operations.sql` returned `PASS`
+> with zero remaining test clinics, users, weekly-hours rows, or closure rows.
+> This migration has not been applied to production.
+
+`public.clinics` gains nullable `contact_phone_e164 text` (constrained to
+canonical E.164, `^\+[1-9]\d{1,14}$`) and `public_address text` (constrained
+to trimmed, non-empty text of at most 500 characters with no control
+characters). Two new tables hold the rest of the profile:
+
+- `public.clinic_weekly_hours`: `clinic_id uuid`, `iso_weekday smallint`,
+  `opens_at time without time zone`, `closes_at time without time zone`, and
+  timestamps. Primary key `(clinic_id, iso_weekday)`; `iso_weekday` is
+  restricted to `1..7`; a check constraint requires `opens_at < closes_at`
+  (no overnight intervals, at most one interval per weekday); the row is
+  erased when its clinic is.
+- `public.clinic_closure_dates`: `clinic_id uuid`, `closed_on date`, and
+  `created_at`. Primary key `(clinic_id, closed_on)`; the row is erased when
+  its clinic is.
+
+Both tables enable RLS with no default/public/anon/authenticated privileges.
+Authenticated clinic staff get read-only `SELECT` through one same-clinic
+`vetai_private.is_clinic_staff(clinic_id)` policy per table, matching the
+existing read-only access pattern for `public.clinics` itself; only
+`service_role` can write either table.
+
+`public.get_conversation_clinic_operational_context(p_conversation_id uuid,
+p_at timestamptz default pg_catalog.now())` is `security invoker`, `stable`,
+`set search_path = ''`, and executable only by `service_role` — unlike the
+`vetai_private` `SECURITY DEFINER` helpers elsewhere on this page, it needs no
+elevated privilege because it only reads rows the service role can already
+see. It resolves `clinic_id` solely through the given conversation row (the
+caller never supplies a clinic ID directly, so one tenant's conversation can
+never read another tenant's clinic), and always returns exactly one row:
+
+- `result text`: `configured | unconfigured | not_found`, plus
+  `clinic_name text`, `contact_phone_e164 text`, `public_address text`, and
+  `is_open boolean`.
+- An absent conversation returns `not_found` with all four payload fields
+  null.
+- A clinic is `configured` only when its name and phone are valid and it has
+  at least one `clinic_weekly_hours` row; otherwise `unconfigured`, again with
+  all four payload fields null.
+- For a configured clinic, `p_at` is converted to `Europe/Istanbul` inside
+  PostgreSQL and `is_open` is true only when the local ISO weekday/time falls
+  inside that weekday's half-open interval `[opens_at, closes_at)` — open at
+  the exact opening instant, already closed at the exact closing instant —
+  and there is no matching `clinic_closure_dates` row for that local date. A
+  configured clinic with no weekly-hours row for that weekday is closed for
+  the whole day.
+
+`src/clinicOperations.ts` exposes a native-`fetch`
+`getConversationClinicOperationalContext` Worker helper following the same
+transport and untrusted-response rules as the other functions on this page.
+`src/intakeConsumer.ts` calls it, and passes its result to
+`applyClinicHandoffContext` (`src/intakeReply.ts`), only once a turn's reply
+has already resolved to `human_handoff` — see
+[`docs/clinic-operations.md`](clinic-operations.md) for the personalization
+behavior and [`docs/inbound-queue.md`](inbound-queue.md) for where this fits
+in the Queue consumer's pipeline.

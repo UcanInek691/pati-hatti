@@ -142,6 +142,7 @@ type Routes = {
   finalize?: () => Response;
   appointmentOffer?: () => Response;
   appointmentDecision?: () => Response;
+  clinic?: () => Response;
 };
 
 function routedFetch(routes: Routes) {
@@ -157,6 +158,9 @@ function routedFetch(routes: Routes) {
       return routes.appointmentDecision ? routes.appointmentDecision() : new Response("", { status: 500 });
     }
     if (url.includes("/rpc/finalize_intake_queue_job")) return routes.finalize ? routes.finalize() : new Response("", { status: 500 });
+    if (url.includes("/rpc/get_conversation_clinic_operational_context")) {
+      return routes.clinic ? routes.clinic() : new Response("", { status: 500 });
+    }
     return new Response("", { status: 500 });
   });
 }
@@ -169,7 +173,21 @@ function happyRoutes(overrides: Partial<Routes> & { extraction?: Record<string, 
     finalize: overrides.finalize ?? (() => finalizeRow("applied")),
     appointmentOffer: overrides.appointmentOffer,
     appointmentDecision: overrides.appointmentDecision,
+    clinic: overrides.clinic,
   });
+}
+
+function clinicRow(overrides: Record<string, unknown> = {}): Response {
+  return jsonResponse([
+    {
+      result: "configured",
+      clinic_name: "Merkez Veteriner Klinigi",
+      contact_phone_e164: "+905551112233",
+      public_address: "Bagdat Cad. No 1",
+      is_open: true,
+      ...overrides,
+    },
+  ]);
 }
 
 function bodyOf(fetchMock: ReturnType<typeof vi.fn>, callIndex: number): Record<string, unknown> {
@@ -338,7 +356,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -358,7 +376,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_intake_data).toMatchObject({ intent: "human_handoff", pet_name: "Pamuk", species: "kedi" });
@@ -375,7 +393,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
   });
@@ -390,7 +408,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
   });
@@ -409,7 +427,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
@@ -514,6 +532,141 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
   });
 });
 
+describe("processIntakeQueueMessage: clinic operational context personalization (Task 031)", () => {
+  const GENERIC_HUMAN_HANDOFF_TEXT =
+    "Bu talebi bot üzerinden yanıtlayamam. Lütfen kliniğimizi telefonla arayın. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.";
+
+  function openClinicText(clinicName: string, phone: string): string {
+    return `Bu talebi bot üzerinden yanıtlayamam. ${clinicName} ile ${phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`;
+  }
+
+  function closedClinicText(clinicName: string, phone: string): string {
+    return `Bu talebi bot üzerinden yanıtlayamam. ${clinicName} şu anda kapalı. Acil olmayan konular için çalışma saatleri içinde ${phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`;
+  }
+
+  function clinicCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
+    return fetchMock.mock.calls.filter(([input]) =>
+      (input as { toString(): string }).toString().includes("/rpc/get_conversation_clinic_operational_context"),
+    ).length;
+  }
+
+  it("personalizes an open clinic's human_handoff reply with the truthful name and phone", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ user_requested_human: true }),
+      clinic: () => clinicRow({ is_open: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(bodyOf(fetchMock, 3)).toEqual({ p_conversation_id: CONVERSATION_ID });
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).toBe(openClinicText("Merkez Veteriner Klinigi", "+905551112233"));
+  });
+
+  it("personalizes a closed clinic's human_handoff reply with truthful closed wording", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ user_requested_human: true }),
+      clinic: () => clinicRow({ is_open: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).toBe(closedClinicText("Merkez Veteriner Klinigi", "+905551112233"));
+  });
+
+  it.each([
+    ["the clinic RPC fails", () => new Response("", { status: 500 })],
+    ["the clinic result is unconfigured", () => jsonResponse([{ result: "unconfigured", clinic_name: null, contact_phone_e164: null, public_address: null, is_open: null }])],
+    ["the clinic result is not_found", () => jsonResponse([{ result: "not_found", clinic_name: null, contact_phone_e164: null, public_address: null, is_open: null }])],
+  ])("falls back to the generic handoff text when %s", async (_label, clinic) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ user_requested_human: true }),
+      clinic,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).toBe(GENERIC_HUMAN_HANDOFF_TEXT);
+  });
+
+  it("never calls the clinic RPC for a non-human_handoff category reply", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID, intake_data: { schema_version: 1, ...extractionJson() } }),
+      extraction: extractionJson({ complaint: "vomiting", reported_safety_signals: ALL_FALSE_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(clinicCallCount(fetchMock)).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("never calls the clinic RPC for an emergency_handoff category reply", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "safety_check", pet_id: PET_ID }),
+      extraction: extractionJson({ reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: true } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(clinicCallCount(fetchMock)).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("personalizes the handoff reply reached directly from the human_handoff stage without an OpenAI call", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, state_version: 5, intake_data: {} }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 6 }),
+      clinic: () => clinicRow({ is_open: false }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(clinicCallCount(fetchMock)).toBe(1);
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).toBe(closedClinicText("Merkez Veteriner Klinigi", "+905551112233"));
+  });
+
+  it("personalizes the truthful handoff reply for unsupported media forced to human_handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, intake_data: {} }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: UNSUPPORTED_MEDIA_MARKER }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 2 }),
+      clinic: () => clinicRow({ is_open: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(clinicCallCount(fetchMock)).toBe(1);
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    expect(finalizeBody.p_reply_text).toBe(openClinicText("Merkez Veteriner Klinigi", "+905551112233"));
+  });
+});
+
 describe("processIntakeQueueMessage: poison snapshot fallback", () => {
   it("corrupt persisted snapshot on a non-completed stage falls back to human_handoff, null pet, fresh data", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -526,7 +679,7 @@ describe("processIntakeQueueMessage: poison snapshot fallback", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_intake_data).toMatchObject({ schema_version: 1, complaint: "limping" });
@@ -882,10 +1035,10 @@ describe("processIntakeQueueMessage: Task 029 no-model terminal/budget path (Par
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("api.openai.com"))).toBe(false);
-    const finalizeBody = bodyOf(fetchMock, 2);
+    const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBe(PET_ID);
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
@@ -930,8 +1083,8 @@ describe("processIntakeQueueMessage: Task 029 no-model terminal/budget path (Par
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const finalizeBody = bodyOf(fetchMock, 2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
   });
 
@@ -1007,7 +1160,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
   });
@@ -1327,7 +1480,7 @@ describe("processIntakeQueueMessage: Task 030 unsupported-media marker", () => {
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     expect(urlsOf(fetchMock).some((url) => url.includes("api.openai.com"))).toBe(false);
-    const finalizeBody = bodyOf(fetchMock, 2);
+    const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(finalizeBody.p_reply_text).not.toBe(MEDIA_REPLY_TEXT);

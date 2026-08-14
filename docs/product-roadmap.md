@@ -344,6 +344,16 @@ bir sabit Türkçe yanıt alıyor. İç medya alanları incelenmiyor veya
 migration veya dağıtım değişikliği eklenmedi. Canlı model evali çalıştırılmadı;
 klinik veterineri ve KVKK onayları hâlâ gereklidir.
 
+Task 031 tamamlandı: klinik telefon/adres, haftalık mesai saatleri ve tam gün
+kapanış tarihleri tenant-güvenli veritabanı yapılandırmasına alındı. Mevcut
+`human_handoff` yanıtı yalnız doğrulanmış klinik adı/telefonuyla, PostgreSQL'in
+`Europe/Istanbul` açık/kapalı kararı üzerinden kişiselleştiriliyor; hata veya
+eksik yapılandırmada mevcut genel metin korunuyor. Migration ve güçlendirilmiş
+rollback fixture disposable `vetai-test` üzerinde sıfır kalıntıyla geçti;
+1.267 test, Worker dry-run, Codex ve Opus incelemeleri tamamlandı. Prompt,
+model, çıkarım şeması ve güvenlik önceliği değişmedi; ücretli eval gerekmedi.
+Klinik veterineri ve KVKK onayları yeni Türkçe metin için hâlâ zorunludur.
+
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
 zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una

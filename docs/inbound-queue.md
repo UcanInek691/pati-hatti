@@ -271,6 +271,24 @@ appointment stage may persist that same stage in this task, since no
 triage/appointment action executes here — later triage code must still
 consume the safety decision before acting.
 
+### Clinic personalization of `human_handoff` replies (Task 031)
+
+Immediately before calling `finalizeIntakeQueueJob` at each of the three
+places above that can produce a reply — the normal `planIntakeTurn` path
+(step 8), the no-model terminal/budget short-circuit, and the
+unsupported-media marker path — the consumer checks whether that turn's
+resolved reply is exactly `{ kind: "send", category: "human_handoff" }`. Only
+then does it call `getConversationClinicOperationalContext(conversationId,
+env)` (`src/clinicOperations.ts`) and pass the closed result to
+`applyClinicHandoffContext` (`src/intakeReply.ts`), which substitutes the
+clinic's name/phone and a truthful open/closed statement for the generic
+handoff text, or leaves the generic text unchanged on any failure or
+unconfigured profile. This costs at most one extra native-`fetch` RPC call
+per attempt, never an extra OpenAI call, and never changes which reply
+category was chosen or any stage/pet/safety decision. See
+[`docs/clinic-operations.md`](clinic-operations.md) for the exact copy and
+fail-closed rules.
+
 ### Cloudflare configuration
 
 ```toml

@@ -342,6 +342,24 @@ The secure Worker baseline is committed on `main`:
   tenth as much. This is synthetic engineering evidence, not veterinarian
   approval; the fixed Turkish copy and clinical routing still require
   veterinarian and Turkish legal/KVKK approval before production.
+- Task 031 is complete. Nullable public clinic phone/address fields, one
+  non-overnight weekly interval per ISO weekday, and full-day closure dates
+  are tenant-scoped database configuration. A service-role-only RPC resolves
+  the exact conversation's clinic and evaluates `[opens_at, closes_at)` in
+  `Europe/Istanbul`; callers cannot supply a clinic ID.
+- Only an already-resolved non-emergency `human_handoff` reply performs the
+  bounded five-second operational lookup. A strictly validated configured
+  profile personalizes fixed Turkish copy with clinic name and E.164 phone;
+  missing, invalid, timed-out, or unavailable configuration keeps the generic
+  truthful handoff copy. Address and all owner/pet/message/model data are never
+  interpolated, and emergency/ordinary/media/appointment paths are unchanged.
+- Task 031 passed frozen install, strict typecheck, 1,267 tests with 2 opt-in
+  live evals skipped, Worker dry-run, Codex review, and Claude Opus's final
+  tenant/RLS/time/copy review. Its migration and strengthened rollback fixture
+  passed twice on disposable `vetai-test`, including exact opening/closing
+  boundaries, closure precedence, invalid-name/address fail-closed behavior,
+  RLS/grants, tenant isolation, erasure cascades, and zero fixture residue. No
+  production migration, deployment, or paid model call occurred.
 
 Verified evidence before the context-system change:
 
@@ -355,8 +373,8 @@ Verified evidence before the context-system change:
 
 ## Not implemented
 
-- General-purpose application queries; only the inbound WhatsApp persistence
-  RPC is implemented.
+- No general-purpose application query interface exists; runtime database
+  access remains limited to predefined validated RPCs.
 - Operational alerts/notifications, staff assignment, and administrative user
   or clinic management.
 - New-pet creation beyond selecting an existing tenant-scoped pet.
@@ -374,13 +392,14 @@ Verified evidence before the context-system change:
 
 ## Current phase
 
-Tasks 028 through 030 are complete, including the authorized synthetic
+Tasks 028 through 031 are complete, including the authorized synthetic
 Luna/Terra live runs, bounded multi-turn interpretation, no-model budget stops,
 finite no-progress/media handoff, safe new-pet routing, unsupported-media
-handling, and the $5 OpenAI hard-limit setup. Luna remains the production
+handling, clinic operational hours/contact configuration, and the $5 OpenAI
+hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. The next planned technical task is Task 031:
-clinic profile, hours, and after-hours decisions.
+evidence for prompt `2026-08-14.1`. The next planned technical task is Task 032:
+minimal staff status, ownership, and notification operations.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; no real notification, production
@@ -409,6 +428,11 @@ occurred.
 - User-facing copy must not claim staff notification or response unless such an
   operation is durably implemented. Unknown or worsening safety conditions
   must preserve an immediate off-bot professional-contact path.
+- Clinic open/closed personalization is controlled database configuration,
+  evaluated in `Europe/Istanbul` through the conversation's own clinic. Only
+  validated clinic name/phone may enter `human_handoff` copy; address and
+  conversation data never do, and any lookup/configuration failure must retain
+  the generic off-bot contact path.
 - The current Turkish safety copy is not production-approved until a clinic
   veterinarian and Turkish legal/privacy reviewer approve it; AI review does
   not replace those gates.

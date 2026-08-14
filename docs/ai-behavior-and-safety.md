@@ -205,3 +205,44 @@ Accepted MVP ceiling: a real text message whose body is exactly
 `__vetai_unsupported_media__` is indistinguishable downstream and receives the
 fixed unsupported-media reply. This is documented rather than fixed with a
 schema change.
+
+## Clinic contact/hours personalization of `human_handoff` (Task 031)
+
+Scope: `supabase/migrations/20260814000100_clinic_operations.sql`,
+`src/clinicOperations.ts`, `src/intakeReply.ts`, `src/intakeConsumer.ts`. No
+prompt, model, extraction schema/parser, safety-signal set, or deterministic
+safety precedence changed; the model is never given clinic hours and never
+decides whether a clinic is open.
+
+- **Configuration-driven text substitution, not a model decision**: once a
+  turn's reply has already deterministically resolved to
+  `{ kind: "send", category: "human_handoff" }` — through the same rules
+  described above and in `docs/intake-replies.md`, unchanged by this task —
+  `src/intakeConsumer.ts` calls
+  `getConversationClinicOperationalContext(conversationId, env)` and passes
+  the closed result to the pure `applyClinicHandoffContext` in
+  `src/intakeReply.ts`. That function may only rewrite that already-decided
+  `human_handoff` text; it cannot change which category was chosen, and every
+  other category (including `emergency_handoff`) and `{ kind: "none" }` pass
+  through unchanged. See `docs/clinic-operations.md` for the exact copy and
+  `Europe/Istanbul` open/closed semantics.
+- **Fails closed to the existing generic copy**: an RPC transport failure, a
+  `not_found`/`unconfigured` clinic profile, or any malformed response (bad
+  E.164 phone, oversized/untrimmed/control-character name or address, wrong
+  row shape) yields the same generic `HUMAN_HANDOFF_TEXT` this category
+  already used before this task. It never retries, never poisons the job, and
+  never blocks finalization.
+- **Only clinic configuration is interpolated**: the personalized text
+  substitutes only the strictly validated clinic name and E.164 phone number.
+  No owner name, pet name, complaint text, message text, clinic address,
+  provider identifier, or model output is ever interpolated into any reply —
+  the same non-interpolation boundary already documented in
+  `docs/intake-replies.md` still holds for every other reply category.
+- **Exactly one lookup, only for `human_handoff`**: the operational-context
+  RPC is called at most once per turn, only after the reply category has
+  resolved to `human_handoff`, at each of the three sites in
+  `src/intakeConsumer.ts` where a reply is finalized. Ordinary intake,
+  emergency, safety-question, media (when it does not resolve to
+  `human_handoff`), and appointment-offer/decision turns make no
+  operational-context request, and no OpenAI request, safety decision, stage
+  transition, work-item priority, or appointment action is affected.

@@ -9,8 +9,9 @@ import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
 import type { PersistedIntakeData, PlanResult } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
 import { evaluateSafetyDecision, type SafetyDecision } from "./safetyDecision";
-import { planIntakeReply, planUnsupportedMediaReply } from "./intakeReply";
+import { applyClinicHandoffContext, planIntakeReply, planUnsupportedMediaReply } from "./intakeReply";
 import type { IntakeReplyPlan } from "./intakeReply";
+import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
 
@@ -130,6 +131,17 @@ function isHandoffConsistent(currentStage: IntakeStage, nextStage: IntakeStage, 
   return nextStage === "completed" && currentStage === "completed";
 }
 
+/**
+ * Personalizes a planned reply with the conversation's own clinic contact/
+ * hours only when it is already a `human_handoff` send. Every other category
+ * makes no operational-context request and is returned unchanged (Task 031).
+ */
+async function personalizeHandoffReply(conversationId: string, reply: IntakeReplyPlan, env: Env): Promise<IntakeReplyPlan> {
+  if (reply.kind !== "send" || reply.category !== "human_handoff") return reply;
+  const context = await getConversationClinicOperationalContext(conversationId, env);
+  return applyClinicHandoffContext(reply, context);
+}
+
 /** Replaces a poison persisted snapshot with a fresh, valid one built only from the current validated extraction. */
 function poisonFallback(currentStage: IntakeStage, extraction: IntakeExtraction): { nextStage: IntakeStage; intakeData: PersistedIntakeData } {
   return {
@@ -185,6 +197,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
           reply = planUnsupportedMediaReply();
         }
       }
+      reply = await personalizeHandoffReply(conversationId, reply, env);
 
       const finalizeResult = await finalizeIntakeQueueJob(
         {
@@ -213,7 +226,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       if (!snapshot.ok) return "retry";
 
       const handoffPlan = buildHandoffPlan(context.petId, snapshot.value);
-      const replyPlan = planIntakeReply(context.intakeStage, handoffPlan);
+      const replyPlan = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, handoffPlan), env);
       const finalizeInput: FinalizeIntakeQueueJobInput = {
         conversationId,
         providerMessageId,
@@ -326,7 +339,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       return "retry";
     }
 
-    const replyPlan = planIntakeReply(context.intakeStage, effectivePlan);
+    const replyPlan = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, effectivePlan), env);
 
     const finalizeInput: FinalizeIntakeQueueJobInput = {
       conversationId,

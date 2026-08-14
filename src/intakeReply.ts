@@ -1,6 +1,7 @@
 import type { IntakeStage } from "./conversationState";
 import type { PlanResult } from "./intakeTurn";
 import type { SafetySignal } from "./safetyDecision";
+import type { ClinicOperationalContextResult } from "./clinicOperations";
 
 export type IntakeReplyCategory =
   | "emergency_handoff"
@@ -93,4 +94,29 @@ export function planIntakeReply(currentStage: IntakeStage, result: PlanResult): 
   if (intakeData.complaint === null && intakeData.symptoms.length === 0) return sendReply("complaint", COMPLAINT_TEXT);
 
   return sendReply("intake_received", INTAKE_RECEIVED_TEXT);
+}
+
+function clinicHandoffText(context: ClinicOperationalContextResult): string {
+  if (context.result !== "configured") return HUMAN_HANDOFF_TEXT;
+
+  const { clinicName, phone, isOpen } = context;
+  if (isOpen) {
+    return `Bu talebi bot üzerinden yanıtlayamam. ${clinicName} ile ${phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`;
+  }
+  return `Bu talebi bot üzerinden yanıtlayamam. ${clinicName} şu anda kapalı. Acil olmayan konular için çalışma saatleri içinde ${phone} numarasından iletişime geçin. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.`;
+}
+
+/**
+ * Personalizes only an existing `{ kind: "send", category: "human_handoff" }`
+ * plan with configured clinic name/phone and truthful open/closed wording.
+ * Every other category, `none`, and any non-`configured` operational-context
+ * result return a fresh, behaviorally identical plan using the existing
+ * generic `HUMAN_HANDOFF_TEXT`. Never interpolates owner, pet, complaint,
+ * message, address, provider, or model data.
+ */
+export function applyClinicHandoffContext(plan: IntakeReplyPlan, context: ClinicOperationalContextResult): IntakeReplyPlan {
+  if (plan.kind !== "send" || plan.category !== "human_handoff") {
+    return plan.kind === "none" ? { kind: "none" } : { kind: "send", category: plan.category, text: plan.text };
+  }
+  return sendReply("human_handoff", clinicHandoffText(context));
 }
