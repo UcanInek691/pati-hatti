@@ -349,3 +349,76 @@ Decision: `PHASE_A_PASS`. Task 034 remains `IN_REVIEW`; live execution cannot
 start until Cloudflare/Meta read-only discovery is complete, the exact plan and
 price are shown to the user, and the user explicitly approves the remote
 mutations. No Opus review or paid model eval is required for Phase A.
+
+### Codex Phase B live execution record — 2026-08-15
+
+The user approved the isolated staging mutations after a zero-cost plan was
+shown. Raw account/project/app/phone/provider identifiers and every secret were
+suppressed from this record.
+
+Completed evidence:
+
+- Cloudflare authentication was granted with the minimum Worker/Queue scopes
+  needed for this task. Three staging Queue resources were created, the
+  `vetai-staging` Worker was deployed with the reviewed producer/consumer/
+  DLQ/Cron bindings, and all seven runtime secrets were stored only through
+  encrypted or interactive inputs.
+- `GET /health` returned 200/`ok` and a cache-busted `GET /ready`
+  returned 200/`ready`.
+- A separate free Supabase staging project was created and linked. All 17
+  migrations were applied through migration history; local/remote migration
+  order matched.
+- The Supabase CLI's linked database test command required unavailable local
+  Docker. Codex instead ran the 17 rollback-only SQL proofs in the staging SQL
+  Editor. All passed and left zero fixture residue. This was a deliberate
+  deviation from the initial runbook's `do not run fixtures on staging` rule and
+  is recorded rather than hidden; it will not be repeated.
+- One clearly synthetic clinic and the exact Meta test-number account mapping
+  were inserted into staging. One synthetic manual-routing override was added;
+  no real owner, patient, pet, message, or recipient phone was stored.
+- A free unpublished Meta app/test WABA/test number was created. The staging
+  callback challenge passed, the `messages` field is subscribed, and the
+  app secret, verify token, and refreshed temporary access token are present
+  only in encrypted runtime storage.
+- Meta's fixed test template was sent from the test number to a user-verified
+  recipient and the user confirmed receipt. This proves only Meta test-number
+  outbound delivery; it does not prove the VetAI outbox/sender path.
+- Expected incremental cost for the executed Cloudflare, Supabase, and Meta
+  steps was `$0`. No OpenAI request or paid evaluation was run.
+
+Unresolved live gate:
+
+- Meta explicitly states that an unpublished app receives dashboard-generated
+  test webhooks only and receives no production inbound/status data. The
+  dashboard showed test-number status events, but a bounded Worker tail
+  observed no webhook invocation.
+- The dashboard's webhook-field `Test` control produced no Worker request in
+  either the new or classic Meta screen. It was not counted as a pass.
+- The user has no WhatsApp Business App account or eligible pilot number;
+  Coexistence is therefore honestly classified `UNAVAILABLE`. Only the
+  free Cloud API test number exists.
+- Consequently real inbound → Queue → OpenAI → atomic finalize → VetAI
+  outbound → status, the selective-automation matrix, the takeover race,
+  safety/staff smoke, and appointment `EVET`/`HAYIR` paths remain
+  `NOT RUN`.
+- Publishing is intentionally not authorized: veterinary copy approval,
+  Turkish legal/KVKK approval, a production privacy-policy surface, durable
+  Meta credentials, and an eligible business/pilot number are still absent.
+
+Decision: `PHASE_B_PARTIAL_BLOCKED`. Task 034 remains `IN_REVIEW`.
+No production resource or data was touched, no secret was recorded, and no
+claim of full staging completion is made.
+
+Post-record local verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+pnpm test                        -> PASS; 32 files, 1336 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; production binding unchanged
+staging Wrangler dry-run         -> PASS; staging Queue binding
+git diff --check                 -> PASS; only benign autocrlf notices
+sanitized diff scan              -> PASS; only a documented migration
+                                     timestamp matched the long-number rule
+```

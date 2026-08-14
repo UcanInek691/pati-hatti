@@ -353,11 +353,16 @@ incelemesi ve Opus'un mimari/RLS/KVKK incelemesi tamamlandı (bkz.
 [`docs/selective-automation.md`](selective-automation.md)). Hiçbir production
 migration, deploy veya gerçek Meta/OpenAI çağrısı yapılmadı.
 
-Task 034 repository preparation aşaması sürüyor: `wrangler.staging.toml` ve
-Türkçe [`docs/staging-runbook.md`](staging-runbook.md) hazırlandı, yerel
-doğrulamalar geçti. Gerçek staging kaynak oluşturma, migration push, Meta
-webhook/Coexistence kanıtı gibi canlı adımların hiçbiri henüz çalıştırılmadı;
-bunlar yalnızca Codex tarafından kullanıcı onayından sonra yürütülür.
+Task 034 kısmi canlı staging aşamasında: ayrık ücretsiz Supabase staging,
+üç Cloudflare Queue, staging Worker/Cron/binding'ler, yedi şifreli secret,
+migration history, `/health`, `/ready`, Meta callback challenge ve
+`messages` aboneliği kuruldu. Meta'nın ücretsiz test şablonu doğrulanmış bir
+alıcıya ulaştı; bu VetAI outbox kanıtı değildir. Uygulama yayımlanmadığı için
+gerçek inbound/status callback'i Worker'a gelmiyor; kullanıcıda WhatsApp
+Business App hesabı/pilot numarası olmadığı için Coexistence `UNAVAILABLE`.
+Tam zincir, seçmeli otomasyon, güvenlik/personel ve randevu smoke'ları
+`NOT RUN`; Görev 034 `IN_REVIEW` kalıyor (bkz.
+[`docs/staging-runbook.md`](staging-runbook.md)).
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm

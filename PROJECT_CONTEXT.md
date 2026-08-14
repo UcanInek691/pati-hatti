@@ -393,6 +393,20 @@ The secure Worker baseline is committed on `main`:
   architecture/RLS/KVKK review. Its migration and rollback fixture passed on
   disposable `vetai-test` with zero residue. No production migration,
   deployment, real Meta/OpenAI call, or paid eval occurred.
+- Task 034 Phase B created an isolated zero-incremental-cost staging surface:
+  a free Supabase staging project with all 17 migrations, three Cloudflare
+  staging Queues, a staging Worker/Cron with seven encrypted secrets, and a
+  free unpublished Meta test app/WABA/number. `/health` and cache-busted
+  `/ready` return 200; the Meta callback challenge and `messages`
+  subscription passed. Meta's fixed test template reached a verified
+  recipient, but it did not traverse the VetAI outbox.
+- Task 034 remains incomplete. Meta does not deliver production inbound or
+  status callbacks to an unpublished app, the dashboard webhook-field test
+  produced no Worker invocation, and no eligible WhatsApp Business App/pilot
+  number exists. Coexistence is therefore `UNAVAILABLE`; real inbound →
+  Queue → OpenAI → finalize → outbound/status and the dependent automation,
+  staff, safety, and appointment smoke paths remain `NOT RUN`. No paid
+  OpenAI call or production mutation occurred.
 
 Verified evidence before the context-system change:
 
@@ -418,13 +432,18 @@ Verified evidence before the context-system change:
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
-- Production deployment and real external-service configuration.
+- Production deployment and production external-service configuration.
 
 ## Environment constraints
 
 - Supabase CLI is present and authenticated for project discovery.
-- Docker is not installed. The disposable remote project `vetai-test` is available but the repository is intentionally not CLI-linked because no database credential is persisted.
-- The test migration was executed through the authenticated Supabase SQL editor, so it is integration-tested but is not recorded in Supabase CLI migration history. A real deployment must still use `supabase db push` or the equivalent managed migration workflow.
+- Docker is not installed. Disposable `vetai-test` and isolated
+  `vetai-staging` projects exist; generated CLI link metadata is not kept in
+  the repository.
+- Staging migrations are recorded through managed migration history. Codex
+  also ran the 17 rollback-only proofs once in staging SQL Editor after the
+  linked CLI test unexpectedly required Docker; all rolled back with zero
+  residue. This documented runbook deviation must not be repeated.
 - `rtk` was not available in earlier Codex shell sessions; agents may use native commands when a fresh availability check fails.
 
 ## Current phase
@@ -436,15 +455,17 @@ handling, clinic operational hours/contact configuration, pilot staff
 ownership/status/browser alerts, selective per-contact automation, and the $5
 OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. The next planned technical task is Task 034:
-real staging resources and same-number WhatsApp-Business-App/Cloud-API
-coexistence evidence. Canary,
-failure injection, observability, and the controlled pilot gate move to Task
-035.
+evidence for prompt `2026-08-14.1`. Task 034 has partial live staging
+evidence but remains `IN_REVIEW` behind Meta publication/eligibility and
+human approval gates. Same-number Coexistence is `UNAVAILABLE` without a
+WhatsApp Business App pilot number. Canary, failure injection, observability,
+and the controlled pilot gate remain deferred; they must not proceed by
+pretending the missing Task 034 inbound evidence passed.
 
 Production release remains blocked on the human approvals and operational
-setup in `docs/production-readiness.md`; no real notification, production
-resource, secret configuration, production migration, or deployment has
+setup in `docs/production-readiness.md`; the existing resources and secrets
+are staging-only. No real notification, production resource, production
+secret configuration, production migration, or production deployment has
 occurred.
 
 ## Durable safety invariants
