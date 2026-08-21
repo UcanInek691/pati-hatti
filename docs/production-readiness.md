@@ -120,6 +120,9 @@ from its expected result.
    real verify token.
 4. Send one signed synthetic inbound WhatsApp text message; confirm it is
    persisted (`docs/database-schema.md`) and a job reaches `vetai-intake`.
+   Also send one recognizable group-message fixture and confirm the signed
+   webhook returns 200 while creating no route-RPC call, database row, Queue
+   job, OpenAI call, or reply. Do not use or expose a real group's content.
 5. Confirm the Queue message is claimed, sent to OpenAI, and the
    conversation state advances (`docs/inbound-queue.md`).
 6. Trigger a safety/human-handoff path with synthetic wording and confirm

@@ -46,6 +46,7 @@ describe("finalizeIntakeDeadLetter: request shape", () => {
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/finalize_intake_dead_letter");
     expect(init.method).toBe("POST");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(init.body as string)).toEqual({
       p_conversation_id: CONVERSATION_ID,
       p_provider_message_id: PROVIDER_MESSAGE_ID,

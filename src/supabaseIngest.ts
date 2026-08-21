@@ -52,6 +52,7 @@ export async function ingestWhatsAppTextMessage(item: WhatsAppIngestItem, env: E
         p_message_text: item.messageText,
         p_provider_timestamp: item.providerTimestamp,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return FAILED;

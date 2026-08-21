@@ -64,6 +64,7 @@ describe("claimOutboundMessage", () => {
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
     expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/claim_outbound_message");
     expect(init.method).toBe("POST");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     const headers = init.headers as Record<string, string>;
     expect(headers.apikey).toBe("test-service-role-key");
     expect(headers.authorization).toBe("Bearer test-service-role-key");

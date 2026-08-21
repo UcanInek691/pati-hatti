@@ -29,6 +29,17 @@ early.
   Task 010. HTTP 200 is only returned after every processed/duplicate item's
   Queue send has resolved.
 
+### Group traffic is not intake traffic
+
+Recognizable WhatsApp group messages are acknowledged but excluded at
+`src/whatsappIngest.ts`, before contact-route resolution or any access to
+contacts, nested message content, hashing, persistence, Queue, OpenAI, or
+reply creation. The guard recognizes Meta's message-level `group_id` plus
+additive `recipient_type: "group"` and `context.group_id`/value-level group
+discriminators. It skips only the group candidate, so a direct message in the
+same signed batch continues normally. Group lifecycle fields and
+`smb_message_echoes` are not inbound `messages` candidates and remain ignored.
+
 ## Message contract
 
 `src/intakeQueue.ts` exports a closed, versioned message shape with exactly
@@ -115,6 +126,11 @@ forwarding its result so a planned reply is inserted into
 `docs/intake-replies.md`). It still does not cover the actual WhatsApp send
 or any other irreversible external effect beyond conversation-state and
 outbox finalization — Task 018 owns claiming and sending outbox rows.
+
+All Supabase RPC fetches on the webhook/Queue path have a local 10-second
+timeout and fail closed. Together with the existing 30-second OpenAI bound,
+this keeps a normal attempt below the fixed 120-second lease rather than
+allowing a stalled database subrequest to overlap a reclaimed worker.
 
 A `stale_state` result preserves the current token but does not extend its
 original 120-second lease. A corrected retry is valid only before expiry and

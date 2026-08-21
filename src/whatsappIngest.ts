@@ -38,6 +38,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/** Recognizes current and additive Meta group discriminators without reading group content. */
+function isRecognizableGroupMessage(message: Record<string, unknown>): boolean {
+  if (hasOwn(message, "group_id") || message.recipient_type === "group") return true;
+  const context = asRecord(message.context);
+  return context !== null && hasOwn(context, "group_id");
+}
+
 async function hashEvent(canonicalEvent: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalEvent));
   return Array.from(new Uint8Array(digest))
@@ -73,6 +84,11 @@ export async function extractInboundMessages(body: { entry: unknown[] }, env: En
       const value = asRecord(changeObj.value);
       if (!value) continue;
 
+      // Some Meta group webhook shapes place the discriminator on the value
+      // container. Ignore the entire change before touching messages,
+      // contacts, metadata, routing, or nested content.
+      if (hasOwn(value, "group_id") || value.recipient_type === "group") continue;
+
       const messages = value.messages;
       if (!Array.isArray(messages)) continue;
 
@@ -81,6 +97,10 @@ export async function extractInboundMessages(body: { entry: unknown[] }, env: En
       for (const message of messages) {
         const messageObj = asRecord(message);
         if (messageObj === null) continue;
+        // Group messages otherwise resemble direct messages and expose the
+        // participant in `from`. Exclude them at the trust boundary before
+        // route lookup or any content/profile/hash/persistence work.
+        if (isRecognizableGroupMessage(messageObj)) continue;
         const declaredType = messageObj.type;
         const isText = declaredType === "text";
         if (!isText && !(typeof declaredType === "string" && UNSUPPORTED_MEDIA_TYPES.has(declaredType))) continue;

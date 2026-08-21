@@ -422,3 +422,138 @@ git diff --check                 -> PASS; only benign autocrlf notices
 sanitized diff scan              -> PASS; only a documented migration
                                      timestamp matched the long-number rule
 ```
+
+## Phase C — pre-Business-number runtime hardening (user amendment)
+
+The user explicitly requested one final code-safety pass before connecting an
+eligible WhatsApp Business number. This is an amendment to Task 034 rather than
+a second active task.
+
+### Required outcome
+
+1. Group-originated WhatsApp traffic must never enter automation. If Meta
+   delivers a recognizable group event, acknowledge the signed webhook without
+   reading, hashing, logging, persisting, queueing, sending to OpenAI, or
+   replying to its nested message content.
+2. Audit the adjacent inbound/routing/Queue/outbound/staff/appointment trust
+   boundaries for similarly reachable correctness, privacy, tenant, loop, or
+   unbounded-cost failures.
+3. Fix only reproducible or source-proven defects. Do not add speculative
+   abstractions, dependencies, schema, features, or production resources.
+4. Preserve direct-chat behavior, the three selective-automation modes,
+   signature verification, fail-closed parsing, deterministic safety
+   precedence, and all existing tenant/RLS boundaries.
+
+### Audit gate and scope control
+
+- Codex first records evidence-backed findings and the exact affected files in
+  this section. Source edits are forbidden until that finding list is closed.
+- Allowed review surface: `src/index.ts`, `src/whatsappIngest.ts`,
+  `src/contactAutomation.ts`, Queue consumers/finalizers, outbound sender/status,
+  staff routes, appointment flow, their direct tests, and the matching docs.
+- After the audit, Codex may amend the exact allowed-change list below once.
+  Any database/RLS, clinical-copy, prompt/model, or new data-retention change
+  requires a new explicit contract and the applicable Opus/human review gate.
+- No remote mutation, deploy, paid OpenAI call, Meta publication, or real
+  Business number is authorized.
+
+### Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run
+git diff --check
+```
+
+### Closed audit findings
+
+1. **BLOCKING — recognizable group messages can enter the direct-chat path.**
+   Meta's current Groups webhook contract carries inbound group messages in
+   the ordinary `messages` field with an additive message-level `group_id`.
+   `extractInboundMessages` ignores that discriminator and currently treats
+   the participant's numeric `from` as a direct-chat sender. The same parser
+   must also recognize the documented/additive `recipient_type: "group"` and
+   `context.group_id` shapes defensively. A recognized group candidate must be
+   skipped before route resolution, contacts/profile access, nested content,
+   hashing, persistence, Queue, OpenAI, or reply creation; other direct
+   candidates in the same signed batch must continue normally.
+2. **HIGH — internal RPC fetches are not locally bounded.** Most Supabase RPC
+   clients used by webhook, Queue, appointment, dead-letter, and outbound
+   paths have no AbortSignal. A stalled origin can therefore outlive the
+   120-second intake lease, allowing a reclaimed second worker and duplicate
+   paid model work even though only one finalize can win. Every affected
+   native-fetch RPC call must fail closed after 10 seconds. Combined with the
+   existing 30-second OpenAI/Meta bounds and 5-second clinic-hours bound, the
+   normal intake path remains below the lease ceiling.
+3. **No new source-proven defect** was found in the remaining reviewed
+   boundaries. `smb_message_echoes`, history, lifecycle, reaction, system,
+   and unknown fields are ignored because they are not supported inbound
+   `messages` candidates; outbound sends force `recipient_type: "individual"`;
+   selective-automation is rechecked at claim time; Queue retries and outbound
+   attempts are finite; appointment mutations remain confirmation-gated; and
+   staff rendering remains fixed-copy/escaped. Existing documented
+   at-least-once, route-race, retention, and external-approval ceilings remain
+   unchanged and are not silently relabeled as fixed.
+
+### Exact Phase C allowed changes
+
+- Group exclusion: `src/whatsappIngest.ts`,
+  `test/whatsappIngest.test.ts`, `test/index.test.ts`.
+- Ten-second internal-RPC bounds: `src/contactAutomation.ts`,
+  `src/supabaseIngest.ts`, `src/supabaseOutboundStatus.ts`,
+  `src/intakeJobLease.ts`, `src/conversationState.ts`,
+  `src/intakeDeadLetter.ts`, `src/outboundDelivery.ts`,
+  `src/appointmentFlow.ts`, `src/appointmentEngine.ts`, and their matching
+  existing unit-test files.
+- Narrow documentation/context: `docs/inbound-queue.md`,
+  `docs/selective-automation.md`, `docs/outbound-delivery.md`,
+  `docs/appointment-booking-engine.md`, `docs/production-readiness.md`,
+  `PROJECT_CONTEXT.md`, and this file.
+
+No migration, SQL fixture, prompt/model, reply copy, dependency, configuration,
+secret, remote resource, or production identifier may change.
+
+### Phase C Codex review and verification record — 2026-08-21
+
+Implemented and independently reviewed the two closed findings with no schema,
+prompt, copy, dependency, configuration, or remote-service change:
+
+- `src/whatsappIngest.ts` now excludes value/message `group_id`, explicit
+  `recipient_type: "group"`, and `context.group_id` before route lookup or
+  nested content/profile access. Throwing-getter tests prove those fields are
+  untouched; a mixed-batch test proves direct traffic still proceeds.
+- A signed Worker-level group fixture returns HTTP 200 with zero fetch and
+  Queue calls, proving no RPC, persistence, Queue, OpenAI, or reply path runs.
+- The nine previously unbounded Supabase client fetch boundaries now use
+  `AbortSignal.timeout(10_000)` and preserve their existing generic fail-closed
+  results. Existing 5-second clinic-hours and 30-second OpenAI/Meta bounds are
+  unchanged.
+- Source tracing found no second group/echo reply path: only
+  `extractInboundMessages` imports content into intake; `smb_message_echoes`,
+  history, lifecycle, reaction, system, and unknown fields remain ignored;
+  outbound Meta calls still force `recipient_type: "individual"`.
+
+Verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+targeted Vitest                  -> PASS; 11 files, 636 tests
+pnpm test                        -> PASS; 32 files, 1343 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; production bindings unchanged
+staging Wrangler dry-run         -> PASS; staging bindings unchanged
+git diff --check                 -> PASS; only benign autocrlf notices
+sanitized diff review            -> PASS; no real secret or identifier added
+```
+
+No migration/database check was required because no SQL changed. No live Meta,
+OpenAI, Supabase, Cloudflare mutation, deploy, publication, or Business-number
+connection occurred. The existing Task 034 Phase B live blockers remain.
+
+Decision: `PHASE_C_PASS`. The code hardening is ready to commit; Task 034 as a
+whole remains `IN_REVIEW` until the user supplies an eligible WhatsApp Business
+pilot number and the external veterinary/legal production gates are closed.

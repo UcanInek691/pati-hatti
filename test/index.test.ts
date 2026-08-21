@@ -484,6 +484,24 @@ describe("worker whatsapp persistence", () => {
     );
   });
 
+  it("acknowledges a signed group message without RPC, Queue, persistence, or reply work", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const queueSend = vi.fn();
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+    const payload = textMessageWebhookBody() as {
+      entry: Array<{ changes: Array<{ value: { messages: Array<Record<string, unknown>> } }> }>;
+    };
+    payload.entry[0]!.changes[0]!.value.messages[0]!.group_id = "GROUP_ID";
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(payload)), testEnv);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
   it("returns 200 for a duplicate text message and enqueues one intake job", async () => {
     vi.stubGlobal("fetch", routedFetch({ ingest_whatsapp_text_message: [{ result: "duplicate", conversation_id: CONVERSATION_ID }] }));
     const queueSend = vi.fn().mockResolvedValue(undefined);

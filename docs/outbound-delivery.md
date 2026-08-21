@@ -64,8 +64,9 @@ wrapped by `src/outboundDelivery.ts`:
 `src/outboundDelivery.ts` validates every RPC response as an exact one-row
 shape with a closed result before trusting any field, following the same
 transport rules (HTTPS or loopback-HTTP only, non-blank Supabase config
-required, no logging) as `src/intakeJobLease.ts`. Its private Data API helpers
-are intentionally duplicated rather than shared, per the task contract.
+required, no logging, 10-second request timeout) as `src/intakeJobLease.ts`.
+Its private Data API helpers are intentionally duplicated rather than shared,
+per the task contract.
 
 ## Exact-account routing and PII boundary
 

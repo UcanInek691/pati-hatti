@@ -64,6 +64,7 @@ export async function recordWhatsAppOutboundStatus(item: WhatsAppStatusItem, env
         p_provider_status: item.status,
         p_provider_timestamp: item.providerTimestamp,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return FAILED;

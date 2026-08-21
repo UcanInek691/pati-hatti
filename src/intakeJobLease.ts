@@ -85,6 +85,7 @@ async function callRpc(endpoint: URL, env: Env, body: Record<string, unknown>): 
         authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return null;

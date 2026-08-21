@@ -270,6 +270,71 @@ describe("extractInboundMessages: envelope-first automation routing (Task 033)",
   });
 });
 
+describe("extractInboundMessages: group exclusion (Task 034 Phase C)", () => {
+  it.each([
+    ["message group_id", { group_id: "GROUP_ID" }],
+    ["recipient_type", { recipient_type: "group" }],
+    ["context group_id", { context: { group_id: "GROUP_ID" } }],
+  ])("ignores a group message identified by %s before routing or content access", async (_label, discriminator) => {
+    const message = textMessage(discriminator);
+    Object.defineProperty(message, "text", {
+      get() {
+        throw new Error("group content must not be read");
+      },
+    });
+    const body = envelope([message]);
+    const value = body.entry[0]!.changes[0]!.value;
+    Object.defineProperty(value, "contacts", {
+      get() {
+        throw new Error("group contact/profile data must not be read");
+      },
+    });
+
+    const result = await extractInboundMessages(body, env);
+
+    expect(result).toEqual({ ok: true, items: [] });
+    expect(resolveMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["value group_id", { group_id: "GROUP_ID" }],
+    ["value recipient_type", { recipient_type: "group" }],
+  ])("ignores a group change identified by %s before reading its messages", async (_label, discriminator) => {
+    const body = envelope([]) as unknown as {
+      entry: Array<{ changes: Array<{ value: Record<string, unknown> }> }>;
+    };
+    const value = body.entry[0]!.changes[0]!.value;
+    Object.assign(value, discriminator);
+    Object.defineProperty(value, "messages", {
+      get() {
+        throw new Error("group messages must not be read");
+      },
+    });
+
+    const result = await extractInboundMessages(body, env);
+
+    expect(result).toEqual({ ok: true, items: [] });
+    expect(resolveMock).not.toHaveBeenCalled();
+  });
+
+  it("skips only the group candidate in a mixed batch and keeps the direct message", async () => {
+    const result = await extractInboundMessages(
+      envelope([
+        textMessage({ id: "wamid.GROUP", group_id: "GROUP_ID", text: { body: "private group text" } }),
+        textMessage({ id: "wamid.DIRECT", text: { body: "direct text" } }),
+      ]),
+      env,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items.map((item) => ({ id: item.providerMessageId, text: item.messageText }))).toEqual([
+      { id: "wamid.DIRECT", text: "direct text" },
+    ]);
+    expect(resolveMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("extractInboundMessages: unsupported media (Task 030)", () => {
   const MEDIA_TYPES = ["audio", "contacts", "document", "image", "location", "sticker", "video"] as const;
 

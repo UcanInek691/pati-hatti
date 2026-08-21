@@ -172,9 +172,10 @@ A thin, dependency-free wrapper over the Supabase Data API (`POST
 project's other native-`fetch` Supabase clients. Validates all inputs and
 response shapes defensively (UUID format, ISO timestamp parsing, exact
 expected key sets) and collapses any transport failure, non-2xx response,
-or malformed body to a `{ kind: "failed" }` result — never throws, never
-logs request or response contents (inputs, tokens, URLs, bodies, or
-errors).
+or malformed body to a `{ kind: "failed" }` result. Each Data API request has
+a 10-second timeout, so a stalled RPC cannot consume the intake lease. The
+client never throws and never logs request or response contents (inputs,
+tokens, URLs, bodies, or errors).
 
 **Not wired into any runtime path in this task.** It is not imported by
 `src/index.ts` or any other runtime module.

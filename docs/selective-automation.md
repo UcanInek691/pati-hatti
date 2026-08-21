@@ -39,6 +39,13 @@ defaults to `manual`; only an operator can flip an account's default to
 
 ## Envelope-first routing
 
+Before this per-contact routing begins, recognizable group messages are
+discarded at the same parser boundary. Their participant number is never
+treated as a direct-chat contact, and their contacts/content never reaches a
+route lookup, Supabase, Queue, OpenAI, or an outbound reply. This group guard
+is independent of `ai | manual | personal`; those modes apply only to direct
+contact traffic.
+
 After signature verification and JSON decoding, `src/whatsappIngest.ts`
 first extracts only the fields needed to route — phone number ID, sender
 E.164, provider message ID, timestamp, declared type — before it reads any
@@ -50,6 +57,9 @@ message is materialized. A failed route lookup (missing Supabase
 configuration, network failure, malformed RPC response) fails the whole
 webhook closed with retryable HTTP 503. A malformed inbound envelope/content
 still receives HTTP 400.
+
+The route RPC itself has a 10-second request timeout. Timeout/network failure
+is the same fail-closed 503 outcome; content is not read after that failure.
 
 For an effective `personal` result, resolution stops at the envelope: no
 nested content is read, no payload hash is computed, no ingest RPC call is

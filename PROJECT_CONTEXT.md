@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-14 by Codex.
+Last verified: 2026-08-21 by Codex.
 
 ## Product
 
@@ -38,6 +38,10 @@ The secure Worker baseline is committed on `main`:
   Supabase Data API RPC. The RPC atomically resolves the clinic, claims the
   webhook event, upserts the owner, reuses or creates one open conversation,
   inserts the inbound message, and marks the event processed.
+- Recognizable WhatsApp group messages are excluded at the signed-webhook
+  parser boundary before contact routing, profile/content access, hashing,
+  persistence, Queue, OpenAI, or reply creation. Direct messages in the same
+  batch continue normally; lifecycle/history/echo fields remain ignored.
 - The ingestion migration was applied to `vetai-test`; its rollback SQL test
   passed idempotency, hash-conflict, unknown-account, owner-name preservation,
   handoff-conversation reuse, and function-grant checks with no surviving
@@ -455,10 +459,12 @@ handling, clinic operational hours/contact configuration, pilot staff
 ownership/status/browser alerts, selective per-contact automation, and the $5
 OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. Task 034 has partial live staging
-evidence but remains `IN_REVIEW` behind Meta publication/eligibility and
-human approval gates. Same-number Coexistence is `UNAVAILABLE` without a
-WhatsApp Business App pilot number. Canary, failure injection, observability,
+evidence for prompt `2026-08-14.1`. Task 034 has partial live staging evidence
+and a verified Phase C runtime-hardening pass but remains `IN_REVIEW` behind
+Meta publication/eligibility and human approval gates. Same-number Coexistence
+is `UNAVAILABLE` without a WhatsApp Business App pilot number. Recognizable
+group traffic is now excluded before automation, and critical Supabase RPC
+fetches are bounded at 10 seconds. Canary, failure injection, observability,
 and the controlled pilot gate remain deferred; they must not proceed by
 pretending the missing Task 034 inbound evidence passed.
 
@@ -475,10 +481,17 @@ occurred.
 - Authenticated staff can access only clinics where membership is verified.
 - Cross-tenant relationships are rejected by database constraints even if application code is wrong.
 - Raw webhook payloads and sensitive clinical messages are not copied into logs or embeddings by default.
+- Recognizable group messages must be acknowledged without inspecting or
+  retaining their contacts/content and must never reach routing, Queue,
+  OpenAI, persistence, or outbound reply paths.
 - Red-priority situations stop normal automation and trigger immediate human/emergency direction.
 - A lease guarantees one successful completer, not one executing worker after
   expiry/reclaim; irreversible effects must be independently idempotent or
   committed atomically with current-token completion.
+- Supabase RPC subrequests on webhook, Queue, appointment, dead-letter, and
+  outbound paths are locally bounded at 10 seconds; removing that bound can
+  let a stalled worker overlap a reclaimed intake lease and duplicate paid
+  work.
 - `stale_state` does not renew a lease; consumer retries must fit within the
   original expiry and poison/invalid payload failures must not retry forever.
 - A corrupt persisted intake snapshot is a poison condition: the consumer must
