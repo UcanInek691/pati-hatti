@@ -233,10 +233,16 @@ staff reply composer, and switching a contact to manual/personal does not
 notify anyone or erase earlier stored records.
 
 The fixed copy also states that `manual` messages remain stored for the
-clinic, while `personal` content does not persist but its routing phone number
-does. Selecting `Numara varsayılanı` deletes the override row; see the
-selective-automation document for the owner-erasure and account-default
-caveat.
+clinic. `personal` content does not persist; an explicit personal override
+retains its routing phone number, while an unlisted number has no route row.
+Selecting `Numara varsayılanı` deletes the override row; see the
+selective-automation document for the owner-erasure boundary. The Task 034
+strict allowlist makes the account default permanently `personal`: only an
+exact number shown as `AI açık` is automated, and removing that row returns
+the number to the content-unread/unpersisted default. The UI claims the strict
+policy is active only after the account response validates that default; a
+missing migration or malformed response leaves route controls fail-closed
+with an explicit warning.
 
 ## Pilot operating procedure
 

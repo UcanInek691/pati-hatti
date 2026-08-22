@@ -557,3 +557,163 @@ connection occurred. The existing Task 034 Phase B live blockers remain.
 Decision: `PHASE_C_PASS`. The code hardening is ready to commit; Task 034 as a
 whole remains `IN_REVIEW` until the user supplies an eligible WhatsApp Business
 pilot number and the external veterinary/legal production gates are closed.
+
+## Phase D — strict AI allowlist before personal-number pilot (user amendment)
+
+The user explicitly chose to test with a backed-up personal iPhone number and
+requested a strict allowlist before any WhatsApp Business/Cloud API
+registration. This remains part of Task 034 because it is a prerequisite for
+the same live staging journey; no phone-number registration is authorized by
+this repository phase.
+
+### Required outcome
+
+1. Every WhatsApp account defaults to `personal`: an unlisted direct sender's
+   nested message content is not read, hashed, logged, persisted, queued, sent
+   to OpenAI, or answered by VetAI.
+2. Only an exact per-contact route explicitly set to `ai` enters automation.
+   Existing `manual` and explicit `personal` overrides remain available.
+3. Removing an override (`inherit`) returns that sender to the strict
+   `personal` default.
+4. The existing envelope-level routing lookup and honest Meta/Cloudflare
+   transient-memory boundary remain unchanged. Group exclusion remains
+   stronger and runs before contact routing.
+5. No prompt, clinical copy, dependency, framework, new storage table, or
+   production resource is added.
+
+### Exact allowed changes
+
+- New migration and rollback proof:
+  `supabase/migrations/20260822000100_strict_ai_allowlist.sql`,
+  `supabase/tests/034_strict_ai_allowlist.sql`; compatibility-only fixture
+  update: `supabase/tests/033_selective_automation.sql` (the old proof must no
+  longer insert now-forbidden account-level `ai/manual` defaults).
+- Existing staff UI/parser tests: `src/staffPage.ts`,
+  `test/staffPage.test.ts`.
+- Narrow documentation/context: `docs/selective-automation.md`,
+  `docs/staff-workflow.md`, `docs/database-schema.md`,
+  `docs/staging-runbook.md`, `docs/product-roadmap.md`,
+  `PROJECT_CONTEXT.md`, and this file.
+
+No existing migration may be rewritten. No live database migration, Worker
+deploy, Meta registration, secret mutation, paid OpenAI call, or production
+change is authorized until local review passes and the user sees the exact
+staging mutation plan.
+
+### Review gate
+
+- Codex: migration/call-path/UI review and all local verification.
+- Claude Opus: mandatory narrow read-only review of the database constraint,
+  pending-outbox cleanup, RLS/tenant behavior, and privacy wording before live
+  staging apply.
+- Human: iPhone backup is complete; normal WhatsApp/Business/Cloud API account
+  changes remain a later explicit step.
+
+### Phase D Codex local review record — 2026-08-22
+
+Implemented the strict allowlist by reusing Task 033's existing route model:
+
+- the forward migration sets every existing/new account default to the only
+  permitted account-level value, `personal`;
+- exact per-contact `ai | manual | personal` overrides and `inherit` remain
+  unchanged; therefore only an explicit `ai` row enters automation;
+- activation deletes still-`pending | processing` outbox rows without an
+  exact AI route. Removing `processing` prevents lease-expiry reclaim/retry;
+  one network request already handed to Meta still cannot be recalled.
+  Terminal `accepted | failed` history remains;
+- `/staff` accepts only a `personal` account default and otherwise fails the
+  account-list parser closed, preventing a false "strict whitelist" claim;
+- the existing Task 033 SQL proof was compatibility-updated to express its AI
+  paths as explicit routes instead of obsolete account defaults.
+
+Local verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+targeted Vitest                  -> PASS; 3 files, 191 tests
+pnpm test                        -> PASS; 32 files, 1344 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; bindings unchanged
+staging Wrangler dry-run         -> PASS; bindings unchanged
+git diff --check                 -> PASS; only benign autocrlf notices
+```
+
+At this local-review stage, migration apply and SQL fixtures 033/034 were
+`NOT RUN`; staging deploy, Meta number registration, WhatsApp account
+conversion, and paid OpenAI eval were also untouched. The later records below
+preserve the subsequent Opus and disposable-database results.
+
+### Phase D Opus correction record — 2026-08-22
+
+The first mandatory read-only Opus review returned `CHANGES_REQUIRED`.
+Codex addressed the findings without adding a table, RPC, dependency, prompt,
+clinical copy, or remote mutation:
+
+- activation cleanup now deletes unauthorized `pending | processing` rows,
+  preventing an expired processing lease from being reclaimed; documentation
+  states that a network request already handed to Meta cannot be recalled;
+- the 034 rollback proof now exercises the real unlisted ingest boundary and
+  proves zero event/owner/conversation/message writes;
+- the same fixture exercises the exact cleanup predicate across authorized
+  pending, unauthorized pending/processing, terminal accepted/failed, and a
+  same-recipient row in another account/tenant;
+- the cross-tenant absence assertion now runs after `reset role`, outside
+  authenticated RLS, and the resolver proof distinguishes identical contacts
+  across two accounts;
+- `/staff` keeps its “strict policy active” claim hidden until the account
+  payload validates a `personal` default, and shows a fixed fail-closed
+  warning otherwise; its retention and `inherit` copy now distinguishes an
+  explicit route row from an unlisted number;
+- migrations remain intentionally free of nested `begin/commit`, matching
+  the reviewed Supabase CLI transaction invariant. The runbook now forbids
+  statement-by-statement SQL Editor application and requires the managed
+  file-atomic migration path.
+
+At this correction stage, database execution remained `NOT RUN`; local
+verification and a narrow Opus re-review were required before any staging
+apply or phone registration. The later disposable-database record below is the
+authoritative result after those gates.
+
+Correction verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+targeted Vitest                  -> PASS; 3 files, 111 tests
+pnpm test                        -> PASS; 32 files, 1,344 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; bindings unchanged
+staging Wrangler dry-run         -> PASS; bindings unchanged
+git diff --check                 -> PASS; only benign autocrlf notices
+```
+
+### Phase D disposable database validation record — 2026-08-22
+
+After explicit user approval, Codex validated Phase D only on the disposable
+`vetai-test` project. The restored database already contained the first 17
+migrations' schema but its CLI migration-history table was empty because the
+older files had been applied through the dashboard. Codex recorded those 17
+existing versions as applied, then reran `supabase db push --dry-run`; the only
+remaining file was `20260822000100_strict_ai_allowlist.sql`.
+
+Live disposable-database evidence:
+
+```text
+strict-allowlist migration apply -> PASS; vetai-test only
+033 rollback fixture             -> PASS; zero visible fixture residue
+034 rollback fixture             -> PASS 0/0/0
+catalog/default/CHECK/RLS audit   -> PASS; 7/7 closed checks true
+```
+
+The final catalog audit proved the new migration-history record, the
+`personal` column default, the named strict CHECK, all existing accounts on
+`personal`, no unauthorized claimable `pending | processing` outbox row, RLS
+enabled on all three affected tables, and zero 033/034 fixture residue.
+
+Decision: `PHASE_D_DISPOSABLE_PASS`. The local Codex gate, mandatory Opus
+read-only review, real migration apply, both rollback fixtures, and catalog
+checks have passed. Task 034 remains `IN_REVIEW` because the strict migration
+has not been applied to staging, no eligible pilot number is registered, and
+the full real inbound/outbound chain is still unproved. No staging,
+production, Meta, OpenAI, or iPhone mutation occurred in this validation.

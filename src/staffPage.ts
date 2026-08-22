@@ -84,6 +84,7 @@ export const STAFF_HTML = `<!doctype html>
 
 <section id="automation-section" aria-labelledby="automation-heading" hidden>
   <h2 id="automation-heading">WhatsApp otomasyonu</h2>
+  <p id="automation-policy-region" hidden>Strict whitelist doğrulandı: yalnızca listede <strong>AI açık</strong> olarak işaretlenen numaralar otomatik işlenir. Meta imzalı webhook'u VetAI'ye iletir; listede olmayan numaraların yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, kaydedilmez ve bot yanıt vermez.</p>
   <p id="automation-status-region" role="status" aria-live="polite"></p>
   <p id="automation-error-region" role="alert" aria-live="assertive"></p>
   <label for="account-select">Hat</label>
@@ -103,11 +104,11 @@ export const STAFF_HTML = `<!doctype html>
     <dt>Sadece insan</dt>
     <dd>Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz. Numarayı yalnızca personel telefonla veya başka bir kanaldan yanıtlayabilir.</dd>
     <dt>Kişisel / yok say</dt>
-    <dd>Meta imzalı webhook'u VetAI'ye iletir. Yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, hashlenmez, loglanmaz, Supabase veya OpenAI'a gönderilmez ve kaydedilmez. Yönlendirme için telefon numarası VetAI'de saklanmaya devam eder; bot otomatik yanıt vermez.</dd>
+    <dd>Meta imzalı webhook'u VetAI'ye iletir. Yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, hashlenmez, loglanmaz, Supabase veya OpenAI'a gönderilmez ve kaydedilmez. Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası VetAI'de saklanır; listede olmayan numara için rota kaydı tutulmaz. Bot otomatik yanıt vermez.</dd>
     <dt>Numara varsayılanı</dt>
-    <dd>Bu numara için özel ayar kaldırılır; hattın genel varsayılanı uygulanır.</dd>
+    <dd>Bu numara için özel ayar silinir; gelecekteki mesajlar kişisel varsayılana döner.</dd>
   </dl>
-  <p>Modu insan veya kişisel olarak değiştirmek önceki kayıtları silmez. Sağlayıcıya zaten iletilmiş bir yanıt yine de alıcıya ulaşabilir; bu geri alınamaz. Bu işlem hiçbir personeli bilgilendirmez ve otomatik bir insan yanıtı oluşturmaz.</p>
+  <p>Modu insan veya kişisel olarak değiştirmek önceki kayıtları silmez. Daha önce işlenmek üzere alınmış bir yanıtın süresi dolarsa kalan sınırlı denemeleri yapılabilir ve yanıt ulaşabilir; Meta'ya verilmiş bir istek geri çağrılamaz. Bu işlem hiçbir personeli bilgilendirmez ve otomatik bir insan yanıtı oluşturmaz.</p>
 </section>
 
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
@@ -137,6 +138,7 @@ const loginSection = document.getElementById("login-section");
 const queueSection = document.getElementById("queue-section");
 const detailSection = document.getElementById("detail-section");
 const automationSection = document.getElementById("automation-section");
+const automationPolicyRegion = document.getElementById("automation-policy-region");
 const automationStatusRegion = document.getElementById("automation-status-region");
 const automationErrorRegion = document.getElementById("automation-error-region");
 const accountSelect = document.getElementById("account-select");
@@ -247,6 +249,7 @@ function clearSession() {
   selectedAccountId = null;
   accountSelect.textContent = "";
   routeList.textContent = "";
+  automationPolicyRegion.hidden = true;
   automationStatusRegion.textContent = "";
   automationErrorRegion.textContent = "";
   stopPolling();
@@ -648,7 +651,7 @@ async function fetchAutomationAccounts() {
             row.display_name.trim() === row.display_name &&
             row.display_name.length >= 1 &&
             row.display_name.length <= 200)) &&
-        (row.automation_default === "ai" || row.automation_default === "manual")
+        row.automation_default === "personal"
     )
   ) {
     throw new Error("malformed account list response");
@@ -661,8 +664,7 @@ function renderAccounts(accounts) {
   for (const account of accounts) {
     const option = document.createElement("option");
     option.value = account.id;
-    const defaultLabel = account.automation_default === "ai" ? "AI" : "\\u0130nsan";
-    option.textContent = (account.display_name || "WhatsApp hesab\\u0131") + " (" + defaultLabel + ")";
+    option.textContent = (account.display_name || "WhatsApp hesab\\u0131") + " (Strict whitelist)";
     accountSelect.appendChild(option);
   }
 }
@@ -719,16 +721,21 @@ async function loadAutomationRoutes() {
 }
 
 async function loadAutomationAccounts() {
+  automationPolicyRegion.hidden = true;
+  selectedAccountId = null;
   try {
     const accounts = await fetchAutomationAccounts();
     renderAccounts(accounts);
+    automationPolicyRegion.hidden = false;
     selectedAccountId = accounts.length > 0 ? accounts[0].id : null;
     if (selectedAccountId) {
       accountSelect.value = selectedAccountId;
     }
     await loadAutomationRoutes();
   } catch {
-    automationErrorRegion.textContent = "Hat listesi y\\u00fcklenemedi.";
+    accountSelect.textContent = "";
+    routeList.textContent = "";
+    automationErrorRegion.textContent = "Strict whitelist do\\u011frulanamad\\u0131; numara ayarlar\\u0131 kapal\\u0131.";
   }
 }
 

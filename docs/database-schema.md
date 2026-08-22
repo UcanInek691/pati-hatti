@@ -674,13 +674,20 @@ in the Queue consumer's pipeline.
 
 ## Selective WhatsApp automation and manual takeover (Task 033)
 
+Task 033 and the strict-allowlist follow-up were validated on disposable
+`vetai-test` on 2026-08-22: both rollback fixtures passed with zero residue and
+the final default/CHECK/RLS/catalog audit returned seven closed `true` checks.
+The strict migration is not applied to staging or production.
+
 `supabase/migrations/20260814000300_selective_automation.sql`. **Codex applied
 the migration and ran `supabase/tests/033_selective_automation.sql` on
 disposable `vetai-test` on 2026-08-14: PASS with zero fixture residue. It is
 not applied to production.**
 
-`public.whatsapp_accounts` gains `automation_default text not null default
-'manual'`, constrained to `ai | manual`. A new `public.whatsapp_contact_routes`
+`public.whatsapp_accounts` originally gained `automation_default`; the
+forward-only `20260822000100_strict_ai_allowlist.sql` migration changes its
+default and constraint to the single value `personal`. A new
+`public.whatsapp_contact_routes`
 table holds `(whatsapp_account_id, clinic_id, contact_e164, mode, created_at,
 updated_at)`: primary key `(whatsapp_account_id, contact_e164)`;
 `contact_e164` constrained to canonical E.164; `mode` constrained to
@@ -717,7 +724,16 @@ indistinguishable. It returns only `updated | unchanged | not_found` — never
 an account, clinic, contact, or owner identifier. When the resulting mode is
 `manual` or `personal`, still-`pending` outbox rows for that account/owner's
 conversations are deleted in the same transaction; `processing`, `accepted`,
-and `failed` rows are never touched.
+and `failed` rows are never touched. A preserved `processing` row can be
+reclaimed/retried after lease expiry within the existing attempt ceiling; a
+request already handed to Meta cannot be recalled.
+
+The strict-allowlist migration also deletes existing `pending | processing`
+outbox rows unless their exact `(whatsapp_account_id, recipient_e164)` has
+an explicit `ai` route. Deleting `processing` prevents lease-expiry
+reclaim/retry, but cannot recall a single network request already handed to
+Meta. Terminal `accepted | failed` history remains. Thereafter unlisted
+contacts resolve `personal`; only an exact `ai` override enters ingest.
 
 `ingest_whatsapp_text_message` is replaced (same signature) to recheck the
 account and `(account, sender E.164)` override inside the ingest

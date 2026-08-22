@@ -411,6 +411,15 @@ The secure Worker baseline is committed on `main`:
   Queue → OpenAI → finalize → outbound/status and the dependent automation,
   staff, safety, and appointment smoke paths remain `NOT RUN`. No paid
   OpenAI call or production mutation occurred.
+- Task 034 Phase D's strict-allowlist migration passed the mandatory Codex and
+  Opus reviews and was applied only to disposable `vetai-test`. The updated
+  Task 033 compatibility fixture and the Task 034 fixture passed with zero
+  residue; a follow-up catalog audit returned seven closed `true` checks for
+  migration history, default/CHECK enforcement, account state, outbox cleanup,
+  RLS, and fixture residue. The invariant is a single account default of
+  `personal`: only an exact `ai` route automates; `inherit` deletes the route
+  and returns future traffic to personal. Staging still has the pre-Phase-D
+  schema until a separate user-approved apply; no production migration ran.
 
 Verified evidence before the context-system change:
 
@@ -585,10 +594,12 @@ occurred.
   row, while Queue finalizers recheck the current route before committing an
   AI reply; already handed-off provider traffic cannot be recalled.
 - `manual` messages remain stored for clinic use but receive no automated
-  processing. `personal` message content must remain unread and unpersisted,
-  although the exact routing phone number is retained so the exclusion can be
-  enforced. Removing that row with `inherit` may re-enable AI when the account
-  default is `ai`.
+  processing. `personal` message content must remain unread and unpersisted.
+  An explicit personal override retains its routing phone number. The verified
+  Phase D schema lets an unlisted contact remain personal without a route row;
+  only an exact `ai` row automates. Staging remains on the pre-Phase-D schema
+  until the separately approved migration apply, so its current `inherit`
+  behavior must not be treated as strict allowlisting yet.
 - Contact-route rows are independent of owner records: owner erasure does not
   remove them. All authenticated staff of the same clinic can see them through
   RLS. The Turkish legal/KVKK review package must inventory this retention,

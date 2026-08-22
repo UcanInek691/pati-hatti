@@ -368,12 +368,29 @@ describe("handleStaffScript", () => {
 });
 
 describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
+  it("keeps the strict-allowlist claim hidden until the account response validates", () => {
+    expect(STAFF_HTML).toContain('id="automation-policy-region" hidden');
+    expect(STAFF_HTML).toContain("Strict whitelist doğrulandı");
+    expect(STAFF_HTML).toContain("Meta imzalı webhook'u VetAI'ye iletir.");
+    expect(STAFF_APP_JS).toContain("automationPolicyRegion.hidden = true;");
+    expect(STAFF_APP_JS).toContain("automationPolicyRegion.hidden = false;");
+    expect(STAFF_APP_JS).toContain(
+      "Strict whitelist do\\u011frulanamad\\u0131; numara ayarlar\\u0131 kapal\\u0131.",
+    );
+  });
+
   it("states the exact manual and personal retention boundaries in Turkish", () => {
     expect(STAFF_HTML).toContain(
       "Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz.",
     );
     expect(STAFF_HTML).toContain(
-      "Yönlendirme için telefon numarası VetAI'de saklanmaya devam eder; bot otomatik yanıt vermez.",
+      "Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası VetAI'de saklanır; listede olmayan numara için rota kaydı tutulmaz.",
+    );
+    expect(STAFF_HTML).toContain(
+      "Bu numara için özel ayar silinir; gelecekteki mesajlar kişisel varsayılana döner.",
+    );
+    expect(STAFF_HTML).toContain(
+      "Daha önce işlenmek üzere alınmış bir yanıtın süresi dolarsa kalan sınırlı denemeleri yapılabilir ve yanıt ulaşabilir",
     );
   });
 
@@ -404,6 +421,8 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
   it("strictly validates bounded account and route projections before rendering", () => {
     expect(STAFF_APP_JS).toContain("rows.length > 100");
     expect(STAFF_APP_JS).toContain('isExactRecord(row, ["id", "display_name", "automation_default"])');
+    expect(STAFF_APP_JS).toContain('row.automation_default === "personal"');
+    expect(STAFF_APP_JS).not.toContain('row.automation_default === "ai" || row.automation_default === "manual"');
     expect(STAFF_APP_JS).toContain('isExactRecord(row, ["contact_e164", "mode", "updated_at"])');
     expect(STAFF_APP_JS).toContain('row.mode === "ai" || row.mode === "manual" || row.mode === "personal"');
     expect(STAFF_APP_JS).toContain("Number.isFinite(Date.parse(row.updated_at))");

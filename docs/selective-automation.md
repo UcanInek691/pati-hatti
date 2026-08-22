@@ -1,8 +1,9 @@
-# Selective WhatsApp automation and manual takeover (Task 033)
+# Selective WhatsApp automation and strict AI allowlist
 
-Last verified: 2026-08-14. **Codex applied the migration and ran its rollback
-fixture on disposable `vetai-test`: PASS with zero fixture residue. It is not
-applied to production.**
+Last verified: 2026-08-22. **Codex applied Task 033 and the strict-allowlist
+follow-up migration to disposable `vetai-test`; the 033 and 034 rollback
+fixtures and the closed catalog audit passed with zero fixture residue. The
+strict migration is not applied to staging or production.**
 
 ## Why this exists
 
@@ -27,15 +28,16 @@ operator sets from `/staff`.
 - **`personal`** — the signed webhook is acknowledged and the envelope's
   routing lookup runs, but nothing else happens: no owner, conversation,
   message, or webhook event row is created, and no Queue job is enqueued.
-  The contact's E.164 number necessarily still exists as the *routing key*
-  in `whatsapp_contact_routes` — see the privacy note below.
+  An explicit `personal` override retains the contact's E.164 number as its
+  routing key; an unlisted contact under the strict default has no route row.
 
-An exact contact override belongs to one WhatsApp account. When no override
-exists for `(whatsapp_account_id, contact_e164)`, the account's
-`automation_default` applies. Every existing and newly created account
-defaults to `manual`; only an operator can flip an account's default to
-`ai` (out of scope for this task — see
-[`docs/product-roadmap.md`](product-roadmap.md)).
+An exact contact override belongs to one WhatsApp account. After
+`20260822000100_strict_ai_allowlist.sql`, every existing and newly created
+account has the only permitted default, `personal`. Therefore an unlisted
+contact is ignored at the envelope boundary and only an exact `ai` override
+enters automation. `manual` and explicit `personal` remain available as
+per-contact overrides. Selecting `inherit` deletes the override and returns
+that contact to the strict `personal` default.
 
 ## Envelope-first routing
 
@@ -95,17 +97,17 @@ member who created them.
 Deleting an `owners` row does not delete an independent contact-route row.
 For a routing-number erasure request, an authorized operator must select
 `Numara varsayılanı` (`inherit`), which deletes that exact override row, in
-addition to the existing owner-data erasure procedure. If the account default
-is `ai`, removing the override also means a future message from that number
-will follow the AI default; retaining exclusion without retaining the routing
-number is not possible in this design. The external KVKK review package does
-not yet inventory `whatsapp_contact_routes` and must be updated before the
-production legal review.
+addition to the existing owner-data erasure procedure. Removing the override
+now always returns future traffic to the `personal` default; exclusion no
+longer requires retaining a contact-route row. The external KVKK review
+package does not yet inventory `whatsapp_contact_routes` and must be updated
+before the production legal review.
 
 ## Database objects (`supabase/migrations/20260814000300_selective_automation.sql`)
 
-- `public.whatsapp_accounts.automation_default text not null default 'manual'`,
-  constrained to `ai | manual`.
+- Task 033 introduced `automation_default`; the forward-only strict-allowlist
+  migration now sets/defaults every row to `personal` and constrains the
+  account-level value to `personal`. Only contact overrides can enable `ai`.
 - `public.whatsapp_contact_routes(whatsapp_account_id, clinic_id,
   contact_e164, mode, created_at, updated_at)` — primary key
   `(whatsapp_account_id, contact_e164)`; `contact_e164` constrained to
@@ -142,9 +144,17 @@ production legal review.
   owner row is locked before the route changes; when the resulting mode is
   `manual` or `personal`, still-`pending` automated outbox rows for that
   account/owner's conversations are deleted in the same transaction.
-  `processing`, `accepted`, and `failed` rows are never touched — an
-  outbound row already claimed as `processing` may already be leaving the
-  system and cannot be recalled, which `/staff` states explicitly.
+  `processing`, `accepted`, and `failed` rows are never touched. A
+  `processing` row may not yet have reached Meta; if its lease expires it
+  can still be reclaimed/retried within the existing three-attempt ceiling.
+  A request already handed to Meta cannot be recalled. `/staff` states both
+  limits explicitly.
+- When the strict-allowlist migration activates, it removes `pending` and
+  `processing` outbox rows whose exact `(account, recipient)` route is not
+  `ai`. Removing `processing` prevents lease-expiry reclaim/retry, but cannot
+  recall the single network request if a sender already handed it to Meta.
+  Terminal `accepted`/`failed` history is preserved; normal finalizers
+  continue to recheck the effective route before creating new work.
 - `ingest_whatsapp_text_message` is replaced (same signature) to recheck
   the account and `(account, sender E.164)` override inside the ingest
   transaction, before any event/owner/conversation/message write. It holds
@@ -218,10 +228,10 @@ Displayed fixed Turkish explanations:
 - `Sadece insan`: messages are retained for the clinic, but VetAI does not
   answer or call OpenAI.
 - `Kişisel / yok say`: future message content and owner/conversation
-  records are not persisted by VetAI, while the routing phone number
-  remains stored, and the bot does not answer.
-- `Numara varsayılanı`: removes the override, restoring the account
-  default.
+  records are not persisted by VetAI; an explicit personal override retains
+  its routing phone number, while an unlisted contact has no route row.
+- `Numara varsayılanı`: deletes the override, returning future messages to
+  the strict personal default.
 - Changing to manual/personal does not erase earlier stored records.
 - A reply already in provider delivery may still arrive.
 

@@ -12,14 +12,14 @@ begin;
 insert into public.clinics (id, name)
 values ('33000000-0000-0000-0000-000000000001', 'Selective Automation Test Clinic A');
 
-insert into public.whatsapp_accounts (id, clinic_id, phone_number_id, automation_default)
-values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '933000001', 'ai');
+insert into public.whatsapp_accounts (id, clinic_id, phone_number_id)
+values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '933000001');
 
 insert into public.clinics (id, name)
 values ('33000000-0000-0000-0000-000000000003', 'Selective Automation Test Clinic B');
 
-insert into public.whatsapp_accounts (id, clinic_id, phone_number_id, automation_default)
-values ('33000000-0000-0000-0000-000000000004', '33000000-0000-0000-0000-000000000003', '933000002', 'manual');
+insert into public.whatsapp_accounts (id, clinic_id, phone_number_id)
+values ('33000000-0000-0000-0000-000000000004', '33000000-0000-0000-0000-000000000003', '933000002');
 
 insert into auth.users (id, aud, role, email, created_at, updated_at)
 values
@@ -30,6 +30,16 @@ insert into public.clinic_staff (clinic_id, user_id, role)
 values
   ('33000000-0000-0000-0000-000000000001', '33100000-0000-0000-0000-000000000001', 'admin'),
   ('33000000-0000-0000-0000-000000000003', '33100000-0000-0000-0000-000000000002', 'admin');
+
+-- Strict allowlist: only the contacts used by this legacy fixture's AI paths
+-- receive explicit AI routes. Every other contact inherits personal.
+insert into public.whatsapp_contact_routes (whatsapp_account_id, clinic_id, contact_e164, mode)
+values
+  ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15550505050', 'ai'),
+  ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15550808080', 'ai'),
+  ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15550909090', 'ai'),
+  ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15551010101', 'ai'),
+  ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15551111111', 'ai');
 
 -- =========================================================================
 -- Fixture 1: resolve_whatsapp_contact_automation. Unknown account, each
@@ -48,14 +58,14 @@ begin
 
   select result into v_result
   from public.resolve_whatsapp_contact_automation('933000001', '+15550101010');
-  if v_result <> 'ai' then
-    raise exception 'expected account A default ai with no override, got %', v_result;
+  if v_result <> 'personal' then
+    raise exception 'expected account A strict personal default with no override, got %', v_result;
   end if;
 
   select result into v_result
   from public.resolve_whatsapp_contact_automation('933000002', '+15550202020');
-  if v_result <> 'manual' then
-    raise exception 'expected account B default manual with no override, got %', v_result;
+  if v_result <> 'personal' then
+    raise exception 'expected account B strict personal default with no override, got %', v_result;
   end if;
 
   insert into public.whatsapp_contact_routes (whatsapp_account_id, clinic_id, contact_e164, mode)
@@ -331,8 +341,8 @@ end;
 $$;
 
 -- =========================================================================
--- Fixture 4: ingest_whatsapp_text_message honors a personal/manual override
--- ahead of the account default, and an unchanged default keeps processing.
+-- Fixture 4: ingest_whatsapp_text_message honors personal/manual overrides;
+-- only an explicit AI allowlist entry processes normally.
 -- =========================================================================
 do $$
 declare
@@ -343,7 +353,7 @@ declare
   v_processing_status text;
   v_claim_result text;
 begin
-  -- Account A defaults to ai; override this contact to personal.
+  -- Explicit personal route remains ignored under the strict default.
   insert into public.whatsapp_contact_routes (whatsapp_account_id, clinic_id, contact_e164, mode)
   values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15550606060', 'personal');
 
@@ -420,7 +430,7 @@ begin
     raise exception 'expected a duplicate under the current manual route to remain manual, got %/%', v_result, v_conversation_id;
   end if;
 
-  -- Unmodified default (ai, no override) still processes normally.
+  -- An exact AI allowlist entry processes normally.
   select result, conversation_id into v_result, v_conversation_id
   from public.ingest_whatsapp_text_message(
     p_phone_number_id => '933000001',
@@ -432,7 +442,7 @@ begin
     p_provider_timestamp => now()
   );
   if v_result <> 'processed' or v_conversation_id is null then
-    raise exception 'expected the unmodified ai default to still process normally, got %/%', v_result, v_conversation_id;
+    raise exception 'expected the exact AI allowlist entry to process normally, got %/%', v_result, v_conversation_id;
   end if;
 end;
 $$;
@@ -550,8 +560,10 @@ begin
     raise exception 'expected claimed for the offer-fixture message, got %', v_claim_result;
   end if;
 
-  insert into public.whatsapp_contact_routes (whatsapp_account_id, clinic_id, contact_e164, mode)
-  values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15551010101', 'manual');
+  update public.whatsapp_contact_routes
+  set mode = 'manual'
+  where whatsapp_account_id = '33000000-0000-0000-0000-000000000002'
+    and contact_e164 = '+15551010101';
 
   select result, intake_stage, state_version into v_offer_result, v_stage, v_version
   from public.finalize_appointment_offer_queue_job(
@@ -603,8 +615,10 @@ begin
     raise exception 'expected claimed for the decision-fixture message, got %', v_claim_result;
   end if;
 
-  insert into public.whatsapp_contact_routes (whatsapp_account_id, clinic_id, contact_e164, mode)
-  values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', '+15551111111', 'personal');
+  update public.whatsapp_contact_routes
+  set mode = 'personal'
+  where whatsapp_account_id = '33000000-0000-0000-0000-000000000002'
+    and contact_e164 = '+15551111111';
 
   select result, intake_stage, state_version into v_decision_result, v_stage, v_version
   from public.finalize_appointment_decision_queue_job(

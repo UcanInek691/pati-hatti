@@ -64,9 +64,13 @@ Herhangi bir mutasyondan önce, salt-okunur komutlarla:
 - [ ] Önce migration dry-run çalıştır, çıktısını incele.
 - [x] Ardından migration-history push (`supabase db push` veya eşdeğer
       yönetilen akış) — SQL Editor'e yapıştırma değil.
+- [ ] `20260822000100_strict_ai_allowlist.sql` yalnız bu yönetilen,
+      dosya-başına atomik migration akışıyla uygulanır. İfadeleri SQL
+      Editor'de tek tek çalıştırma: constraint/default dönüşümü ile
+      `pending | processing` outbox temizliği tek transaction olmalıdır.
 - [x] `supabase migration list` yerel/uzak karşılaştırması,
       `supabase/migrations/` dizinindeki dosya sırasıyla (şu an son dosya:
-      `20260814000300_selective_automation.sql`) tam eşleşmeli.
+      `20260822000100_strict_ai_allowlist.sql`) tam eşleşmeli.
 - [ ] `supabase/tests/*.sql` altındaki hiçbir rollback fixture'ı staging'e
       karşı **çalıştırma** — bunların hepsi `rollback;` ile biter ve yalnızca
       disposable `vetai-test` için tasarlanmıştır.
@@ -141,7 +145,14 @@ ve AI zinciri bu nedenle `NOT RUN` kaldı.
 
 ## 7. Seçmeli otomasyon matrisi
 
-Aynı belirlenmiş göndericiyle sırayla (`docs/selective-automation.md`):
+Aynı belirlenmiş göndericiyle sırayla (`docs/selective-automation.md`). Önce
+hesap varsayılanının `personal` olduğunu doğrula; whitelist dışında AI
+çalışması bir test başarısızlığıdır:
+
+0. **Whitelist dışında** — hiçbir kişi rotası eklemeden gönder. Beklenen:
+   webhook `200` ack, yalnız zarf yönlendirmesi; içerik okunmaz/hashlenmez/
+   kaydedilmez, Queue ve OpenAI çağrılmaz, bot yanıtı yoktur.
+   - [ ] Doğrulandı.
 
 1. **Kişisel** — `/staff` üzerinden rotayı kişisel yap, gönder. Beklenen:
    webhook `200` ack, hiçbir owner/conversation/message/`webhook_events`
@@ -153,9 +164,12 @@ Aynı belirlenmiş göndericiyle sırayla (`docs/selective-automation.md`):
    hemen terminal `completed` olur, Queue'ya gönderilmez, OpenAI çağrılmaz,
    bot yanıtı ve outbox satırı oluşmaz.
    - [ ] Doğrulandı.
-3. **AI açık** — rotayı AI yap (veya hesap varsayılanı zaten `ai` ise
-   bırak), gönder. Beklenen: tam zincir — Queue gönderimi, OpenAI çağrısı,
+3. **AI açık** — exact gönderen numarasını AI olarak whiteliste ekle ve
+   gönder. Beklenen: tam zincir — Queue gönderimi, OpenAI çağrısı,
    deterministik yanıt, outbox satırı, teslim.
+   - [ ] Doğrulandı.
+4. **Whitelist'ten çıkar** — aynı numarada `Numara varsayılanı` seç ve tekrar
+   gönder. Beklenen: 0. adım gibi `personal`; yeni AI çağrısı/yanıt yoktur.
    - [ ] Doğrulandı.
 
 ## 8. Manuel devralma yarışı
@@ -168,6 +182,10 @@ Aynı belirlenmiş göndericiyle sırayla (`docs/selective-automation.md`):
 - [ ] Şunu açıkça kaydet: geçişten önce Meta'ya kabul ettirilmiş bir yanıt
       geri çağrılamaz — bu bilinen ve kabul edilen bir sınırdır, hata
       değildir.
+- [ ] Strict-allowlist aktivasyonu açık AI rotası olmayan `pending` ve
+      `processing` satırlarını siler; bu, süresi dolan claim'in yeniden
+      gönderilmesini önler. Silinmeden önce sender tarafından Meta'ya verilmiş
+      tek bir ağ isteği yine geri çağrılamaz.
 
 ## 9. Randevu ve güvenlik smoke
 

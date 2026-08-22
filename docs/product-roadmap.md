@@ -332,10 +332,10 @@ Kontrollü pilot öncesi planlanan teknik görevler:
 8. Task 035 - canary, failure injection, observability ve kontrollü pilot kapısı.
 
 Task 033 için ürün kararı: sistem arkadaş/müşteri ayrımını mesaj metninden veya
-AI tahmininden yapmaz. Karışık kullanılan bir WhatsApp hesabı varsayılan
-olarak manuel kalır; operatör yalnız seçtiği kişi için AI'yı açabilir,
-belirli bir müşteriyi tekrar yalnız insana bırakabilir ve önceden işaretlediği
-kişisel kişi için yeni mesaj içeriğinin VetAI'ye kaydedilmesini engelleyebilir.
+AI tahmininden yapmaz. Task 034 strict allowlist ile karışık kullanılan bir
+WhatsApp hesabı varsayılan olarak kişisel kalır; operatör yalnız seçtiği kişi
+için AI'yı açabilir, belirli bir müşteriyi yalnız insana bırakabilir ve açık
+kişisel rota tanımlayabilir.
 Meta webhook'u teknik olarak imzalı ham mesajı Worker'a ulaştırır; kişisel modda
 VetAI yalnız yönlendirme zarfını değerlendirip içeriği okumadan, hashlemeden,
 loglamadan, Supabase/OpenAI'a göndermeden bırakır. Kişisel mesaj baytlarının
@@ -363,6 +363,16 @@ Business App hesabı/pilot numarası olmadığı için Coexistence `UNAVAILABLE`
 Tam zincir, seçmeli otomasyon, güvenlik/personel ve randevu smoke'ları
 `NOT RUN`; Görev 034 `IN_REVIEW` kalıyor (bkz.
 [`docs/staging-runbook.md`](staging-runbook.md)).
+
+Task 034'ün kullanıcı onaylı son pilot sertleştirmesi strict AI allowlist'tir:
+hesap düzeyi varsayılan `personal`, yalnız `/staff` ekranında açıkça `AI açık`
+yapılan exact numaralar otomasyona girer. Migration, 033/034 rollback testleri,
+Codex incelemesi ve Opus gizlilik/RLS incelemesi disposable `vetai-test`
+üzerinde sıfır kalıntıyla geçti; staging ve production'a henüz uygulanmadı.
+Aktivasyon, açık AI rotası olmayan gönderilmemiş `pending | processing`
+yanıtları kaldırır; Meta'ya zaten verilmiş tek bir ağ isteğini geri çağırma
+garantisi vermez. Sıradaki kapı, ayrı kullanıcı onayıyla staging uygulaması ve
+uygun pilot numarayla gerçek uçtan uca kanıttır.
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm
