@@ -232,6 +232,7 @@ anahtarı, sahip/hayvan adı, mesaj metni.
 | 2026-08-14 21:36 UTC / 2026-08-15 00:36 TRT | Worker status webhook gözlemi | `NOT RUN` | Uygulama yayımlanmamış; callback gelmedi | `staging-worker` | — |
 | 2026-08-14 21:36 UTC / 2026-08-15 00:36 TRT | Coexistence uygunluğu | `UNAVAILABLE` | WhatsApp Business App hesabı/pilot numarası yok; yalnızca Meta test numarası var | `test-waba` | — |
 | 2026-08-22 17:14 UTC / 2026-08-22 20:14 TRT | Strict AI allowlist staging migration | `PASS` | 6/6 katalog kontrolü; migration geçmişi 18/18; dry-run güncel | `staging-project` | — |
+| 2026-08-22 | Business App ve doğrudan Coexistence yeniden kontrolü | `UNAVAILABLE` | Business App send/receive çalıştı; Meta direct setup yalnız standart `Add new number` sundu, Coexistence/QR yoktu; wizard gönderimden önce kapatıldı | `staging-app` | — |
 
 ## 12. Durdurma / geri alma / temizlik
 

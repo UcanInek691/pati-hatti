@@ -411,6 +411,13 @@ The secure Worker baseline is committed on `main`:
   Queue → OpenAI → finalize → outbound/status and the dependent automation,
   staff, safety, and appointment smoke paths remain `NOT RUN`. No paid
   OpenAI call or production mutation occurred.
+- The user subsequently moved the backed-up pilot number from WhatsApp
+  Messenger to the WhatsApp Business App and verified chat history plus normal
+  send/receive. Meta's direct staging-app Production setup exposed only the
+  standard `Add new number` wizard and no Coexistence/existing-App/QR path.
+  Codex closed it before submission. Direct self-serve Coexistence is therefore
+  `UNAVAILABLE`; the number remains Business-App-only and was not registered
+  with Cloud API. Do not use the standard wizard for the same-number pilot.
 - Task 034 Phase D's strict-allowlist migration passed the mandatory Codex and
   Opus reviews and was applied first to disposable `vetai-test`, where the
   updated Task 033 compatibility fixture and Task 034 fixture passed with zero

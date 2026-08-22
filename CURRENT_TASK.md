@@ -742,3 +742,22 @@ the three affected tables. Task 034 remains `IN_REVIEW`: no eligible pilot
 number exists, Coexistence is still `UNAVAILABLE`, and real inbound → Queue →
 OpenAI → finalize → outbound/status evidence remains `NOT RUN`. No production,
 Meta, OpenAI, or iPhone mutation occurred in this staging apply.
+
+### Business App conversion and direct Coexistence probe — 2026-08-22
+
+The user completed the reviewed iPhone backup, moved the same number from
+WhatsApp Messenger to the WhatsApp Business App, and independently confirmed
+that existing chats plus normal send/receive still work. Codex then opened the
+existing Meta staging app's Production setup. The direct self-serve flow
+offered only the standard `Add new number` wizard (`Business information → WA
+Business Profile → Add number → Verify number`); it exposed no Coexistence,
+existing-Business-App, or QR path. Codex closed the wizard before entering or
+submitting any business information.
+
+Decision: `COEXISTENCE_UNAVAILABLE_DIRECT_SELF_SERVE`. Do not use the standard
+wizard for this personal-number pilot because it can move the number to
+Cloud-API-only operation and remove the Business App inbox relied on for human
+and personal replies. No phone number was registered with Cloud API, no
+payment was added, and the Business App remained operational. The safe next
+options are a separate API test number or a separately approved Embedded
+Signup/Tech Provider/BSP Coexistence route; neither is authorized here.
