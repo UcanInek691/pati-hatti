@@ -61,10 +61,10 @@ Herhangi bir mutasyondan önce, salt-okunur komutlarla:
       oluştur veya seç. Proje ref'ini yalnızca kullanıcıya onay için göster;
       Git'e, loga veya ekran görüntüsüne ham ref yazma (bkz. §11).
 - [x] Onay sonrası `supabase link --project-ref <ref>`.
-- [ ] Önce migration dry-run çalıştır, çıktısını incele.
+- [x] Önce migration dry-run çalıştır, çıktısını incele.
 - [x] Ardından migration-history push (`supabase db push` veya eşdeğer
       yönetilen akış) — SQL Editor'e yapıştırma değil.
-- [ ] `20260822000100_strict_ai_allowlist.sql` yalnız bu yönetilen,
+- [x] `20260822000100_strict_ai_allowlist.sql` yalnız bu yönetilen,
       dosya-başına atomik migration akışıyla uygulanır. İfadeleri SQL
       Editor'de tek tek çalıştırma: constraint/default dönüşümü ile
       `pending | processing` outbox temizliği tek transaction olmalıdır.
@@ -182,7 +182,7 @@ hesap varsayılanının `personal` olduğunu doğrula; whitelist dışında AI
 - [ ] Şunu açıkça kaydet: geçişten önce Meta'ya kabul ettirilmiş bir yanıt
       geri çağrılamaz — bu bilinen ve kabul edilen bir sınırdır, hata
       değildir.
-- [ ] Strict-allowlist aktivasyonu açık AI rotası olmayan `pending` ve
+- [x] Strict-allowlist aktivasyonu açık AI rotası olmayan `pending` ve
       `processing` satırlarını siler; bu, süresi dolan claim'in yeniden
       gönderilmesini önler. Silinmeden önce sender tarafından Meta'ya verilmiş
       tek bir ağ isteği yine geri çağrılamaz.
@@ -231,6 +231,7 @@ anahtarı, sahip/hayvan adı, mesaj metni.
 | 2026-08-14 21:35 UTC / 2026-08-15 00:35 TRT | Meta sabit test şablonu alıcıya ulaştı | `PASS` | Meta paneli: sent | `test-waba` | — |
 | 2026-08-14 21:36 UTC / 2026-08-15 00:36 TRT | Worker status webhook gözlemi | `NOT RUN` | Uygulama yayımlanmamış; callback gelmedi | `staging-worker` | — |
 | 2026-08-14 21:36 UTC / 2026-08-15 00:36 TRT | Coexistence uygunluğu | `UNAVAILABLE` | WhatsApp Business App hesabı/pilot numarası yok; yalnızca Meta test numarası var | `test-waba` | — |
+| 2026-08-22 17:14 UTC / 2026-08-22 20:14 TRT | Strict AI allowlist staging migration | `PASS` | 6/6 katalog kontrolü; migration geçmişi 18/18; dry-run güncel | `staging-project` | — |
 
 ## 12. Durdurma / geri alma / temizlik
 

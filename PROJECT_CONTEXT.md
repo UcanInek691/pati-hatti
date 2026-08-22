@@ -412,14 +412,15 @@ The secure Worker baseline is committed on `main`:
   staff, safety, and appointment smoke paths remain `NOT RUN`. No paid
   OpenAI call or production mutation occurred.
 - Task 034 Phase D's strict-allowlist migration passed the mandatory Codex and
-  Opus reviews and was applied only to disposable `vetai-test`. The updated
-  Task 033 compatibility fixture and the Task 034 fixture passed with zero
-  residue; a follow-up catalog audit returned seven closed `true` checks for
-  migration history, default/CHECK enforcement, account state, outbox cleanup,
-  RLS, and fixture residue. The invariant is a single account default of
+  Opus reviews and was applied first to disposable `vetai-test`, where the
+  updated Task 033 compatibility fixture and Task 034 fixture passed with zero
+  residue and a seven-check catalog audit passed. After separate user approval,
+  the same single migration was applied through the managed CLI transaction to
+  `vetai-staging`; a six-check staging catalog audit passed, local/remote
+  migration history matched 18/18, and the post-apply dry-run reported the
+  remote database up to date. The invariant is a single account default of
   `personal`: only an exact `ai` route automates; `inherit` deletes the route
-  and returns future traffic to personal. Staging still has the pre-Phase-D
-  schema until a separate user-approved apply; no production migration ran.
+  and returns future traffic to personal. No production migration ran.
 
 Verified evidence before the context-system change:
 
@@ -597,9 +598,8 @@ occurred.
   processing. `personal` message content must remain unread and unpersisted.
   An explicit personal override retains its routing phone number. The verified
   Phase D schema lets an unlisted contact remain personal without a route row;
-  only an exact `ai` row automates. Staging remains on the pre-Phase-D schema
-  until the separately approved migration apply, so its current `inherit`
-  behavior must not be treated as strict allowlisting yet.
+  only an exact `ai` row automates. This schema is verified on disposable
+  `vetai-test` and applied to `vetai-staging`; it is not applied to production.
 - Contact-route rows are independent of owner records: owner erasure does not
   remove them. All authenticated staff of the same clinic can see them through
   RLS. The Turkish legal/KVKK review package must inventory this retention,

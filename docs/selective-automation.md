@@ -3,7 +3,9 @@
 Last verified: 2026-08-22. **Codex applied Task 033 and the strict-allowlist
 follow-up migration to disposable `vetai-test`; the 033 and 034 rollback
 fixtures and the closed catalog audit passed with zero fixture residue. The
-strict migration is not applied to staging or production.**
+strict migration was then applied to `vetai-staging` through the managed CLI
+transaction; its six-check catalog audit and 18/18 migration-history comparison
+passed. It is not applied to production.**
 
 ## Why this exists
 

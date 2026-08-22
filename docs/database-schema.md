@@ -677,7 +677,9 @@ in the Queue consumer's pipeline.
 Task 033 and the strict-allowlist follow-up were validated on disposable
 `vetai-test` on 2026-08-22: both rollback fixtures passed with zero residue and
 the final default/CHECK/RLS/catalog audit returned seven closed `true` checks.
-The strict migration is not applied to staging or production.
+The strict migration was then applied to `vetai-staging`; its six-check catalog
+audit passed and migration history matched 18/18. It is not applied to
+production.
 
 `supabase/migrations/20260814000300_selective_automation.sql`. **Codex applied
 the migration and ran `supabase/tests/033_selective_automation.sql` on

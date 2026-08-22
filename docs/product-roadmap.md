@@ -368,11 +368,13 @@ Task 034'ün kullanıcı onaylı son pilot sertleştirmesi strict AI allowlist't
 hesap düzeyi varsayılan `personal`, yalnız `/staff` ekranında açıkça `AI açık`
 yapılan exact numaralar otomasyona girer. Migration, 033/034 rollback testleri,
 Codex incelemesi ve Opus gizlilik/RLS incelemesi disposable `vetai-test`
-üzerinde sıfır kalıntıyla geçti; staging ve production'a henüz uygulanmadı.
+üzerinde sıfır kalıntıyla geçti; ardından migration yönetilen CLI akışıyla
+staging'e uygulandı ve altı katalog kontrolü ile 18/18 migration geçmişi geçti.
+Production'a uygulanmadı.
 Aktivasyon, açık AI rotası olmayan gönderilmemiş `pending | processing`
 yanıtları kaldırır; Meta'ya zaten verilmiş tek bir ağ isteğini geri çağırma
-garantisi vermez. Sıradaki kapı, ayrı kullanıcı onayıyla staging uygulaması ve
-uygun pilot numarayla gerçek uçtan uca kanıttır.
+garantisi vermez. Sıradaki kapı, uygun pilot numarayla gerçek uçtan uca
+kanıttır.
 
 Task 029 tamamlandı: düzeltmeli yerel inceleme ve Opus'un salt-okunur güvenlik
 incelemesi geçti; kullanıcı onaylı 30 × 2 canlı karşılaştırmada Luna tüm

@@ -717,3 +717,28 @@ checks have passed. Task 034 remains `IN_REVIEW` because the strict migration
 has not been applied to staging, no eligible pilot number is registered, and
 the full real inbound/outbound chain is still unproved. No staging,
 production, Meta, OpenAI, or iPhone mutation occurred in this validation.
+
+### Phase D staging apply record — 2026-08-22
+
+After separate user approval, Codex linked only to the existing
+`vetai-staging` project. The remote migration history matched all first 17
+local migrations, and `supabase db push --dry-run` offered only
+`20260822000100_strict_ai_allowlist.sql`. Codex applied that single file
+through the managed CLI transaction; no rollback fixture was run on staging.
+
+Post-apply evidence:
+
+```text
+strict-allowlist migration apply -> PASS; vetai-staging only
+catalog/default/CHECK/RLS audit   -> PASS; 6/6 closed checks true
+migration history comparison     -> PASS; local/remote 18/18
+post-apply migration dry-run      -> PASS; remote database up to date
+```
+
+The staging catalog audit proved the new migration record, the `personal`
+default, the named strict CHECK, every existing account on `personal`, no
+unauthorized claimable `pending | processing` outbox row, and RLS enabled on
+the three affected tables. Task 034 remains `IN_REVIEW`: no eligible pilot
+number exists, Coexistence is still `UNAVAILABLE`, and real inbound → Queue →
+OpenAI → finalize → outbound/status evidence remains `NOT RUN`. No production,
+Meta, OpenAI, or iPhone mutation occurred in this staging apply.
