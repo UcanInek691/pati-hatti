@@ -1,8 +1,10 @@
 # Current task — 034 Real staging and same-number WhatsApp evidence
 
-Status: `IN_REVIEW`
+Status: `COMPLETE` (closed 2026-08-25 — see "Task 034 closure record" at the end of this file)
 
-Owner: Claude Sonnet (repository preparation), then Codex (review and live execution)
+Owner: Claude Sonnet (repository preparation), then Codex (review and live
+execution); closed by Claude Opus standing in for Codex under Maya's explicit
+delegation of 2026-08-25, Codex being unavailable.
 
 ## Goal
 
@@ -761,3 +763,381 @@ and personal replies. No phone number was registered with Cloud API, no
 payment was added, and the Business App remained operational. The safe next
 options are a separate API test number or a separately approved Embedded
 Signup/Tech Provider/BSP Coexistence route; neither is authorized here.
+
+## Phase E — dedicated Cloud API pilot number and staging publication (user amendment)
+
+The user registered a separate, non-Coexistence pilot number in the existing
+staging WABA and explicitly authorized completing the staging-only setup. This
+amendment does not authorize production deployment, production data, a claim
+of legal/KVKK approval, or use by unlisted senders.
+
+### Required outcome
+
+1. Serve a public Turkish staging privacy notice at `GET /privacy` without
+   tracking, remote assets, secrets, phone numbers, patient data, or a false
+   compliance/approval claim.
+2. Keep all non-GET methods closed and preserve existing Worker routes.
+3. Deploy only `vetai-staging`, enter that URL in the staging Meta app, and
+   publish only after a separate action-time user confirmation.
+4. Bind the newly registered phone-number ID to the existing synthetic staging
+   WhatsApp account, keep the account default `personal`, and add only the one
+   user-designated test sender as an exact `ai` route before real inbound.
+5. Record only sanitized PASS/FAIL/NOT RUN evidence. Never record the pilot or
+   sender number, token, message body, provider ID, or secret.
+
+### Exact Phase E allowed changes
+
+- `src/privacyPage.ts` (new), `src/index.ts`, `test/index.test.ts`.
+- Narrow staging evidence/context only: `docs/staging-runbook.md`,
+  `docs/production-readiness.md`, `PROJECT_CONTEXT.md`, and this file.
+
+No migration, schema, prompt/model, clinical reply, dependency, production
+configuration, or production resource may change. The public notice is a
+truthful staging disclosure, not the missing lawyer-approved production
+privacy package.
+
+### Phase E observed context — 2026-08-23
+
+Recorded by Claude (implementer) from repository evidence only. No Cloudflare,
+Supabase, Meta, or OpenAI resource was created, called, or mutated.
+
+- The privacy-notice half of Phase E was already present on disk and unrecorded
+  when this session started: `src/privacyPage.ts`, the `/privacy` route in
+  `src/index.ts`, and three `test/index.test.ts` cases (`GET /privacy`,
+  `GET /privacy/`, `POST /privacy` → 405). Baseline run before any edit in this
+  session: 32 files, 1,347 passed, 2 paid eval gates skipped — exactly the Phase
+  D count of 1,344 plus those three. No Phase E delivery record existed.
+- **BLOCKING defect found — the staging Worker's Queue consumer is inert.**
+  `src/index.ts`'s `queue()` handler selected its processor by exact production
+  resource name (`batch.queue === "vetai-intake"` /
+  `"vetai-intake-dlq"`). `batch.queue` carries the real Cloudflare resource
+  name, and `wrangler.staging.toml` declares consumers for
+  `vetai-intake-staging` and `vetai-intake-dlq-staging`. On `vetai-staging`
+  every batch therefore fell to the `null` processor and retried: intake
+  exhausted its three attempts into `vetai-intake-dlq-staging`, that queue
+  exhausted its three attempts into `vetai-intake-terminal-dlq-staging`, and no
+  dead-letter staff handoff was ever created. The exact Phase E / Task 034 live
+  gate — real inbound → Queue → OpenAI → atomic finalize → outbound → status —
+  could not have passed on staging, and the failure would have looked like a
+  Meta or Supabase problem rather than a routing one.
+- The existing queue-routing tests only ever asserted production names
+  (`vetai-intake`, `vetai-intake-dlq`, `vetai-intake-terminal-dlq`), so the
+  suite could not detect the gap. `wrangler deploy --dry-run` cannot detect it
+  either: it validates bindings, not the handler's name matching.
+- Both affected files (`src/index.ts`, `test/index.test.ts`) are already inside
+  the Exact Phase E allowed-change list, so no amendment to that list was
+  needed. No other file was touched.
+
+### Phase E delivery record (partial) — 2026-08-23
+
+#### Changed files
+
+- `src/index.ts` — queue routing now resolves through two explicit named sets,
+  `INTAKE_QUEUE_NAMES` (`vetai-intake`, `vetai-intake-staging`) and
+  `INTAKE_DEAD_LETTER_QUEUE_NAMES` (`vetai-intake-dlq`,
+  `vetai-intake-dlq-staging`). Terminal dead-letter names are deliberately in
+  neither set: they have no declared consumer and must keep failing closed to
+  `retry`. No other behavior, route, header, or handler changed; production
+  routing is byte-for-byte equivalent to the previous exact-match branch.
+- `test/index.test.ts` — four added cases: staging intake routes only to the
+  primary processor; staging DLQ routes only to the dead-letter processor;
+  every line-anchored `queue = "..."` name declared in `wrangler.toml` and
+  `wrangler.staging.toml` resolves to exactly one processor and acks; both
+  terminal dead-letter names still retry with no processor called. The third
+  case reads the two Wrangler configs so future config drift fails the suite
+  rather than staging.
+- `docs/staging-runbook.md` — new §14 (Faz E) execution section and a
+  corrected header date. Every §14 item is `[ ]`; no live checkbox was marked
+  and no live claim was added. §14.0 records the redeploy prerequisite created
+  by the queue-routing defect above, §14.2 records that the Phase B temporary
+  Meta token has expired, §14.4 restates the exact `whatsapp_accounts` /
+  `whatsapp_contact_routes` / `clinic_staff` shapes the binding and allowlist
+  steps depend on, and §14.6 restates the external gates Phase E does not
+  close.
+- `CURRENT_TASK.md` — this Observed context and Delivery record only.
+
+No source outside `src/index.ts`, no migration, SQL fixture, prompt, model,
+clinical copy, dependency, lockfile, Wrangler config, or secret was touched.
+
+#### Regression proof
+
+The three name-dependent new cases were run against the previous exact-match
+branch and failed (3 failed / 77 passed); against the fix they pass (80/80).
+The suite therefore reproduces the defect rather than merely accompanying it.
+
+#### Exact checks and results
+
+Run in an isolated Linux sandbox holding a faithful copy of the worktree, not
+on the developer machine.
+
+```text
+pnpm install --frozen-lockfile   -> PASS; lockfile honored, 80 packages
+pnpm typecheck                   -> PASS; zero errors
+targeted Vitest (index.test.ts)  -> PASS; 80 tests (was 76)
+pnpm test                        -> PASS; 32 files, 1,351 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; Worker "vetai",
+                                     env.INTAKE_QUEUE (vetai-intake)
+staging Wrangler dry-run         -> PASS; Worker "vetai-staging",
+                                     env.INTAKE_QUEUE (vetai-intake-staging)
+```
+
+Sandbox caveat, recorded rather than hidden: `@types/node` is an uninstalled
+optional peer under `--frozen-lockfile`, so the sandbox needed it added locally
+before `tsc` could resolve the `node:fs` / `node:path` imports that several
+existing test files already use. That install was local to the sandbox only;
+`package.json` and `pnpm-lock.yaml` are unchanged in the repository. Codex
+should rerun `pnpm typecheck` on the developer machine to confirm.
+
+#### Checks not run and why
+
+- `git status`, `git diff --check`, and any commit: this session had no shell
+  on the developer machine, only file read/write. Line-ending and worktree
+  cleanliness must be confirmed by Codex or the user before commit.
+- Every live Cloudflare, Supabase, Meta, and OpenAI step of Phase E
+  (deploy, privacy URL entry, app publication, phone-number-ID binding,
+  designated-sender `ai` route, real inbound/outbound/status journey):
+  `NOT RUN`. Phase E items 2-5 remain entirely open.
+- No paid OpenAI call or eval was made.
+
+#### Known limitations / risks to inspect
+
+- The staging Worker currently deployed at the time of this record predates
+  this fix. Any staging Queue evidence gathered before a redeploy is invalid,
+  and any message already sitting in `vetai-intake-terminal-dlq-staging` got
+  there through the defect, not through a real failure.
+- The fix hardcodes four resource names. A third environment, or a rename of
+  any queue, must update `src/index.ts` together with its Wrangler config; the
+  added config-drift test is what surfaces that, so it must not be weakened.
+- The `/privacy` notice is a truthful staging disclosure written by an AI and
+  is still not the lawyer-approved KVKK package required before production.
+
+### Phase E live execution record — 2026-08-23
+
+Executed with the user present, each remote mutation separately approved by
+them at the time. Raw identifiers, phone numbers, and secrets are suppressed.
+
+#### What was executed
+
+- `vetai-staging` redeployed with the queue-routing fix. Deploy output listed
+  `Consumer for vetai-intake-staging` and `Consumer for vetai-intake-dlq-staging`.
+- Meta app: privacy policy URL set to the staging Worker's `/privacy`; the app
+  was then **published** on the user's explicit approval.
+- Staging database: the `whatsapp_accounts` row was rebound from the old Meta
+  **test** number to the pilot number (it would otherwise have resolved
+  `unknown_account` for every real inbound); the synthetic staff Auth user's
+  `clinic_staff` membership was inserted; and one exact `ai` contact route was
+  added for the single designated test sender.
+- The `ai` route was set by calling the real `set_whatsapp_contact_route` RPC
+  from a database session assuming the staff user's identity
+  (`set local role authenticated` + real `auth.uid()`, the pattern the repo's
+  own SQL fixtures use). Recorded deviation: this is not the `/staff` browser
+  path the runbook prescribes. No table was written directly, and
+  `is_clinic_staff` genuinely authorized the call — but the `/staff` UI itself
+  remains untested.
+- `WHATSAPP_ACCESS_TOKEN` was replaced with a permanent Meta token after the
+  expired one was proven invalid by three failed delivery attempts.
+
+#### Live evidence — the full chain now passes
+
+Real inbound → signed webhook → signature verified → persisted → `ai` route →
+Queue → OpenAI → atomic finalize → outbox → real outbound → Meta delivery
+status callback. Worker tail showed `processed: 1` and
+`Queue vetai-intake-staging (1 message) - Ok`; the conversation advanced to
+`pet_identification`; two outbox rows reached `accepted` on their first
+attempt with `provider_status_at` populated.
+
+**The queue-routing fix is what made this possible.** Before it, `batch.queue`
+never matched a processor on staging and the message would have retried into
+the terminal dead-letter queue with no reply and no visible error.
+
+#### Diagnosis worth preserving
+
+After publishing, real messages still produced no webhook for roughly an hour.
+Meta's own `messages` field `Test` control was the discriminating experiment:
+that request **did** reach the Worker, proving the callback registration,
+signature layer, and Worker were all sound, and isolating the fault to how the
+real message was being targeted. The chain fired on the first attempt once the
+message was started from Meta's "Customer replies" **QR flow**. Future real
+inbound tests should always start from that QR.
+
+#### Open defects found and deliberately not fixed here
+
+1. `src/index.ts` returns `503` for `unknown_account`. Meta can throttle an
+   endpoint that repeatedly returns `5xx`, so this can become self-inflicted.
+   It should return `200` and ignore the event. Outside the Phase E allowed
+   change list; needs its own contract.
+2. Three duplicate "weosa" WABAs exist in the portfolio; only one holds the
+   number. This materially slowed diagnosis.
+3. Business-initiated (template) sending is blocked — Meta's "Add payment"
+   step is incomplete. User-initiated 24-hour-window replies are unaffected.
+4. The permanent access token was pasted into a chat transcript during this
+   session and must be regenerated to invalidate it.
+5. `/staff` was never opened; §7 matrix, §8 takeover race, and §9 safety and
+   appointment smoke remain `NOT RUN`, and §9's clinic-hours and slot
+   prerequisites are still absent.
+6. **BLOCKING product gap — an owner with no registered pet loops forever.**
+   Observed in the real conversation, not inferred: after the safety gate
+   cleared, the system asked for the pet's name, the user answered with the
+   name, and the identical fixed question was sent again. The model was not
+   at fault — `conversations.intake_data` held the correctly extracted
+   `pet_name` and `species` for that reply. `resolvePet`
+   (`src/intakeExtraction.ts:236`) only ever matches against pets **already
+   stored** for the owner; with none stored it returns `needs_clarification`,
+   and `src/intakeReply.ts:92` re-sends the fixed pet-identity copy. No
+   runtime path creates a pet anywhere in `src/` — there is no
+   `insert into public.pets`. Every first-time owner therefore dead-ends.
+   The user chose to record this rather than paper over it with a seeded pet
+   row, so the loop is still reproducible on staging for whoever fixes it.
+   Any fix must decide who a pet record is created for, on whose consent, and
+   under which KVKK basis, so it needs its own contract and the applicable
+   review gates rather than a quick patch.
+
+#### Changed files in this phase
+
+`docs/staging-runbook.md` (§6, §11, §14 evidence and the new §14.5b defect
+list) and this record. No source, migration, or configuration changed after
+the queue fix.
+
+### Phase F — `unknown_account` acknowledgement (executed 2026-08-23)
+
+Defect 1 above was fixed, because it is bounded, needs no schema, prompt,
+clinical copy, or retention change, and it actively risks Meta throttling
+webhook delivery for the whole account while it stands.
+
+- `src/index.ts` now counts `unknown_account` under its own counter and
+  acknowledges with HTTP 200 instead of folding it into `failed` and returning
+  503. `failed` still returns 503; `manual` and `ignored` are unchanged. The
+  new counter appears in the persistence log line so a stale or misconfigured
+  `phone_number_id` stays visible rather than silently swallowed.
+- `test/index.test.ts`: `unknown_account` added to the 200-outcome table, a
+  test pinning the separate counter, and a test proving a genuinely
+  unrecognized RPC result still returns 503. Two pre-existing tests asserted
+  the old 503 and were updated in place with a comment recording the date and
+  reason, so the change is not silently rewritten history.
+- `docs/inbound-queue.md`: the outcome list now states the behavior and why.
+
+Verification: `pnpm typecheck` PASS; `pnpm test` PASS (32 files, 1,354 passed,
+2 paid eval gates skipped). Not deployed — the live staging Worker still runs
+the previous build.
+
+### Proposed next task — pet onboarding (defect 6)
+
+Written here for Codex to lift into its own contract; **not** authorized or
+implemented by Task 034.
+
+Problem: `resolvePet` only matches pets already stored for the owner, and no
+runtime path creates one, so a first-time owner cannot pass
+`pet_identification`. Reproducible on staging right now.
+
+Why it is gated rather than patched: creating a pet record from message
+content is a new data-retention path. It decides what personal data VetAI
+originates about an identifiable owner, on what consent, and with what
+erasure behavior. Under `AGENTS.md` and the Phase C/D precedent that requires
+a new contract plus the applicable Opus/KVKK review gate, and
+`docs/kvkk-inceleme-paketi.md` must be updated in the same change.
+
+Design questions the contract must close before code:
+
+1. Who may create a pet — only an explicit owner confirmation turn, or the
+   extraction alone? An LLM-extracted name silently becoming a stored record
+   is the weaker option and should be justified if chosen.
+2. What identifies a duplicate: exact normalized name per owner, or does the
+   owner get asked when two pets are similar? Today's resolver already fails
+   closed on multiple matches, and that behavior should survive.
+3. Species is optional in the schema but the extractor often supplies it;
+   decide whether it is stored at creation or left null pending confirmation.
+4. Erasure: pets cascade from owners today. Confirm that an owner-erasure
+   request still removes auto-created pets, and that a pet created in error
+   can be removed without breaking `conversations.pet_id`'s `no action` FK.
+5. The loop itself is a defect independent of pet creation: even with
+   onboarding built, an owner who never supplies a usable name must reach a
+   bounded outcome — human handoff — rather than repeating one fixed line
+   forever. A bounded-attempt counter needs storage, and
+   `PersistedIntakeData` currently fails closed on any unexpected key, so it
+   implies a `schema_version` bump and its own migration.
+
+Suggested review gates: Codex for the RPC, call path, and RLS; Claude Opus
+read-only for the retention, consent wording, and erasure cascade; human for
+the KVKK package text.
+
+Decision: `PHASE_E_CHAIN_PROVEN_PET_ONBOARDING_BLOCKED`. Task 034 remains
+`IN_REVIEW`: the transport chain is proven end to end, but defect 6 blocks
+every first-time owner, the §7-§9 behavioral gates are unproven, the other
+defects above are open, and the external veterinary/legal/KVKK production
+gates are untouched. Defect 6 should be triaged before any further live
+behavioral testing, because §7's `ai` path and §9's appointment smoke both
+run through the pet-identification stage that currently dead-ends.
+
+---
+
+## Task 034 closure record — 2026-08-25
+
+Closed by Claude Opus acting in Codex's role (review, checks, `PROJECT_CONTEXT.md`,
+commit) under Maya's explicit delegation, Codex being unavailable. Codex's normal
+authority is unchanged; this is a stand-in, not a redefinition of the role.
+
+### What was reviewed
+
+The Phase F working tree, uncommitted at review time:
+
+- `src/index.ts` — `INTAKE_QUEUE_NAMES` / `INTAKE_DEAD_LETTER_QUEUE_NAMES` sets
+  replacing the two hardcoded production queue names (the Phase E staging
+  defect), the `/privacy` route, and the `unknown_account` outcome now
+  answering `503` instead of `200`.
+- `src/privacyPage.ts` (new) — static Turkish staging privacy notice, no
+  inline script, `default-src 'none'` CSP, `nosniff`, `no-referrer`,
+  `GET`-only with a `405 + Allow: GET` for anything else.
+- `test/index.test.ts` — pins the `unknown_account` `503`, the `/privacy`
+  headers/method handling, and the queue-name sets.
+- `docs/inbound-queue.md`, `docs/staging-runbook.md`, `docs/pilot-oncesi-plan.md`.
+
+Review verdict: accepted as written. Two points recorded rather than changed:
+
+1. The `/privacy` page is truthful about the staging pilot but is still **not
+   lawyer-approved**, and it states no concrete retention period because none
+   has been decided. That is honest disclosure of an open gap, not a defect of
+   this task — it stays a controlled-pilot blocker, tracked in
+   `docs/pilot-oncesi-plan.md`.
+2. `unknown_account` returning `503` deliberately asks Meta to redeliver rather
+   than silently dropping a message for an account the staging database does
+   not know. It is the correct failure direction for a pilot, and it is pinned
+   by test so a future refactor cannot quietly turn it back into a `200`.
+
+### Checks actually run — 2026-08-25
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npx tsc --noEmit` | clean, no output |
+| Entrypoint tests | `npx vitest run test/index.test.ts` | 83 passed / 1 file |
+| Full suite | `npx vitest run` | 1,411 passed, 2 skipped, 33 files |
+| Worker build | `npx wrangler deploy --dry-run --outdir <tmp>` | built, 150.16 KiB / 31.51 KiB gzip |
+
+Honest scoping note on the full-suite number: that run happened on a working
+tree that **also** contained the Task 035 pet-onboarding preparation (landed in
+the same session, committed separately). Task 034 alone was at 1,354 passing at
+the end of Phase E; the pet-onboarding files account for the rest. The 83-test
+entrypoint run above is the Task-034-only figure.
+
+No staging or production migration was applied, no Worker was deployed, no
+secret was created or rotated, and no Meta configuration was changed in the
+course of closing this task.
+
+### What Task 034 did and did not establish
+
+Established: migration-history staging, a separate staging Worker with its own
+queues/cron/secrets, a real signed Meta webhook → inbound → outbound → status
+journey, and all three Task 033 modes (`ai | manual | personal`).
+
+Not established, carried forward rather than quietly dropped:
+
+- **Coexistence is `UNAVAILABLE`**, with sanitized Meta evidence recorded in
+  the Phase D/E records. A reviewed staff Cloud API composer therefore remains
+  a controlled-pilot blocker, and was correctly not built here.
+- **Pet onboarding is blocked** (`PHASE_E_CHAIN_PROVEN_PET_ONBOARDING_BLOCKED`):
+  a first-time owner still cannot pass `pet_identification`, because
+  `resolvePet` (`src/intakeExtraction.ts:236`) only matches pets that already
+  exist and no runtime path creates one. This is defect 6 and is now Task 035
+  below.
+- The retention period, the lawyer review of `/privacy`, and the KVKK §7–§9
+  boxes remain open and belong to humans, not to this task.

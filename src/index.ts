@@ -13,6 +13,20 @@ import { drainOutboundMessages } from "./outboundSender";
 import { STAFF_SECURITY_HEADERS, handleStaffConfig, handleStaffScript, handleStaffShell } from "./staffPage";
 import { checkReadiness } from "./readiness";
 import type { QueueDisposition } from "./intakeConsumer";
+import { handlePrivacyPage } from "./privacyPage";
+
+/**
+ * Queue resource names routed to the primary intake consumer. `batch.queue`
+ * carries the real Cloudflare resource name, and the same `src/index.ts` is
+ * deployed to both the production Worker (`wrangler.toml`) and the isolated
+ * staging Worker (`wrangler.staging.toml`), so both name sets are listed
+ * explicitly. Terminal dead-letter queues are deliberately absent from both
+ * sets: they have no declared consumer and must stay unhandled.
+ */
+const INTAKE_QUEUE_NAMES: ReadonlySet<string> = new Set(["vetai-intake", "vetai-intake-staging"]);
+
+/** Queue resource names routed to the dead-letter handoff processor. */
+const INTAKE_DEAD_LETTER_QUEUE_NAMES: ReadonlySet<string> = new Set(["vetai-intake-dlq", "vetai-intake-dlq-staging"]);
 
 function isWhatsAppWebhook(body: unknown): body is { object: string; entry: unknown[] } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -83,6 +97,7 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
   let duplicate = 0;
   let manual = 0;
   let ignored = 0;
+  let unknownAccount = 0;
   let failed = 0;
   for (const item of textExtraction.items) {
     const outcome = await ingestWhatsAppTextMessage(item, env);
@@ -95,6 +110,15 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
     }
     if (outcome.kind === "ignored") {
       ignored++;
+      continue;
+    }
+    // An unrecognized phone number ID is permanent, not transient: no retry can
+    // ever resolve it. Counting it as a failure returned 503 to Meta, which
+    // both invites webhook throttling for the whole account and hides the real
+    // cause. Acknowledge it instead, and keep it visible as its own counter
+    // rather than folded into `ignored`.
+    if (outcome.kind === "unknown_account") {
+      unknownAccount++;
       continue;
     }
 
@@ -112,7 +136,7 @@ async function handleWebhookPost(request: Request, env: Env): Promise<Response> 
     if (outcome.kind === "processed") processed++;
     else duplicate++;
   }
-  console.log("whatsapp webhook event persisted", { processed, duplicate, manual, ignored, failed });
+  console.log("whatsapp webhook event persisted", { processed, duplicate, manual, ignored, unknown_account: unknownAccount, failed });
 
   if (failed > 0 || statusFailed > 0) {
     return new Response("Service Unavailable", { status: 503 });
@@ -126,6 +150,13 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/health") {
       return Response.json(getHealth());
+    }
+
+    if (url.pathname === "/privacy" || url.pathname === "/privacy/") {
+      if (request.method !== "GET") {
+        return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
+      }
+      return handlePrivacyPage();
     }
 
     if (url.pathname === "/ready") {
@@ -177,9 +208,9 @@ export default {
 
   async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     let processor: ((body: unknown, env: Env) => Promise<QueueDisposition>) | null;
-    if (batch.queue === "vetai-intake") {
+    if (INTAKE_QUEUE_NAMES.has(batch.queue)) {
       processor = processIntakeQueueMessage;
-    } else if (batch.queue === "vetai-intake-dlq") {
+    } else if (INTAKE_DEAD_LETTER_QUEUE_NAMES.has(batch.queue)) {
       processor = processIntakeDeadLetterQueueMessage;
     } else {
       processor = null;

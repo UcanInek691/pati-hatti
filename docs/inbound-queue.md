@@ -18,6 +18,16 @@ early.
   before the sender's retry, so the retry's duplicate outcome still gets a job
   published.
 - `unknown_account` and `failed` persistence outcomes are never enqueued.
+- `unknown_account` is acknowledged with HTTP 200 and counted under its own
+  `unknown_account` key in the persistence log line, not as `failed`
+  (changed 2026-08-23). An unrecognized phone number ID is a permanent
+  condition: no retry can resolve it, and returning 5xx to Meta for every
+  such delivery risks Meta throttling webhook delivery for the whole
+  account. The dedicated counter keeps a misconfigured or stale
+  `whatsapp_accounts.phone_number_id` visible instead of silently folding it
+  in with `ignored`. This was found in staging, where the account row still
+  pointed at a retired test number and Meta's own webhook test payload — which
+  carries a fabricated phone number ID — reproduced it on demand.
 - `manual` and `ignored` persistence outcomes (Task 033 selective automation,
   see [`docs/selective-automation.md`](selective-automation.md)) are also
   never enqueued, but are still successful HTTP-200 outcomes — they are not

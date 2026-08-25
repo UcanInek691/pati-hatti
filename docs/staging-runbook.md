@@ -1,13 +1,19 @@
 # Staging kurulum ve gerçek kanıt runbook'u (Görev 034)
 
-Son güncelleme: 2026-08-15, Codex canlı staging yürütmesi (kısmi; Meta
-yayın uygunluğu engeli nedeniyle tamamlanmadı).
+Son güncelleme: 2026-08-23. Faz E yürütüldü ve **gerçek uçtan uca zincir ilk
+kez kanıtlandı**: gerçek inbound → imzalı webhook → kalıcılık → `ai` rotası →
+Queue → OpenAI → atomik finalize → outbox → gerçek outbound → Meta teslim
+durumu callback'i. Kuyruk yönlendirme düzeltmesi deploy edildi, uygulama
+yayınlandı, pilot numara bağlandı, personel kullanıcısı ve tek `ai` whitelist
+rotası kuruldu, erişim token'ı kalıcı token'la değiştirildi.
+Hâlâ `NOT RUN`: §7 seçmeli otomasyon matrisi, §8 manuel devralma yarışı,
+§9 güvenlik/randevu smoke'u ve `/staff` arayüzü.
 
-Bu belge yürütülebilir bir kontrol listesidir; bir üretim onayı veya tam
-uçtan uca kanıt değildir. `[x]` yalnızca Codex'in gerçekten yürüttüğü,
-sanitize edilmiş sonucu kaydettiği adımı gösterir. Meta uygulaması
-yayımlanmamış olduğu için inbound, durum callback'i ve bunlara bağlı AI/
-randevu/personel akışları `NOT RUN` durumundadır.
+Bu belge yürütülebilir bir kontrol listesidir; bir üretim onayı değildir.
+`[x]` yalnızca gerçekten yürütülüp sanitize sonucu kaydedilen adımı gösterir.
+Meta uygulaması 2026-08-23'te yayınlandı; §6 zinciri artık kanıtlanmıştır,
+ancak §7-§9 hâlâ `NOT RUN` ve üretim onayları (veteriner hekim, KVKK,
+hukukçu onaylı gizlilik yüzeyi) kapanmamıştır.
 
 Bu runbook `CURRENT_TASK.md` Faz B'nin uygulama kılavuzudur; sözleşme
 `CURRENT_TASK.md` dosyasıdır, bu belge değil.
@@ -109,15 +115,20 @@ SQL Editor'de bir kez çalıştırıldı. Tüm dosyalar `rollback;` ile bitti,
 
 - [x] Bir sentetik klinik satırı, adında açıkça "STAGING TEST" ibaresiyle
       (gerçek bir klinikle karıştırılamayacak şekilde).
-- [x] Klinik için `whatsapp_accounts` satırı, seçilen Meta test işletme
-      numarasının `phone_number_id`'siyle.
-- [ ] Bir sentetik personel Supabase Auth kullanıcısı (örn.
-      `staging-tester@example.invalid`) ve klinik personel üyeliği satırı.
+- [x] Klinik için `whatsapp_accounts` satırı. 2026-08-23'e kadar Meta **test**
+      numarasının `phone_number_id`'sini taşıyordu; o tarihte §14.4 uyarınca
+      `staging-pilot-number` değerine güncellendi.
+- [x] Bir sentetik personel Supabase Auth kullanıcısı ve klinik personel
+      üyeliği satırı (2026-08-23). Faz B'de atlanmıştı; `auth.users` boş
+      olduğu sürece `/staff` girişi ve `set_whatsapp_contact_route`
+      kullanılamıyordu.
 - [ ] Bir sentetik sahip ve hayvan.
 - [ ] En az bir gelecekteki randevu slotu, UTC yarım saatlik hizada
-      (`docs/appointment-booking-engine.md`).
-- [ ] Bölüm 6-9 boyunca tutarlı kullanılacak tek bir belirlenmiş test
-      gönderici E.164 numarası.
+      (`docs/appointment-booking-engine.md`). Klinik haftalık çalışma saati
+      satırı da şu an 0; §9 randevu smoke'u öncesi gereklidir.
+- [x] Bölüm 6-9 boyunca tutarlı kullanılacak tek bir belirlenmiş test
+      gönderici E.164 numarası kullanıcı tarafından belirlendi. Ham numara
+      bu belgeye yazılmaz; `staging-test-sender` takma adıyla anılır.
 
 Gerçek bir hasta veya arkadaş konuşması bu ortama asla girmez.
 
@@ -128,20 +139,39 @@ Gerçek bir hasta veya arkadaş konuşması bu ortama asla girmez.
       challenge=<rastgele>` isteği tam `hub.challenge` değerini `200` ile
       döner.
 - [x] Meta panelinde `messages` alanı staging Worker URL'sine abone edilir.
-- [ ] §5'teki belirlenmiş göndericiden bir gerçek imzalı inbound WhatsApp
-      metin mesajı gönder.
-- [ ] Mesajın işlenip persist edildiğini doğrula
+- [x] §5'teki belirlenmiş göndericiden gerçek imzalı inbound WhatsApp metin
+      mesajı gönderildi (Meta'nın "Customer replies" QR akışıyla başlatıldı;
+      QR, doğru numara ve WABA'ya gittiğini garanti ettiği için önceki
+      belirsizliği ortadan kaldırdı).
+- [x] Mesajın işlenip persist edildiğini doğrula
       (`docs/inbound-queue.md`, `docs/database-schema.md`).
-- [ ] Outbound gönderim ve teslim/okundu durum callback'inin
-      (`docs/outbound-status.md`) alındığını doğrula.
-- [ ] Sanitize kanıt alanlarını §11 formatında kaydet.
+- [x] Outbound gönderim ve teslim durum callback'inin
+      (`docs/outbound-status.md`) alındığını doğrula. İki outbox satırı ilk
+      denemede `accepted` oldu ve ikisinde de `provider_status_at` doldu.
+- [x] Sanitize kanıt alanlarını §11 formatında kaydet.
 
-Canlı Meta sonucu: ücretsiz test WABA numarasından doğrulanmış bir test
-alıcısına Meta'nın sabit örnek şablon mesajı ulaştı (`PASS`). Bu mesaj
-VetAI Worker/outbox tarafından üretilmediği için tam outbound kanıtı sayılmaz.
-Uygulama yayımlanmamışken Meta paneli durum olaylarını kendi test tablosunda
-gösterdi, ancak Worker tail'e webhook gelmedi. Gerçek inbound, status callback
-ve AI zinciri bu nedenle `NOT RUN` kaldı.
+Canlı Meta sonucu (2026-08-23, güncel): uygulama yayınlandıktan ve pilot
+numara bağlandıktan sonra gerçek zincir uçtan uca çalıştı — imzalı inbound →
+kalıcılık → `ai` rotası → Queue → OpenAI → atomik finalize → VetAI outbox →
+gerçek outbound → Meta teslim durumu callback'i. Konuşma
+`pet_identification` aşamasına ilerledi.
+
+Önceki (2026-08-15) sonuç tarihsel kayıt olarak durur: o tarihte yalnız
+ücretsiz test WABA numarasından Meta'nın sabit şablon mesajı ulaşmıştı; bu
+VetAI outbox tarafından üretilmediği için tam outbound kanıtı sayılmamıştı ve
+uygulama yayımlanmamış olduğu için Worker'a webhook gelmiyordu.
+
+Teşhis notu: yayın sonrası ilk denemelerde de webhook gelmedi ve nedeni
+uzun süre bulunamadı. Ayırt edici test, Meta'nın kendi `messages` alan
+`Test` düğmesiydi: o istek Worker'a **ulaştı**, yani callback kaydı, imza
+katmanı ve Worker sağlamdı. Gerçek mesajın Worker'a ulaşması ancak Meta'nın
+"Customer replies" **QR akışı** kullanıldığında gerçekleşti. Bu, sorunun
+yapılandırmada değil, mesajın hedeflenmesinde olduğunu gösterir; ileride
+aynı belirsizliğe düşmemek için gerçek inbound testleri **her zaman QR
+akışıyla** başlatılmalıdır.
+
+- [ ] Okundu (`read`) durum callback'i ayrıca doğrulanmadı; Worker mesajları
+      okundu olarak işaretlemediği için bu beklenen bir boşluktur.
 
 ## 7. Seçmeli otomasyon matrisi
 
@@ -233,6 +263,25 @@ anahtarı, sahip/hayvan adı, mesaj metni.
 | 2026-08-14 21:36 UTC / 2026-08-15 00:36 TRT | Coexistence uygunluğu | `UNAVAILABLE` | WhatsApp Business App hesabı/pilot numarası yok; yalnızca Meta test numarası var | `test-waba` | — |
 | 2026-08-22 17:14 UTC / 2026-08-22 20:14 TRT | Strict AI allowlist staging migration | `PASS` | 6/6 katalog kontrolü; migration geçmişi 18/18; dry-run güncel | `staging-project` | — |
 | 2026-08-22 | Business App ve doğrudan Coexistence yeniden kontrolü | `UNAVAILABLE` | Business App send/receive çalıştı; Meta direct setup yalnız standart `Add new number` sundu, Coexistence/QR yoktu; wizard gönderimden önce kapatıldı | `staging-app` | — |
+| 2026-08-23 11:00 UTC / 14:00 TRT | Staging `GET /privacy` | `PASS` | HTTP 200, Türkçe bildirim tam | `staging-worker` | — |
+| 2026-08-23 11:02 UTC / 14:02 TRT | Staging cache-bust'lı `GET /ready` | `PASS` | HTTP 200 `ready` (yalnız biçim denetimi) | `staging-worker` | — |
+| 2026-08-23 11:05 UTC / 14:05 TRT | Webhook aboneliği gözden geçirildi | `PASS` | callback URL girili; `messages` abone, `message_echoes` kapalı | `staging-app` | — |
+| 2026-08-23 11:20 UTC / 14:20 TRT | Privacy Policy URL girildi ve kaydedildi | `PASS` | "Changes saved"; Yayın sayfası tüm gereksinimleri tamam gösterdi, Publish etkinleşti | `staging-app` | — |
+| 2026-08-23 11:25 UTC / 14:25 TRT | Pilot numara kaydı okundu | `PASS` | `Registered`, "Subscribe webhooks" açık | `staging-pilot-number` | — |
+| 2026-08-23 11:40 UTC / 14:40 TRT | Staging DB başlangıç durumu okundu | `PASS` | tek hesap/tek sentetik rota; auth kullanıcı, personel, sahip, konuşma, mesaj, event, outbox ve saatler 0 | `staging-project` | — |
+| 2026-08-23 11:45 UTC / 14:45 TRT | Hesap `phone_number_id` pilot numaraya bağlandı | `PASS` | 1 satır güncellendi; eski değer test numarasıydı; `personal` korundu | `staging-project` | — |
+| 2026-08-23 14:47 UTC / 17:47 TRT | Kuyruk yönlendirme düzeltmesinin deploy'u | `PASS` | `Consumer for vetai-intake-staging` ve `...-dlq-staging` bildirildi | `staging-worker` | — |
+| 2026-08-23 14:55 UTC / 17:55 TRT | Uygulamanın yayınlanması | `PASS` | "successfully published"; mod `Published` | `staging-app` | — |
+| 2026-08-23 15:00 UTC / 18:00 TRT | Meta `messages` alan `Test` düğmesi | `PASS` | `POST /webhooks/whatsapp`; imza geçti; sahte hesap kimliği beklendiği gibi `failed: 1` sayıldı | `staging-worker` | — |
+| 2026-08-23 15:16 UTC / 18:16 TRT | Gerçek inbound (QR akışı) | `PASS` | `processed: 1`; `Queue vetai-intake-staging (1 message) - Ok` | `staging-test-sender` | — |
+| 2026-08-23 15:16 UTC / 18:16 TRT | OpenAI + atomik finalize | `PASS` | konuşma `pet_identification` aşamasına ilerledi; outbox satırı oluştu | `staging-project` | — |
+| 2026-08-23 15:22 UTC / 18:22 TRT | İlk outbox satırının gönderimi | `FAIL` | 3 deneme, `attempts_exhausted`; sebep eski/geçersiz erişim token'ı | `staging-worker` | — |
+| 2026-08-23 15:35 UTC / 18:35 TRT | Yeni token sonrası outbound | `PASS` | iki satır da ilk denemede `accepted` | `staging-worker` | — |
+| 2026-08-23 15:35 UTC / 18:35 TRT | Meta teslim durumu callback'i | `PASS` | her iki satırda `provider_status_at` doldu | `staging-worker` | — |
+| 2026-08-23 11:55 UTC / 14:55 TRT | Sentetik personel Auth kullanıcısı doğrulandı | `PASS` | kullanıcı mevcut ve e-postası onaylı | `staging-project` | — |
+| 2026-08-23 12:00 UTC / 15:00 TRT | `clinic_staff` üyeliği eklendi | `PASS` | 1 satır, rol `admin`, sentetik klinikte | `staging-project` | — |
+| 2026-08-23 12:02 UTC / 15:02 TRT | AI whitelist rotası eklendi | `PASS` | RPC `updated`; personel kimliğiyle çağrıldı, `is_clinic_staff` gerçekten geçti | `staging-test-sender` | — |
+| 2026-08-23 | `/staff` arayüzünün kendisi | `NOT RUN` | rota RPC ile eklendi; tarayıcı girişi yapılmadı | `staging-worker` | — |
 
 ## 12. Durdurma / geri alma / temizlik
 
@@ -252,3 +301,206 @@ anahtarı, sahip/hayvan adı, mesaj metni.
 |---|---|
 | `VERIFIED` — Business App gelen kutusu inbound+API yanıtlarını gösteriyor, echo döngüsü yok, istenmeyen persist yok | Aynı numarayla pilot, `docs/production-readiness.md` §1 insan onayları da kapandığında ilerleyebilir. Personelin bileşik yanıt arayüzü yoktur — insan kanalı Business App'in kendisidir. |
 | `UNAVAILABLE` — herhangi bir engelleyici | `CURRENT_TASK.md`'ye göre incelenmiş bir personel Cloud API composer'ı kontrollü pilot öncesi yeni bir bloklayıcı görev olur; bu görevde composer inşa edilmez, yeni bir görev olarak eskale edilir. |
+
+## 14. Faz E — ayrık Cloud API pilot numarası ve staging yayını
+
+`CURRENT_TASK.md` Faz E'nin yürütme kılavuzu. Sözleşme yine
+`CURRENT_TASK.md`'dir. Bu bölümdeki her canlı adım `[ ]` başlar ve yalnız
+gerçekten yürütülüp sanitize sonucu §11 tablosuna yazıldığında `[x]` olur.
+
+Kullanıcı, mevcut staging WABA'sına Coexistence olmayan ayrı bir pilot
+numara kaydetti. Bu bölüm **üretim dağıtımını, üretim verisini, hukuki/KVKK
+onay iddiasını veya liste dışı gönderici kullanımını yetkilendirmez.**
+
+### 14.0 Zorunlu ön koşul — kuyruk yönlendirme düzeltmesinden sonra redeploy
+
+`src/index.ts` 2026-08-23'e kadar Queue işlemcisini yalnız production kaynak
+adlarıyla (`vetai-intake`, `vetai-intake-dlq`) seçiyordu. `batch.queue`
+gerçek kaynak adını taşır ve `wrangler.staging.toml` `-staging` ekli adlar
+bildirir; bu nedenle staging'de her batch işlemcisiz kalıp retry'a düşüyor,
+üç denemede `vetai-intake-dlq-staging`'e, orada da üç denemede
+`vetai-intake-terminal-dlq-staging`'e gidiyordu. Faz E'nin asıl kanıtı olan
+gerçek zincir bu haliyle **geçemezdi**.
+
+- [ ] Düzeltilmiş `src/index.ts` ile `vetai-staging` yeniden deploy edilir.
+      Redeploy'dan **önce** toplanmış hiçbir staging Queue kanıtı geçerli
+      değildir.
+- [ ] `vetai-intake-terminal-dlq-staging` içindeki mevcut mesajlar bu hatanın
+      sonucudur, gerçek bir arıza değildir. Purge etme (§12/2); yalnızca
+      kanıt yorumlarken bu kökeni kaydet.
+
+### 14.1 Deploy ve genel yüzey doğrulaması
+
+- [x] `pnpm exec wrangler deploy --config wrangler.staging.toml` çalıştırıldı.
+      Çıktı `Consumer for vetai-intake-staging` ve
+      `Consumer for vetai-intake-dlq-staging` bildirdi; §14.0 düzeltmesi
+      böylece canlıya çıktı.
+- [ ] `GET /health` → `200`. Ayrıca doğrulanmadı; `/ready` ve `/privacy`
+      geçtiği için ayrı bir kanıt olarak sayılmadı.
+- [x] `GET /privacy` → `200`, Türkçe staging bildirimi tarayıcıda okundu.
+      Sayfada uzak varlık, izleme, secret, telefon numarası veya "hukukçu
+      onaylı" iddiası yok. Not: bu, gizlilik sayfasını içeren daha önceki bir
+      deploy'un kanıtıdır; §14.0 kuyruk düzeltmesi bu sürümde **yok**.
+- [ ] `POST /privacy` → `405` ve `Allow: GET`. Tarayıcıdan yalnız `GET`
+      yapılabildiği için canlıda doğrulanmadı; yerel testte geçiyor.
+- [x] Cache-bust'lı `GET /ready` → `200 { "status": "ready" }`.
+      `checkReadiness` yalnız biçim denetimi yapar, hiçbir dış servise istek
+      atmaz; bu nedenle `ready` sonucu Meta erişim token'ının **geçerli
+      olduğunu kanıtlamaz** (bkz. §14.2).
+
+### 14.2 Meta erişim token'ının tazelenmesi
+
+Faz B kaydındaki `WHATSAPP_ACCESS_TOKEN` Meta'nın 24 saatlik geçici
+token'ıdır. Meta panelinin Step 1 konsolu 2026-08-23'te `Not generated yet`
+gösterdi ve `/ready` yalnız biçim denetimi yaptığı için token'ın geçerliliği
+hakkında hiçbir kanıt vermez. Token'ın durumu bu nedenle **bilinmiyor**;
+kesin sonuç ilk gerçek outbound denemesinde görülecektir (`401` ⇒ yenile).
+
+- [x] Meta'nın "Send message" adımındaki **Generate token** akışıyla kalıcı
+      bir erişim token'ı üretildi. Eski geçici token'ın gerçekten geçersiz
+      olduğu ampirik olarak kanıtlandı: ilk outbox satırı üç denemede de
+      reddedilip `attempts_exhausted` ile `failed` oldu.
+- [x] Yeni token Cloudflare'ın şifreli secret alanına girildi. Deploy
+      gerekmedi; sonraki cron turunda gönderim ilk denemede kabul edildi.
+- [ ] **AÇIK GÜVENLİK BORCU:** bu token oturum sırasında bir sohbete
+      yapıştırıldı, yani artık bir konuşma geçmişinde duruyor. Kalıcı ve
+      mesaj gönderme yetkisi taşıyor. Pilot bittiğinde Meta panelinden
+      yeniden üretilerek geçersiz kılınmalı. Bu kayıt, sorunun sessizce
+      geçiştirilmemesi için buraya konmuştur.
+
+### 14.3 Meta uygulaması — gizlilik URL'si ve yayın
+
+Yayımlanmamış uygulama yalnız pano kaynaklı test webhook'u alır; gerçek
+inbound ve durum callback'i almaz. Faz B'nin takıldığı engel tam olarak
+budur ve gerçek zincir kanıtı için bu adım zorunludur.
+
+- [x] App Settings → Basic → **Privacy Policy URL** = `<staging worker>/privacy`
+      girildi ve kaydedildi; Yayın sayfası ardından "All required app settings
+      are complete" gösterdi ve Publish etkinleşti.
+- [x] Zorunlu alanlar Meta tarafından karşılanmış sayıldı; ek alan
+      doldurulmadı. **Açık borç:** `Terms of Service URL` ve
+      `User data deletion` hâlâ Faz B'den kalma `https://www.facebook.com/`
+      değerini taşıyor. Meta yayını bloklamıyor ama bunlar doğru değil ve
+      üretim öncesi hukukçu onaylı gerçek sayfalarla değiştirilmelidir.
+- [ ] Uygulama **yayınlanır** (Live). Bu geri alınabilir ama kamuya açık bir
+      durum değişikliğidir; yalnız kullanıcının o an verdiği açık onayla
+      yapılır.
+- [ ] Yayın sonrası webhook challenge yeniden doğrulanır ve `messages`
+      alanının hâlâ abone olduğu teyit edilir. Yayın öncesi durum (2026-08-23):
+      callback URL girili, `messages` abone, `message_echoes` kapalı (echo
+      döngüsü riski bu yüzden şimdilik yok), webhook alan sürümü `v26.0`.
+- [x] Pilot numaranın `phone_number_id` değeri panodan alındı. Ham değer
+      belgeye/commit'e yazılmadı; §11'de `staging-pilot-number` takma adıyla
+      anılır. Numara `Registered` ve "Subscribe webhooks" açık.
+- [ ] **Açık uyum riski:** webhook alanları `v26.0`, Worker'ın
+      `WHATSAPP_GRAPH_API_VERSION` değişkeni ise `v25.0`. İkisi farklı
+      yönler (gelen payload vs. giden Graph çağrısı) olduğu için bugün
+      bloklayıcı değil, ama Meta'nın kendi uyarısı sürüm hizası ister; ilk
+      gerçek akıştan sonra gözden geçirilmelidir.
+
+### 14.4 Supabase staging — numara bağlama ve katı AI whitelist'i
+
+Şema hatırlatması: `whatsapp_accounts (id, clinic_id, phone_number_id,
+automation_default)`; `automation_default` Faz D'den beri **yalnız
+`personal`** olabilir. `whatsapp_contact_routes (whatsapp_account_id,
+clinic_id, contact_e164, mode)` ve yalnız `mode = 'ai'` olan tam satır
+otomasyona girer.
+
+Okunan başlangıç durumu (2026-08-23, salt-okunur):
+tek klinik, tek `whatsapp_accounts` satırı (`automation_default = personal`),
+tek `whatsapp_contact_routes` satırı (sentetik `manual`), ve
+`auth.users`, `clinic_staff`, `owners`, `pets`, `conversations`, `messages`,
+`webhook_events`, outbox, randevu slotları, personel iş kalemleri ile klinik
+haftalık saatlerinin **tamamı 0**.
+
+- [x] Mevcut sentetik "STAGING TEST" kliniğinin `whatsapp_accounts` satırı
+      yeni pilot numaranın `phone_number_id` değeriyle güncellendi; satır
+      Faz B'den beri hâlâ eski Meta **test** numarasına bağlıydı, yani
+      düzeltilmeseydi her gerçek inbound `unknown_account` olurdu.
+      `automation_default` `personal` kaldı. Eski değer geri alma için
+      oturum kaydında tutuldu; ham kimlikler bu belgeye yazılmadı.
+- [x] Personel Supabase Auth kullanıcısı kullanıcı tarafından oluşturuldu
+      (e-postası onaylı) ve onun `clinic_staff (clinic_id, user_id, role)`
+      üyelik satırı `admin` rolüyle eklendi. `/staff`
+      Supabase Auth e-posta+parola ile giriş yapar ve
+      `set_whatsapp_contact_route` yalnız o kliniğin personeli için çalışır;
+      bu kullanıcı olmadan whitelist adımı yürütülemez.
+- [x] Yalnız **tek** belirlenmiş test göndericisi tam `ai` rotası olarak
+      eklendi; RPC `updated` döndü. Sapma: `/staff` arayüzünden değil, SQL
+      oturumunda personel kimliğine geçilerek (`set local role
+      authenticated` + gerçek `auth.uid()`, fixture'ların kullandığı desen)
+      **aynı RPC** çağrıldı. Doğrudan tablo yazımı yapılmadı ve
+      `is_clinic_staff` yetkilendirmesi gerçekten geçti; ancak bu `/staff`
+      arayüzünü test etmiş sayılmaz.
+- [ ] `/staff` tarayıcıdan açılır, "katı politika etkin" ifadesini
+      gösteriyor mu doğrulanır; göstermiyorsa hesap yükü `personal`
+      varsayılanını doğrulamamış demektir ve durulur. §7-§9 zaten `/staff`
+      girişini gerektirdiği için bu adım atlanamaz.
+
+### 14.5 Gerçek zincir kanıtı
+
+Buradan sonrası §6-§9'un aynısıdır ve ancak 14.0-14.4 kapandıktan sonra
+çalıştırılır.
+
+- [ ] §7/0 — whitelist dışı gönderici: `200` ack, içerik okunmaz/kaydedilmez,
+      Queue ve OpenAI çağrılmaz.
+- [ ] §6 — belirlenmiş göndericiden gerçek inbound; Queue → OpenAI → atomik
+      finalize → VetAI outbox → gerçek outbound → durum callback'i.
+      **Queue adımının gerçekten koştuğu** ayrıca teyit edilir (Worker tail
+      veya `vetai-intake-staging` metriği); 14.0 hatasının nüksü buradan
+      görünür.
+- [ ] §7/1-4 — `personal`, `manual`, `ai`, ardından whitelist'ten çıkarma.
+- [ ] §8 — manuel devralma yarışı.
+- [ ] §9 — güvenlik devri, personel görünürlüğü, randevu `EVET` ve `HAYIR`.
+- [ ] Her adım §11 şablonuyla kaydedilir.
+
+### 14.5b Zincir kanıtlandıktan sonra açık kalan kusurlar
+
+Bunlar bu oturumda bulundu, düzeltilmedi ve ayrı birer görev olarak ele
+alınmalıdır:
+
+1. **`unknown_account` için `503` dönülüyor.** `src/index.ts` tanınmayan bir
+   hesabı `failed` sayıp `503` veriyor. Meta, sürekli `5xx` alan bir
+   endpoint'e teslimatı kısabilir; yani bu, kendi kendini besleyen bir arıza
+   hâline gelebilir. Doğrusu `200` dönüp olayı sessizce yok saymaktır.
+   Meta'nın `Test` düğmesi bu davranışı doğrudan tetikliyor.
+2. **Portföyde üç kopya "weosa" WABA'sı var** (`1747631286525524`,
+   `853733087706981`, `3647635165398837`); yalnız ilkinde numara var.
+   Bu duplikasyon teşhis sırasında ciddi kafa karışıklığı yarattı.
+   Temizlenmeli, ama numara bağlıyken silme işine girişilmemeli.
+3. **İşletme-başlatmalı mesajlar bloklu:** Meta panelinde "Add payment"
+   adımı tamamlanmadığı için şablon gönderimi devre dışı. Kullanıcı-başlatmalı
+   24 saatlik pencere içindeki yanıtlar etkilenmiyor, ama hatırlatma/
+   bilgilendirme gibi işletme-başlatmalı akışlar üretim öncesi bunu gerektirir.
+4. **Erişim token'ı rotasyon borcu** — bkz. §14.2.
+5. **`/staff` arayüzü hiç açılmadı.** Whitelist rotası RPC ile eklendi;
+   arayüzün kendisi, "katı politika etkin" göstergesi ve personel iş akışı
+   test edilmedi.
+6. **§9 randevu smoke'unun ön koşulları eksik:** klinik haftalık çalışma
+   saatleri ve gelecekteki randevu slotu satırları hâlâ 0.
+7. **BLOKLAYICI — kayıtlı hayvanı olmayan sahip sonsuz döngüde kalıyor.**
+   Gerçek sohbette gözlendi: kullanıcı "kedim pampık sıkıntılı" yazdı,
+   güvenlik kapısı temizlendikten sonra sistem hayvanın adını sordu,
+   kullanıcı "pampık" yanıtını verdi ve **aynı soru tekrar soruldu.**
+   Kök neden model değil: `conversations.intake_data` içinde
+   `pet_name = "pampık"` ve `species = "KEDİ"` **doğru** çıkarılmıştı.
+   `resolvePet` (`src/intakeExtraction.ts:236`) yalnız **zaten kayıtlı**
+   hayvanlarla eşleştirme yapıyor; eşleşme yoksa `needs_clarification`
+   dönüyor ve `src/intakeReply.ts:92` sabit "adını belirtin" metnini
+   yeniden gönderiyor. Runtime'da hayvan kaydı **oluşturan hiçbir yol yok**
+   (`insert into public.pets` çağrısı mevcut değil).
+   Sonuç: ilk kez yazan her hayvan sahibi bu döngüye takılır; kontrollü
+   pilot öncesi kapatılması gereken bir ürün boşluğudur. §5'teki "sentetik
+   sahip ve hayvan" maddesinin işaretsiz kalması bu boşluğu maskelemişti —
+   runbook, hayvanın önceden elle eklenmiş olacağını varsayıyordu.
+   Not: bir hayvan oluşturma akışı; kimin adına, hangi onayla ve hangi
+   KVKK dayanağıyla kayıt açıldığı sorularını da beraberinde getirir, bu
+   yüzden kendi sözleşmesiyle tasarlanmalıdır.
+
+### 14.6 Faz E'nin kapatmadığı şeyler
+
+Bu bölüm tamamlansa bile şunlar açık kalır ve üretim yayınını engeller:
+veteriner hekim kopya onayı, Türk hukuku/KVKK onay paketi, hukukçu onaylı
+üretim gizlilik yüzeyi (`/privacy` bunun yerine geçmez), ve Coexistence
+`UNAVAILABLE` olduğu için §13'e göre gereken incelenmiş personel Cloud API
+composer'ı.

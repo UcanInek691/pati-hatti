@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
@@ -484,6 +486,26 @@ describe("worker whatsapp persistence", () => {
     );
   });
 
+  it.each(["/privacy", "/privacy/"])("GET %s returns the public Turkish staging privacy notice", async (path) => {
+    const res = await worker.fetch(new Request(`https://vetai.test${path}`), env);
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+    expect(body).toContain("VetAI Staging Gizlilik Bildirimi");
+    expect(body).toContain("Liste dışındaki numaraların mesaj içeriği incelenmez");
+    expect(body).toContain("hukukçu onaylı KVKK aydınlatma metni");
+    expect(body).not.toContain("WHATSAPP_");
+    expect(body).not.toContain("SUPABASE_");
+  });
+
+  it("POST /privacy returns 405 and allows only GET", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/privacy", { method: "POST" }), env);
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+  });
+
   it("acknowledges a signed group message without RPC, Queue, persistence, or reply work", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -604,14 +626,17 @@ describe("worker whatsapp persistence", () => {
     expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it("returns 503 for a media webhook when the ingest RPC reports an unknown account and never calls Queue", async () => {
+  // Was 503 until 2026-08-23. An unrecognized phone number ID is permanent, so
+  // retrying cannot help and repeated 5xx risks Meta throttling webhook
+  // delivery for the whole account. Acknowledge instead; still no Queue work.
+  it("returns 200 for a media webhook when the ingest RPC reports an unknown account and never calls Queue", async () => {
     vi.stubGlobal("fetch", routedFetch({ ingest_whatsapp_text_message: [{ result: "unknown_account", conversation_id: null }] }));
     const queueSend = vi.fn().mockResolvedValue(undefined);
     const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
 
     const res = await worker.fetch(await signedPost(JSON.stringify(mediaMessageWebhookBody("audio"))), testEnv);
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -652,14 +677,15 @@ describe("worker whatsapp persistence", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns 503 when the RPC reports an unknown account and never calls Queue", async () => {
+  // Was 503 until 2026-08-23; see the media-webhook case above for why.
+  it("returns 200 when the RPC reports an unknown account and never calls Queue", async () => {
     vi.stubGlobal("fetch", routedFetch({ ingest_whatsapp_text_message: [{ result: "unknown_account", conversation_id: null }] }));
     const queueSend = vi.fn().mockResolvedValue(undefined);
     const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
 
     const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -710,6 +736,7 @@ describe("worker whatsapp persistence", () => {
   it.each([
     ["manual", CONVERSATION_ID],
     ["ignored", null],
+    ["unknown_account", null],
   ] as const)(
     "returns 200 for a %s ingest outcome without enqueuing a Queue job or counting a failure",
     async (result, conversationId) => {
@@ -723,6 +750,30 @@ describe("worker whatsapp persistence", () => {
       expect(queueSend).not.toHaveBeenCalled();
     },
   );
+
+  it("counts an unknown account separately from ignored so the cause stays visible", async () => {
+    vi.stubGlobal("fetch", routedFetch({ ingest_whatsapp_text_message: [{ result: "unknown_account", conversation_id: null }] }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(vi.fn().mockResolvedValue(undefined)) };
+
+    await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
+    expect(log).toHaveBeenCalledWith(
+      "whatsapp webhook event persisted",
+      expect.objectContaining({ unknown_account: 1, ignored: 0, failed: 0 }),
+    );
+  });
+
+  it("still returns 503 for a genuinely failed ingest outcome", async () => {
+    vi.stubGlobal("fetch", routedFetch({ ingest_whatsapp_text_message: [{ result: "unexpected", conversation_id: null }] }));
+    const queueSend = vi.fn().mockResolvedValue(undefined);
+    const testEnv: Env = { ...env, INTAKE_QUEUE: stubQueue(queueSend) };
+
+    const res = await worker.fetch(await signedPost(JSON.stringify(textMessageWebhookBody())), testEnv);
+
+    expect(res.status).toBe(503);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
 });
 
 function fakeMessage(body: unknown): Message<unknown> {
@@ -792,6 +843,72 @@ describe("worker queue handler", () => {
     expect(dlqSpy).toHaveBeenCalledTimes(1);
     expect(primarySpy).not.toHaveBeenCalled();
     expect(message.ack).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes vetai-intake-staging batches only through the primary processor", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockResolvedValueOnce("ack");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
+    const message = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([message], "vetai-intake-staging"), env);
+
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(dlqSpy).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it("routes vetai-intake-dlq-staging batches only through the dead-letter processor", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValueOnce("ack");
+    const message = fakeMessage({ irrelevant: true });
+
+    await worker.queue!(fakeBatch([message], "vetai-intake-dlq-staging"), env);
+
+    expect(dlqSpy).toHaveBeenCalledTimes(1);
+    expect(primarySpy).not.toHaveBeenCalled();
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it("keeps every declared consumer queue in both Wrangler configs routable", async () => {
+    const repoRoot = path.resolve(__dirname, "..");
+    const declaredConsumerQueues = [
+      // Line-anchored so a `dead_letter_queue = "..."` target, which has no
+      // declared consumer, is never mistaken for a routable queue.
+      ...readFileSync(path.join(repoRoot, "wrangler.toml"), "utf8").matchAll(/^queue = "([^"]+)"/gm),
+      ...readFileSync(path.join(repoRoot, "wrangler.staging.toml"), "utf8").matchAll(/^queue = "([^"]+)"/gm),
+    ].map((match) => match[1] as string);
+
+    for (const queueName of new Set(declaredConsumerQueues)) {
+      vi.restoreAllMocks();
+      const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockResolvedValue("ack");
+      const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValue("ack");
+      const message = fakeMessage({ irrelevant: true });
+
+      await worker.queue!(fakeBatch([message], queueName), env);
+
+      expect(primarySpy.mock.calls.length + dlqSpy.mock.calls.length, `queue ${queueName} has no processor`).toBe(1);
+      expect(message.ack).toHaveBeenCalledTimes(1);
+      expect(message.retry).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still fails closed for a terminal dead-letter queue name in either environment", async () => {
+    const primarySpy = vi.spyOn(intakeConsumer, "processIntakeQueueMessage");
+    const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
+
+    for (const queueName of ["vetai-intake-terminal-dlq", "vetai-intake-terminal-dlq-staging"]) {
+      const message = fakeMessage({ irrelevant: true });
+
+      await worker.queue!(fakeBatch([message], queueName), env);
+
+      expect(message.retry).toHaveBeenCalledTimes(1);
+      expect(message.ack).not.toHaveBeenCalled();
+    }
+
+    expect(primarySpy).not.toHaveBeenCalled();
+    expect(dlqSpy).not.toHaveBeenCalled();
   });
 
   it("retries a rejected dead-letter processor call without blocking other messages' own disposition", async () => {

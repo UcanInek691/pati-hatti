@@ -1,6 +1,7 @@
 # VetAI project context
 
-Last verified: 2026-08-21 by Codex.
+Last verified: 2026-08-25 by Claude Opus, standing in for Codex under Maya's
+explicit delegation (Codex unavailable).
 
 ## Product
 
@@ -429,6 +430,20 @@ The secure Worker baseline is committed on `main`:
   `personal`: only an exact `ai` route automates; `inherit` deletes the route
   and returns future traffic to personal. No production migration ran.
 
+- Task 034 Phase F runtime hardening (closed 2026-08-25). The Worker no longer
+  hardcodes the two production queue names — `INTAKE_QUEUE_NAMES` and
+  `INTAKE_DEAD_LETTER_QUEUE_NAMES` accept the staging names too, which was the
+  Phase E defect that silently dropped staging queue batches. An inbound
+  webhook for an account the database does not recognise now answers `503`
+  (ask Meta to redeliver) instead of `200` (silently drop), pinned by test. A
+  static Turkish `/privacy` notice is served from `src/privacyPage.ts` under
+  `default-src 'none'`, `nosniff`, `no-referrer`, `GET`-only with a
+  `405 + Allow: GET`; it is truthful about the staging pilot but is **not
+  lawyer-approved** and states no retention period, because none has been
+  decided. Checks at closure: typecheck clean, 1,411 passed / 2 skipped across
+  33 files, `wrangler deploy --dry-run` built at 150.16 KiB. No staging or
+  production migration was applied and no Worker was deployed to close it.
+
 Verified evidence before the context-system change:
 
 - Product-code baseline: `e50a2f7`.
@@ -476,9 +491,15 @@ handling, clinic operational hours/contact configuration, pilot staff
 ownership/status/browser alerts, selective per-contact automation, and the $5
 OpenAI hard-limit setup. Luna remains the production
 extractor based on the recorded gates above, including fresh authorized live
-evidence for prompt `2026-08-14.1`. Task 034 has partial live staging evidence
-and a verified Phase C runtime-hardening pass but remains `IN_REVIEW` behind
-Meta publication/eligibility and human approval gates. Same-number Coexistence
+evidence for prompt `2026-08-14.1`. Task 034 is `COMPLETE` as of 2026-08-25. It established
+migration-history staging, a separate staging Worker with its own queues, cron
+and secrets, a real signed Meta webhook → inbound → outbound → status journey,
+and all three Task 033 modes. It also proved two things it could not fix:
+same-number Coexistence is `UNAVAILABLE` for the candidate pilot number, and a
+first-time owner cannot pass `pet_identification` at all
+(`PHASE_E_CHAIN_PROVEN_PET_ONBOARDING_BLOCKED`). The staff Cloud API composer
+that Coexistence's absence implies remains a controlled-pilot blocker and is
+deliberately unbuilt. Same-number Coexistence
 is `UNAVAILABLE` without a WhatsApp Business App pilot number. Recognizable
 group traffic is now excluded before automation, and critical Supabase RPC
 fetches are bounded at 10 seconds. Canary, failure injection, observability,
