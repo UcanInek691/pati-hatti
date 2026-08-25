@@ -296,7 +296,7 @@ Veri sorumlusu / klinik: ______________________________________________<br>
 İnceleyen uzman: _____________________________________________________<br>
 Unvan / yetki bilgisi: _______________________________________________<br>
 İnceleme tarihi: _____________________________________________________<br>
-İncelenen teknik sürüm: `0a3e13d`<br>
+İncelenen teknik sürüm: `2bbd2ac` (2026-08-25; önceki kayıt `0a3e13d`)<br>
 Karar: [ ] Üretim öncesi hukuk kapıları tamam  [ ] Düzeltme gerekli  [ ] Onaylanmadı<br>
 Eksik belgeler / koşullar: ___________________________________________<br>
 İmza / kurum içi onay kaydı: _________________________________________
