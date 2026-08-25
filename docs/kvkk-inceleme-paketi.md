@@ -77,7 +77,7 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Klinik ve personel | Klinik adı, personel kullanıcı kimliği, rol | Tenant ve yetki yönetimi | Supabase; personel yalnız üyesi olduğu klinik kapsamında |
 | WhatsApp hesabı | Meta `phone_number_id`, görünen hesap adı | Gelen/giden mesajı doğru klinik hesabına bağlama | Supabase; sırlar burada tutulmaz |
 | Hayvan sahibi | Ad-soyad, E.164 telefon numarası | İletişim kuran kişiyi klinik içinde tanıma | Supabase; klinik bazında ayrılmış |
-| Evcil hayvan | Ad, tür, sahip ve klinik bağlantısı | Doğru hayvanı konuşma/randevuyla eşleme | Supabase; sahip ve klinik ilişkisi veritabanı kısıtlarıyla korunur |
+| Evcil hayvan | Ad, tür, sahip ve klinik bağlantısı | Doğru hayvanı konuşma/randevuyla eşleme | Supabase; sahip ve klinik ilişkisi veritabanı kısıtlarıyla korunur. **2026-08-25'ten itibaren bu satırlar iki kaynaktan doğabilir:** klinik personelinin doğrudan girişi (bugüne kadarki tek yol) veya sahibin WhatsApp'ta açık onayıyla oluşturulan ilk kayıt — bkz. aşağıdaki not |
 | Konuşma ve intake | Seçili hayvan, akış aşaması, yapılandırılmış şikâyet, belirtiler, güvenlik cevapları, insan/randevu talebi | Dijital resepsiyon, güvenlik yönlendirmesi ve randevu akışı | Supabase; konuşma sahibine ve kliniğe bağlı |
 | Mesaj | Gelen/giden yönü, ham metin, WhatsApp mesaj kimliği, zaman | Konuşma geçmişi ve tekrar işleme koruması | Supabase; konuşmayla birlikte silme zincirine bağlı |
 | Webhook olayı | Sağlayıcı olay kimliği, payload hash'i, işlem durumu, sınırlı hata özeti | Tekrar işleme/idempotency ve operasyon | Supabase; ham webhook veya token tutulmaz |
@@ -93,6 +93,33 @@ durumlarda hukuki niteliği ve uygulanacak koruma seviyesi uzman tarafından
 belirlenmelidir; bu belge kendiliğinden “özel nitelikli kişisel veri” veya
 “kişisel veri değildir” sonucu çıkarmaz.
 
+**Not — botun ilk kez veri *oluşturması* (2026-08-25, Task 035 "pet
+onboarding"):** Bu tarihe kadar ürün bir sahibin evcil hayvanını hiçbir zaman
+kendisi oluşturmuyordu; `pets` satırları yalnızca klinik tarafından önceden
+girilmiş oluyor, bot yalnızca mevcut kayıtlarla tam eşleşme arıyordu. Task 035
+ilk kez botun bir `pets` satırı yazmasına izin veriyor. Kayıt yalnızca şu
+koşulda oluşur: sahibin kayıtlı hiçbir hayvanı yoksa, bot çıkarılan adı (ve
+varsa türü) sahibe aynen geri okur ve sahip tam olarak "EVET" yazarsa. "HAYIR"
+yanıtında çıkarılan ad/tür atılır ve hiçbir şey yazılmaz; belirsiz yanıtta soru
+en fazla 3 kez tekrarlanır, sonra insan devrine geçilir. Model çıkarımı tek
+başına asla kayıt oluşturmaz — bu, `AGENTS.md`'deki "randevu mutasyonu açık
+kullanıcı onayı gerektirir" ilkesinin hayvan kaydına aynen uygulanmasıdır.
+
+Yeni kolon, yeni tablo veya yeni `schema_version` yoktur; yalnızca mevcut
+`pets` tablosuna, daha önce hiç kullanılmayan bir kod yolundan satır
+yazılabilmektedir. Yazma, mevcut `finalize_intake_queue_job` `SECURITY INVOKER`
+RPC'si (yalnızca `service_role` çalıştırabilir) içinde, mevcut kiracı/sahip
+kilidiyle aynı transaction'da atomik olarak yapılır — yeni bir yetki yüzeyi
+eklenmez.
+
+Aynı sahip için aynı adın (`lower(btrim(name))`) ikinci kez oluşturulması, AI
+yolunda engellenir (`duplicate_pet_name`). Bu kural **yalnızca AI yazma
+yolunda** geçerlidir: klinik personelinin doğrudan girişi (RLS `pets_all`
+politikası) bu kısıtla karşılaşmaz, çünkü aynı sahibin gerçekten aynı adlı iki
+hayvanı olabilir ve bu meşru kaydı hukuken engellemek için bir sebep yoktur.
+Normalizasyon Türkçe noktalı/noktasız "I" kurallarını taklit etmez; yalnızca
+sıradan durumu kapatır.
+
 ## 4. İşleme faaliyeti karar tablosu
 
 Her satırda amacı, hukuki sebebi ve aktarımı ayrı ayrı belirleyin. “Hizmet için
@@ -103,6 +130,7 @@ gerekli” gibi genel bir ifade tek başına hukuki sebep yerine yazılmamalıd�
 | WhatsApp mesajını alma ve yanıtlama | Hayvan sahibi; telefon, ad, mesaj | | Meta, Cloudflare, Supabase | | |
 | Şikâyet ve güvenlik bilgisini yapılandırma | Hayvan sahibiyle bağlantılı konuşma ve evcil hayvan bilgisi | | OpenAI, Supabase | | |
 | Klinik personeline iş görünürlüğü | Konuşma ve yönlendirme nedeni | | Yetkili klinik personeli, Supabase | | |
+| Sahip onayıyla ilk hayvan kaydını oluşturma | Hayvan sahibi; hayvan adı ve türü (sahibin mesajından çıkarılıp sahibe onaylatılmış) | | Supabase, OpenAI (yalnız çıkarım), yetkili klinik personeli | | |
 | Randevu oluşturma | Sahip/hayvan bağlantısı ve zaman | | Klinik personeli, Supabase, Meta | | |
 | Mesaj teslimat takibi | Telefon, sağlayıcı kimliği ve sabit yanıt | | Meta, Cloudflare, Supabase | | |
 | Güvenlik, hata önleme ve olay kaydı | Hash, teknik kimlikler, sınırlı hata özeti | | Cloudflare, Supabase | | |
@@ -122,6 +150,11 @@ noktasında nasıl gösterileceğini kararlaştırmalıdır:
 - [ ] Yurt dışı aktarımın kapsamı ve uygulanan güvence.
 - [ ] Aydınlatmanın gösterildiğinin nasıl ispatlanacağı.
 - [ ] Amaç değişirse yeni aydınlatmanın nasıl yapılacağı.
+- [ ] Botun sahibin mesajından ilk hayvan kaydını **oluşturacağı** anda ne
+      söyleneceği: onay sorusunun kendisi bir aydınlatma anı mıdır, yoksa
+      kayıt oluşturulmadan önce ayrı bir bilgilendirme mi gerekir? (Task 035,
+      2026-08-25. Bugünkü onay metni ne kadar veri saklanacağını ve nasıl
+      sildirileceğini söylemiyor — uzman kararı gerekiyor.)
 
 Kararlaştırılan gösterim noktası ve metin sürümü: ______________________
 
@@ -180,11 +213,36 @@ etmez.
 | Silme talebinde aktif randevu, bekleyen mesaj ve hukuki saklama çatışmasının çözümü | |
 | Supabase Auth, yedek ve sağlayıcı kopyalarında silme yöntemi | |
 | Talep sonucu ve yapılan işlemlerin ispat kaydı | |
+| Bot tarafından oluşturulmuş bir hayvan kaydının, sahibin kendisi tarafından "bunu ben istemedim" denilerek sildirilmesi (Task 035) | |
+| İhracatta bir hayvan kaydının **kim tarafından** oluşturulduğunun (personel mi, sahibin onayıyla bot mu) gösterilip gösterilmeyeceği | |
 
 Mevcut veritabanı tenant bazlı silme zincirleri owner/clinic bağlantılı birçok
 kaydı birlikte kaldırır. Ancak üretim için yetkili bir başvuru/doğrulama ve
 silme aracı henüz yoktur; silme işlemi genel SQL erişimine veya yapay zekâya
 bırakılmamalıdır.
+
+**Silme ve ihracat açısından Task 035'in (2026-08-25) getirdiği fark —
+doğrulanmış teknik durum:**
+
+- Sahip silinirse, o sahibin hayvanları da silinir: `public.pets`, `owners`
+  üzerine `on delete cascade` ile bağlıdır
+  (`20260806000000_core_tenant_schema.sql`). Bot tarafından oluşturulan kayıt
+  bu zincire dâhildir; ayrı bir silme yolu gerekmez.
+- Tek bir hayvanın silinmesi ise şu anda otomatik değildir: `conversations`
+  tablosunun `pet_id` yabancı anahtarı `no action`'dır, yani konuşma hâlâ o
+  hayvanı işaret ediyorsa silme reddedilir. Yanlışlıkla oluşturulmuş bir kaydı
+  kaldırmak, önce ilgili konuşmaların `pet_id` alanının boşaltılmasını
+  gerektirir. Bu, yetkili bir başvuru/silme aracının kapsaması gereken somut
+  bir iştir; bugün elle SQL demektir ve yukarıdaki uyarı burada da geçerlidir.
+- İhracatta bot kaynaklı kayıt ile personel kaynaklı kayıt **ayırt
+  edilemez**: `pets` tablosunda kaydın kim tarafından oluşturulduğunu gösteren
+  bir kolon yoktur ve Task 035 böyle bir kolon eklemez. Uzman bunun gerekli
+  olduğuna karar verirse, ayrı bir provenance kolonu ve migration'ı gerekir
+  (aynı kolon, ileride yinelenen-ad kuralının veritabanı düzeyinde yalnızca
+  AI kayıtlarına uygulanmasını da mümkün kılar — bkz.
+  `supabase/migrations/20260825000100_pet_registration.sql`).
+- Sahibin onay mesajının kendisi (`EVET`) sıradan bir mesaj olarak
+  `public.messages` içinde durur; onayın ispatı ayrı bir yerde tutulmaz.
 
 ## 9. Mevcut teknik ve idari güvenlik gerçekleri
 

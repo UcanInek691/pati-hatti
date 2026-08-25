@@ -295,6 +295,28 @@ anahtarı, sahip/hayvan adı, mesaj metni.
    yalnızca açıkça onaylanmış, ayrı bir son adım olarak listelenir —
    oturum sonunda otomatik temizlik yapılmaz.
 
+### 12.1 Migration ve Worker deploy sırası (zorunlu)
+
+Şema değiştiren her görevde sıra sabittir: **önce migration, sonra Worker.**
+Geri alırken tam tersi: **önce Worker, sonra (gerekiyorsa) forward-only
+düzeltme migration'ı.**
+
+Neden bu yönde:
+
+- Migration önce uygulandığında eski Worker çalışmaya devam eder. Task 035'in
+  `finalize_intake_queue_job` genişletmesi buna örnektir: yeni parametreler
+  (`p_create_pet_name`, `p_create_pet_species`) `default null` olduğu için,
+  9 parametre gönderen eski Worker yeni fonksiyonu sorunsuz çağırır.
+- Ters sırada — Worker önce — yeni Worker henüz var olmayan bir imzayı çağırır;
+  PostgREST bunu bir fonksiyon-bulunamadı hatasına çevirir ve o inbound mesaj
+  batch'i başarısız olup DLQ'ya doğru yol alır. Kullanıcıya giden yanıt kaybolur.
+- Geri alırken de aynı asimetri geçerlidir: Worker'ı eski sürüme döndürmek
+  tek başına güvenlidir (yeni şema eski çağrıyı kabul eder), ama şemayı önce
+  geri almak hâlâ ayakta olan yeni Worker'ı kırar.
+
+Bu sıra, bir migration ve bir Worker değişikliğini aynı görevde taşıyan her
+uygulamada geçerlidir; Task 035 (pet onboarding) ilk kullanıcısıdır.
+
 ## 13. Karar tablosu
 
 | Coexistence sonucu | Pilot kararı |

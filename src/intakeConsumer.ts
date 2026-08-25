@@ -14,6 +14,7 @@ import type { IntakeReplyPlan } from "./intakeReply";
 import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
+import { planPetRegistrationAction, planPetRegistrationReply, planPostCreationReply } from "./petRegistration";
 
 export type QueueDisposition = "ack" | "retry";
 
@@ -140,6 +141,24 @@ async function personalizeHandoffReply(conversationId: string, reply: IntakeRepl
   if (reply.kind !== "send" || reply.category !== "human_handoff") return reply;
   const context = await getConversationClinicOperationalContext(conversationId, env);
   return applyClinicHandoffContext(reply, context);
+}
+
+/** Shared finalize-call/ack-retry decision for the three new pet-registration branches only; the four pre-existing call sites in this file keep their own inline form unchanged. */
+async function finalizeAndDecide(input: FinalizeIntakeQueueJobInput, env: Env): Promise<QueueDisposition> {
+  const finalizeResult = await finalizeIntakeQueueJob(input, env);
+  if (
+    finalizeResult.kind === "applied" ||
+    finalizeResult.kind === "suppressed" ||
+    finalizeResult.kind === "already_completed" ||
+    finalizeResult.kind === "stale_claim"
+  ) {
+    return "ack";
+  }
+  // "duplicate_pet_name" and "stale_state" both retry: a concurrent turn
+  // already changed this conversation (created the pet, or advanced it some
+  // other way) since this turn's context was read, and a fresh context read
+  // on retry resolves against the real current state instead of a stale one.
+  return "retry";
 }
 
 /** Replaces a poison persisted snapshot with a fresh, valid one built only from the current validated extraction. */
@@ -300,6 +319,68 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       nextStage = fallback.nextStage;
       petId = null;
       intakeData = fallback.intakeData;
+    }
+
+    const petRegistrationAction = planPetRegistrationAction(context, effectivePlan, claim.messageText);
+
+    if (petRegistrationAction.kind === "bounded_handoff") {
+      const handoffPlan = buildHandoffPlan(petId, intakeData);
+      const reply = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, handoffPlan), env);
+      return finalizeAndDecide(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          nextStage: handoffPlan.nextStage,
+          petId: handoffPlan.petId,
+          intakeData: handoffPlan.intakeData as unknown as Record<string, unknown>,
+          reply,
+        },
+        env,
+      );
+    }
+
+    if (
+      petRegistrationAction.kind === "ask_confirmation" ||
+      petRegistrationAction.kind === "repeat_confirmation" ||
+      petRegistrationAction.kind === "declined"
+    ) {
+      const reply = await personalizeHandoffReply(conversationId, planPetRegistrationReply(petRegistrationAction), env);
+      const adjustedIntakeData: PersistedIntakeData =
+        petRegistrationAction.kind === "declined" ? { ...intakeData, pet_name: null, species: null } : intakeData;
+      return finalizeAndDecide(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          nextStage: "pet_identification",
+          petId,
+          intakeData: adjustedIntakeData as unknown as Record<string, unknown>,
+          reply,
+        },
+        env,
+      );
+    }
+
+    if (petRegistrationAction.kind === "create" && effectivePlan.kind === "planned") {
+      const reply = await personalizeHandoffReply(conversationId, planPostCreationReply(context, effectivePlan), env);
+      return finalizeAndDecide(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          nextStage: "complaint_collection",
+          petId: null,
+          intakeData: effectivePlan.intakeData as unknown as Record<string, unknown>,
+          reply,
+          createPetName: petRegistrationAction.name,
+          createPetSpecies: petRegistrationAction.species,
+        },
+        env,
+      );
     }
 
     const appointmentAction = planAppointmentAction(context, effectivePlan, claim.messageText);

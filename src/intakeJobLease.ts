@@ -18,6 +18,7 @@ export type FinalizeIntakeQueueJobResult =
   | { kind: "already_completed" }
   | { kind: "stale_claim" }
   | { kind: "stale_state" }
+  | { kind: "duplicate_pet_name" }
   | { kind: "failed" };
 
 export interface FinalizeIntakeQueueJobInput {
@@ -29,6 +30,15 @@ export interface FinalizeIntakeQueueJobInput {
   petId: string | null;
   intakeData: Record<string, unknown>;
   reply: IntakeReplyPlan;
+  /**
+   * Set only on the turn that creates a pet (Task 034 follow-on): the RPC
+   * inserts this exact name (and optional species) using its own
+   * server-resolved clinic/owner before advancing the stage, atomically with
+   * the rest of this call. `createPetSpecies` is ignored unless
+   * `createPetName` is also set.
+   */
+  createPetName?: string | null;
+  createPetSpecies?: string | null;
 }
 
 const FAILED_CLAIM: ClaimIntakeQueueJobResult = { kind: "failed" };
@@ -200,6 +210,8 @@ export async function finalizeIntakeQueueJob(input: FinalizeIntakeQueueJobInput,
     p_intake_data: input.intakeData,
     p_reply_category: input.reply.kind === "send" ? input.reply.category : null,
     p_reply_text: input.reply.kind === "send" ? input.reply.text : null,
+    p_create_pet_name: input.createPetName ?? null,
+    p_create_pet_species: input.createPetName ? (input.createPetSpecies ?? null) : null,
   });
   if (rows === null || rows.length !== 1) return FAILED_FINALIZE;
 
@@ -209,7 +221,13 @@ export async function finalizeIntakeQueueJob(input: FinalizeIntakeQueueJobInput,
 
     const { result, intake_stage: intakeStage, state_version: stateVersion } = row;
 
-    if (result === "already_completed" || result === "stale_claim" || result === "stale_state" || result === "suppressed") {
+    if (
+      result === "already_completed" ||
+      result === "stale_claim" ||
+      result === "stale_state" ||
+      result === "suppressed" ||
+      result === "duplicate_pet_name"
+    ) {
       return intakeStage === null && stateVersion === null ? { kind: result } : FAILED_FINALIZE;
     }
 

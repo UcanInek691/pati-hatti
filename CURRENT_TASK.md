@@ -1,4 +1,173 @@
-# Current task — 034 Real staging and same-number WhatsApp evidence
+# Current task — 035 Pet onboarding (first-time owner pet registration)
+
+Status: `READY`
+
+Contract opened by: Claude Opus, standing in for Codex under Maya's explicit
+delegation of 2026-08-25. Reverts to Codex ownership when Codex returns.
+
+Depends on: Task 034 `COMPLETE` and committed (`0bcdd86`, 2026-08-25). Met.
+
+## Problem
+
+`resolvePet` (`src/intakeExtraction.ts:236`) only matches pets that already
+exist for the owner, and no runtime path ever creates one. An owner with zero
+registered pets therefore loops in `pet_identification` forever. Task 034
+reproduced this on real staging and recorded it as
+`PHASE_E_CHAIN_PROVEN_PET_ONBOARDING_BLOCKED` (defect 6). This task adds the
+one missing path: creating a pet, gated on the owner's explicit confirmation.
+
+## Product decision — already taken, do not reopen without Maya
+
+1. **Only an explicit owner confirmation turn may create a pet.** The bot reads
+   the extracted name (and species, if extracted) back verbatim and creates the
+   row only if the owner replies exactly `EVET`, using the same grammar the
+   appointment confirmation already uses. An LLM extraction alone never writes
+   a row.
+2. **Duplicate names are refused on the AI write path only** (Maya, 2026-08-25,
+   option (b)). See "Decision 2, as amended" below — this replaced an earlier
+   table-wide unique index.
+3. **Species is stored at creation** when the same confirmed turn supplied it,
+   and left null otherwise.
+4. **Bounded attempts.** A repeated or unparseable answer re-asks at most
+   `MAX_PET_IDENTIFICATION_ATTEMPTS` (3) times, derived at read time from the
+   already-loaded recent messages — no new column, no `schema_version` bump —
+   and then hands off to a human. This is stricter and earlier than the
+   existing 12-turn `NO_MODEL_STATE_VERSION_CEILING`.
+
+### Decision 2, as amended (Maya, 2026-08-25 — option (b))
+
+The duplicate-name rule is **not** a table-wide constraint. The first draft of
+the migration created
+
+```sql
+create unique index pets_owner_normalized_name_key
+  on public.pets (owner_id, (lower(btrim(name))));
+```
+
+which would also have bound clinic staff inserting directly through the
+existing `pets_all` RLS policy, turning a legitimate registration — one owner
+really does have two pets whose names collide under this normalization — into
+a bare `23505` in a code path that never asked for the rule. The rule exists to
+stop the AI from silently creating a second row for a pet the owner already
+registered, so it now lives inside `finalize_intake_queue_job` as a conditional
+`insert ... select ... where not exists (...)`, and staff writes are untouched.
+
+Recorded ceiling, deliberately accepted for the pilot: `where not exists` is a
+read-then-write check, not a constraint. Two finalize calls for the same owner
+running concurrently in two different conversations can both pass it. The
+per-conversation intake lease serializes the ordinary case. If duplicates are
+ever observed, the upgrade path is a **partial** unique index covering only
+AI-created rows — which first needs a provenance column on `public.pets` — and
+never a table-wide one.
+
+## What is already in the repository
+
+The implementation landed on 2026-08-25 in the same session that opened this
+contract, reviewed against the real migration history (the code was originally
+drafted in a sandboxed working copy that could see only 3 migrations; every
+inference it carried has now been checked against the real files):
+
+- `supabase/migrations/20260825000100_pet_registration.sql` — forward-only
+  replacement of `finalize_intake_queue_job` adding `p_create_pet_name` /
+  `p_create_pet_species` (both `default null`, so an older Worker still calls
+  it unchanged) and the new `duplicate_pet_name` result. Verified: the body is
+  `20260814000300_selective_automation.sql`'s body plus the pet additions and
+  nothing else, and nothing after that migration — including
+  `20260822000100_strict_ai_allowlist.sql` — redefines the function.
+- `src/petRegistration.ts` — the confirmation-turn planner.
+- `src/intakeConsumer.ts`, `src/intakeJobLease.ts`, `src/intakeReply.ts` —
+  additive wiring only.
+- `test/petRegistration.test.ts` plus new blocks in
+  `test/intakeConsumer.test.ts` and `test/intakeJobLease.test.ts`.
+- `supabase/tests/035_pet_registration.sql` — rollback-only fixture in
+  `033_selective_automation.sql`'s real shape. It replaces the draft
+  `20260825000100_pet_registration_test.sql` that shipped in the handoff
+  package; that draft was never installed, and must not be — it tested the
+  unique index that decision (b) removed.
+- `docs/kvkk-inceleme-paketi.md` — §3, §4, §5 and §8 updated in place. The
+  separate `EK` annex from the handoff package was merged and not kept; a
+  second KVKK source of truth must not exist.
+- `docs/staging-runbook.md` §12.1 — migration-then-Worker deploy order.
+
+## Acceptance criteria — what still has to happen
+
+1. **Run `supabase/tests/035_pet_registration.sql` against the disposable
+   `vetai-test` project and see it green.** As of 2026-08-25 this is `NOT RUN`:
+   the project exists and is `ACTIVE_HEALTHY`
+   (`supabase projects list` → ref `cyjpiapxvalqltcsywam`), and the Supabase
+   CLI is authenticated, but no database password is available in this
+   environment, no `psql` is installed, and no Docker daemon is present for a
+   local stack. `supabase migration list` refuses without `--db-url`
+   or `--password`. Nothing about the fixture has been executed anywhere.
+   Whoever runs it must record the outcome in the fixture's own header and
+   here. It covers: the AI path creating the pet atomically; the case- and
+   whitespace-insensitive duplicate refusal writing nothing and advancing no
+   state; **a staff insert of the same name through `pets_all` succeeding**
+   (decision (b)); the AI path still refusing afterwards; a distinct name still
+   being created with a trimmed name and a null species; and
+   `create_pet_species` without `create_pet_name` raising.
+2. **Run the duplicate-name pre-check on staging and record the result.**
+   Also `NOT RUN`, same reason. Under decision (b) this is **no longer a
+   blocker** — nothing in this migration constrains existing rows, so no
+   pre-existing duplicate can make it fail to apply. It is now informational:
+   it says whether any owner already has same-normalized-name pets, which is
+   the population where the AI path will answer `duplicate_pet_name`.
+
+   ```sql
+   select p.clinic_id, p.owner_id, lower(btrim(p.name)) as normalized_name,
+          count(*) as n, array_agg(p.id order by p.created_at) as pet_ids
+   from public.pets p
+   group by p.clinic_id, p.owner_id, lower(btrim(p.name))
+   having count(*) > 1
+   order by n desc;
+   ```
+
+   If it returns rows, do **not** treat merging them as part of this task:
+   `conversations.pet_id` is `on delete no action` and
+   `advance_conversation_intake` can never set it back to null
+   (`coalesce(p_pet_id, c.pet_id)`), so consolidation needs manual `update`s
+   and belongs in its own data-reconciliation task.
+3. **Apply the migration to staging, then deploy the Worker — in that order.**
+   `docs/staging-runbook.md` §12.1 is binding: migration first (the new
+   parameters default to null, so the old Worker keeps working), Worker second.
+   On rollback, the reverse. Requires explicit user approval per `AGENTS.md`;
+   this contract does not grant it.
+4. **Prove the loop is closed on staging**: a first-time owner sends a message,
+   confirms with `EVET`, the pet row appears, and the conversation advances to
+   `complaint_collection` instead of looping.
+5. **KVKK.** §3/§4/§5/§8 are updated with the verified technical facts, but the
+   legal decisions they open are unfilled and belong to the reviewing expert —
+   in particular whether the confirmation prompt is itself an adequate
+   disclosure moment, and whether pet records need provenance for export. This
+   task must not answer those.
+
+## Out of scope
+
+- Any provenance column on `public.pets`.
+- Merging or deleting existing duplicate pets.
+- The staff Cloud API composer (Task 034's Coexistence `UNAVAILABLE`
+  consequence) — still a separate controlled-pilot blocker.
+- Retention periods and the lawyer review of `/privacy` — human gates, tracked
+  in `docs/pilot-oncesi-plan.md` and `docs/production-readiness.md`.
+
+## Checks at contract time — 2026-08-25
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npx tsc --noEmit` | clean |
+| Full suite | `npx vitest run` | 1,411 passed, 2 skipped, 33 files |
+| Worker build | `npx wrangler deploy --dry-run` | built, 150.16 KiB |
+| SQL fixture | `supabase/tests/035_pet_registration.sql` | **NOT RUN** — see criterion 1 |
+| Staging pre-check | duplicate-name query | **NOT RUN** — see criterion 2 |
+
+No staging or production migration was applied, no Worker was deployed, no
+secret was created or rotated, and no Meta configuration was changed while
+opening this contract.
+
+---
+
+# Completed task record — 034 Real staging and same-number WhatsApp evidence
+
 
 Status: `COMPLETE` (closed 2026-08-25 — see "Task 034 closure record" at the end of this file)
 

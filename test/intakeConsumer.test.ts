@@ -6,6 +6,8 @@ import * as intakeTurnModule from "../src/intakeTurn";
 import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
+import { PET_IDENTITY_TEXT } from "../src/intakeReply";
+import { buildPetConfirmationText } from "../src/petRegistration";
 
 const CONVERSATION_ID = "11111111-1111-1111-1111-111111111111";
 const PROVIDER_MESSAGE_ID = "wamid.ID1";
@@ -1594,5 +1596,185 @@ describe("processIntakeQueueMessage: non-ai claim short-circuit (Task 033 race w
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
+  });
+});
+
+describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)", () => {
+  it("a first-time owner's fresh pet_name extraction asks for confirmation instead of finalizing the ordinary way", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: PET_IDENTITY_TEXT, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "Pamuk", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Pamuk" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("pet_identification");
+    expect(body.p_reply_category).toBe("pet_identity");
+    expect(body.p_reply_text).toBe(buildPetConfirmationText("Pamuk", null));
+    expect(body.p_create_pet_name).toBeNull();
+    expect(body.p_create_pet_species).toBeNull();
+  });
+
+  it("an explicit evet reply to the exact confirmation just sent creates the pet via finalize_intake_queue_job", async () => {
+    const confirmationText = buildPetConfirmationText("Pamuk", "kedi");
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: "kedi", complaint: null }),
+      finalize: () => finalizeRow("applied", { intake_stage: "complaint_collection", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("complaint_collection");
+    expect(body.p_pet_id).toBeNull();
+    expect(body.p_create_pet_name).toBe("Pamuk");
+    expect(body.p_create_pet_species).toBe("kedi");
+  });
+
+  it("an explicit hayır reply clears the pending pet_name/species and re-asks the base pet-identity question", async () => {
+    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "hayır", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "hayır" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("pet_identification");
+    expect(body.p_reply_category).toBe("pet_identity");
+    expect(body.p_reply_text).toBe(PET_IDENTITY_TEXT);
+    expect(body.p_create_pet_name).toBeNull();
+    expect((body.p_intake_data as Record<string, unknown>).pet_name).toBeNull();
+    expect((body.p_intake_data as Record<string, unknown>).species).toBeNull();
+  });
+
+  it("forces human_handoff once the attempt bound is reached, instead of asking again", async () => {
+    const recentMessages = [
+      ...Array.from({ length: 3 }, (_, i) => ({
+        direction: "outbound" as const,
+        content: PET_IDENTITY_TEXT,
+        created_at: `2026-01-01T00:00:0${i}Z`,
+      })),
+      { direction: "inbound" as const, content: "Pamuk", created_at: "2026-01-01T00:00:03Z" },
+    ];
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "pet_identification", pet_id: null, pets: [], recent_messages: recentMessages }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Pamuk" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 2 }),
+      clinic: () => clinicRow(),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    // 5 calls: claim, context, OpenAI, clinic-operational-context (a
+    // human_handoff-category reply is personalized before finalize — see
+    // `personalizeHandoffReply`), finalize.
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const body = bodyOf(fetchMock, 4);
+    expect(body.p_next_stage).toBe("human_handoff");
+    expect(body.p_reply_category).toBe("human_handoff");
+    expect(body.p_create_pet_name).toBeNull();
+  });
+
+  it("a needs_safety_check signal takes precedence over an in-progress pet confirmation (safety must never be deferred)", async () => {
+    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet ama nefes almakta güçlük çekiyor", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet ama nefes almakta güçlük çekiyor" }),
+      extraction: extractionJson({
+        pet_name: "Pamuk",
+        species: null,
+        complaint: null,
+        reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: null },
+      }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    // Must be the safety questionnaire, not a pet-identity confirmation and
+    // not a pet creation — no p_create_pet_name on this turn.
+    expect(body.p_reply_category).toBe("safety_questions");
+    expect(body.p_create_pet_name).toBeNull();
+  });
+
+  it("a duplicate_pet_name RPC result is treated as retryable, not acked", async () => {
+    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
+      finalize: () => jsonResponse([{ result: "duplicate_pet_name", intake_stage: null, state_version: null }]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
   });
 });

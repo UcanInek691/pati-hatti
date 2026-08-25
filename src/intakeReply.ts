@@ -21,7 +21,12 @@ const EMERGENCY_HANDOFF_TEXT =
   "Bu durum acil olabilir. Bot üzerinden yanıt beklemeyin; en yakın açık veteriner kliniğini hemen arayın veya doğrudan kliniğe başvurun.";
 const HUMAN_HANDOFF_TEXT =
   "Bu talebi bot üzerinden yanıtlayamam. Lütfen kliniğimizi telefonla arayın. Durum acilse veya kötüleşiyorsa bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun.";
-const PET_IDENTITY_TEXT = "Hangi evcil hayvanınız için yazıyorsunuz? Lütfen adını belirtin.";
+// Exported (not duplicated) because src/petRegistration.ts's bounded-attempt
+// counter must exact-string-match this value; unlike this repo's usual
+// per-file duplication convention for small pure logic, a byte-identical
+// string constant is required for that comparison to stay correct, so a
+// single source of truth is used here instead.
+export const PET_IDENTITY_TEXT = "Hangi evcil hayvanınız için yazıyorsunuz? Lütfen adını belirtin.";
 const COMPLAINT_TEXT = "Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?";
 const INTAKE_RECEIVED_TEXT =
   "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun.";

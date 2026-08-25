@@ -464,7 +464,15 @@ Verified evidence before the context-system change:
   Meta-side coexistence remains a staging gate.
 - External/background staff notification and administrative user or clinic
   management.
-- New-pet creation beyond selecting an existing tenant-scoped pet.
+- New-pet creation is **written but not live**. Task 035's code is in the
+  repository (`supabase/migrations/20260825000100_pet_registration.sql`,
+  `src/petRegistration.ts`, the fixture `supabase/tests/035_pet_registration.sql`)
+  and passes typecheck, the unit suite and a Worker dry-run build, but the
+  migration has been applied to **no** database, the SQL fixture has **never
+  been executed anywhere**, and no Worker carrying it has been deployed. Until
+  those happen a first-time owner still cannot pass `pet_identification` in any
+  running environment. Treat this as unimplemented behavior with reviewed code
+  behind it, not as a shipped feature.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
@@ -502,9 +510,15 @@ that Coexistence's absence implies remains a controlled-pilot blocker and is
 deliberately unbuilt. Same-number Coexistence
 is `UNAVAILABLE` without a WhatsApp Business App pilot number. Recognizable
 group traffic is now excluded before automation, and critical Supabase RPC
-fetches are bounded at 10 seconds. Canary, failure injection, observability,
-and the controlled pilot gate remain deferred; they must not proceed by
-pretending the missing Task 034 inbound evidence passed.
+fetches are bounded at 10 seconds. Task 035 (pet onboarding for first-time owners) is `READY` with its
+implementation already reviewed and committed, and is gated on two runs that
+have not happened — the `vetai-test` fixture and the staging apply/deploy — plus
+the explicit user approval `AGENTS.md` requires for both. Its duplicate-name
+rule binds the AI write path only: clinic staff inserting through the `pets_all`
+RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
+Canary, failure injection, observability, and the controlled pilot gate remain
+deferred; they must not proceed by pretending the missing Task 034 inbound
+evidence passed.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; the existing resources and secrets

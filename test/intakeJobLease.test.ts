@@ -330,6 +330,11 @@ describe("finalizeIntakeQueueJob", () => {
       p_intake_data: { note: "hello" },
       p_reply_category: null,
       p_reply_text: null,
+      // Task 034 follow-on ("Adım 2"): finalizeIntakeQueueJob now always sends
+      // these two params, defaulting to null when the turn does not create a
+      // pet. Added 2026-08-25 alongside src/petRegistration.ts.
+      p_create_pet_name: null,
+      p_create_pet_species: null,
     });
   });
 
@@ -355,15 +360,57 @@ describe("finalizeIntakeQueueJob", () => {
     });
   });
 
-  it.each(["already_completed", "stale_claim", "stale_state", "suppressed"] as const)("parses a %s result with a null stage and version", async (result) => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
-    expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: result });
-  });
+  it.each(["already_completed", "stale_claim", "stale_state", "suppressed", "duplicate_pet_name"] as const)(
+    "parses a %s result with a null stage and version",
+    async (result) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
+      expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: result });
+    },
+  );
 
   it("parses an applied result with a pet id supplied", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "safety_check", state_version: 5 }])));
     const result = await finalizeIntakeQueueJob({ ...baseInput, petId: "33333333-3333-3333-3333-333333333333" }, env);
     expect(result).toEqual({ kind: "applied", intakeStage: "safety_check", stateVersion: 5 });
+  });
+
+  it("sends create_pet_name and create_pet_species when creating a pet", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await finalizeIntakeQueueJob({ ...baseInput, createPetName: "Pamuk", createPetSpecies: "kedi" }, env);
+
+    const [, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      p_create_pet_name: "Pamuk",
+      p_create_pet_species: "kedi",
+    });
+  });
+
+  it("sends a null create_pet_species when only create_pet_name is set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await finalizeIntakeQueueJob({ ...baseInput, createPetName: "Pamuk" }, env);
+
+    const [, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      p_create_pet_name: "Pamuk",
+      p_create_pet_species: null,
+    });
+  });
+
+  it("ignores create_pet_species when create_pet_name is not set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "applied", intake_stage: "complaint_collection", state_version: 2 }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await finalizeIntakeQueueJob({ ...baseInput, createPetSpecies: "kedi" }, env);
+
+    const [, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      p_create_pet_name: null,
+      p_create_pet_species: null,
+    });
   });
 
   it("fails closed when Supabase configuration is missing, without calling fetch", async () => {
@@ -419,6 +466,7 @@ describe("finalizeIntakeQueueJob", () => {
     ["a stale_claim row with a non-null stage", [{ result: "stale_claim", intake_stage: "complaint_collection", state_version: null }]],
     ["a stale_state row with a non-null version", [{ result: "stale_state", intake_stage: null, state_version: 2 }]],
     ["an already_completed row with a non-null stage", [{ result: "already_completed", intake_stage: "completed", state_version: null }]],
+    ["a duplicate_pet_name row with a non-null stage", [{ result: "duplicate_pet_name", intake_stage: "pet_identification", state_version: null }]],
   ])("treats %s as a malformed response and fails", async (_label, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
     expect(await finalizeIntakeQueueJob(baseInput, env)).toEqual({ kind: "failed" });
