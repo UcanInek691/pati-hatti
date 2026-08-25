@@ -112,7 +112,7 @@ inference it carried has now been checked against the real files):
    and `create_pet_species` without `create_pet_name` raising.
 2. **Run the duplicate-name pre-check on staging and record the result.**
    `RUN` — 2026-08-25, same route (Maya + Claude Sonnet, dashboard SQL Editor)
-   against `vetai-staging` (ref `qtgvddejjjiivjwicxdq`). Result: **0 rows** —
+   against `vetai-staging`. Result: **0 rows** —
    no existing owner has same-normalized-name pets, so nothing already in
    staging falls in the population that the AI path would answer
    `duplicate_pet_name` for. Under decision (b) this was already **not a
@@ -135,10 +135,33 @@ inference it carried has now been checked against the real files):
    (`coalesce(p_pet_id, c.pet_id)`), so consolidation needs manual `update`s
    and belongs in its own data-reconciliation task.
 3. **Apply the migration to staging, then deploy the Worker — in that order.**
-   `docs/staging-runbook.md` §12.1 is binding: migration first (the new
-   parameters default to null, so the old Worker keeps working), Worker second.
-   On rollback, the reverse. Requires explicit user approval per `AGENTS.md`;
-   this contract does not grant it.
+   `DONE` — 2026-08-25, in the runbook order, each step on Maya's separate
+   explicit approval. `docs/staging-runbook.md` §12.1 is binding: migration
+   first (the new parameters default to null, so the old Worker keeps
+   working), Worker second. On rollback, the reverse.
+   - **Migration.** Pushed through the managed CLI flow, not the SQL Editor,
+     so it lands in migration history. Maya ran `supabase link` herself so the
+     database password never entered the session. `supabase migration list`
+     beforehand showed every earlier file matched local/remote through
+     `20260822000100_strict_ai_allowlist` and `20260825000100` remote-empty;
+     `supabase db push --dry-run` offered exactly one file. The real
+     `supabase db push` applied `20260825000100_pet_registration.sql` with no
+     error, and `supabase migration list` afterwards shows
+     `20260825000100 | 20260825000100`. Staging's last migration is now
+     `pet_registration`.
+   - **Worker.** `pnpm exec wrangler deploy --config wrangler.staging.toml`
+     (wrangler 4.118.0): 150.16 KiB upload / 31.51 KiB gzip, uploaded in
+     11.00 s, triggers deployed in 15.23 s, version id
+     `2ea1d3b7-5e5c-4cd6-9dcd-4dfc008d11ad`. Bindings as expected — the
+     `INTAKE_QUEUE` producer, consumers on the intake queue and its DLQ, the
+     `* * * * *` cron, `APP_TIMEZONE=Europe/Istanbul`,
+     `WHATSAPP_GRAPH_API_VERSION=v25.0`.
+   - **Post-deploy health.** `GET /health` → `200`
+     `{"status":"ok","version":"0.1.0",...}`; `GET /ready` → `200`
+     `{"status":"ready"}`.
+   - Between the two steps staging ran the new schema against the old Worker,
+     which is the safe direction of the §12.1 asymmetry; the window was a few
+     minutes and no inbound traffic was driven through it deliberately.
 4. **Prove the loop is closed on staging**: a first-time owner sends a message,
    confirms with `EVET`, the pet row appears, and the conversation advances to
    `complaint_collection` instead of looping.
@@ -171,8 +194,13 @@ No staging or production migration was applied, no Worker was deployed, no
 secret was created or rotated, and no Meta configuration was changed while
 opening this contract. The 2026-08-25 dashboard runs above touched only
 `vetai-test` (inside a transaction that was rolled back) and a read-only
-`select` on `vetai-staging`; staging's migration history is unchanged and
-`Last migration` there is still `strict_ai_allowlist`.
+`select` on `vetai-staging`.
+
+That held only until criterion 3 was approved. **Later the same day**, on
+Maya's separate explicit approvals, `20260825000100_pet_registration.sql` was
+pushed to staging and the staging Worker was redeployed — see criterion 3 for
+the outputs. Staging's last migration is no longer `strict_ai_allowlist`. No
+production change and no secret rotation at any point.
 
 ---
 
