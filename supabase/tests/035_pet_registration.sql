@@ -6,11 +6,14 @@
 -- directly through the `pets_all` RLS policy. Never run this fixture script
 -- against a real clinic database.
 --
--- Run status as of 2026-08-25: NOT RUN. No disposable `vetai-test` project was
--- reachable from the session that wrote it, and no Docker daemon was available
--- for a local Supabase stack, so this fixture has never executed against any
--- database. Whoever runs it first must record the outcome here and in
--- `CURRENT_TASK.md` (Task 035).
+-- Run status: PASSED, 2026-08-25, on the disposable `vetai-test` project
+-- (ref `cyjpiapxvalqltcsywam`). Executed by Maya together with Claude Sonnet
+-- through the Supabase dashboard SQL Editor -- not from the repository
+-- session, which still has no database access (no DB password, no `psql`, no
+-- Docker daemon). The migration was already applied there beforehand. The
+-- script ran with no error through to its `rollback`; the last visible result
+-- row was fixture 3's `set_config`, the rest being silent `do` blocks. All six
+-- fixtures passed.
 --
 -- The migration `supabase/migrations/20260825000100_pet_registration.sql` must
 -- be applied before this proof.

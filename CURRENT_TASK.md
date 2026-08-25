@@ -92,26 +92,33 @@ inference it carried has now been checked against the real files):
 ## Acceptance criteria — what still has to happen
 
 1. **Run `supabase/tests/035_pet_registration.sql` against the disposable
-   `vetai-test` project and see it green.** As of 2026-08-25 this is `NOT RUN`:
-   the project exists and is `ACTIVE_HEALTHY`
-   (`supabase projects list` → ref `cyjpiapxvalqltcsywam`), and the Supabase
-   CLI is authenticated, but no database password is available in this
-   environment, no `psql` is installed, and no Docker daemon is present for a
-   local stack. `supabase migration list` refuses without `--db-url`
-   or `--password`. Nothing about the fixture has been executed anywhere.
-   Whoever runs it must record the outcome in the fixture's own header and
-   here. It covers: the AI path creating the pet atomically; the case- and
-   whitespace-insensitive duplicate refusal writing nothing and advancing no
-   state; **a staff insert of the same name through `pets_all` succeeding**
-   (decision (b)); the AI path still refusing afterwards; a distinct name still
-   being created with a trimmed name and a null species; and
-   `create_pet_species` without `create_pet_name` raising.
+   `vetai-test` project and see it green.** `PASSED` — 2026-08-25, executed by
+   Maya together with Claude Sonnet through the Supabase **dashboard SQL
+   Editor** on `vetai-test` (ref `cyjpiapxvalqltcsywam`). Not run by Codex and
+   not by Opus: the repository session still has no database access at all (no
+   DB password, no `psql`, no Docker daemon for a local stack), so the
+   dashboard was the only available route and remains so.
+   A pre-check first showed
+   `supabase/migrations/20260825000100_pet_registration.sql` was already
+   applied on that project — `finalize_intake_queue_job` was already live in
+   its 11-parameter form. The fixture then ran end to end with no error and
+   reached its `rollback`: the last visible result row was fixture 3's
+   `set_config`, everything after it being silent `do` blocks and the
+   rollback itself. All six fixtures passed: the AI path creating the pet
+   atomically; the case- and whitespace-insensitive duplicate refusal writing
+   nothing and advancing no state; **a staff insert of the same name through
+   `pets_all` succeeding** (decision (b)); the AI path still refusing
+   afterwards; a distinct name created with a trimmed name and a null species;
+   and `create_pet_species` without `create_pet_name` raising.
 2. **Run the duplicate-name pre-check on staging and record the result.**
-   Also `NOT RUN`, same reason. Under decision (b) this is **no longer a
+   `RUN` — 2026-08-25, same route (Maya + Claude Sonnet, dashboard SQL Editor)
+   against `vetai-staging` (ref `qtgvddejjjiivjwicxdq`). Result: **0 rows** —
+   no existing owner has same-normalized-name pets, so nothing already in
+   staging falls in the population that the AI path would answer
+   `duplicate_pet_name` for. Under decision (b) this was already **not a
    blocker** — nothing in this migration constrains existing rows, so no
-   pre-existing duplicate can make it fail to apply. It is now informational:
-   it says whether any owner already has same-normalized-name pets, which is
-   the population where the AI path will answer `duplicate_pet_name`.
+   pre-existing duplicate could make it fail to apply; it is informational
+   only. The query that was run:
 
    ```sql
    select p.clinic_id, p.owner_id, lower(btrim(p.name)) as normalized_name,
@@ -157,12 +164,15 @@ inference it carried has now been checked against the real files):
 | Typecheck | `npx tsc --noEmit` | clean |
 | Full suite | `npx vitest run` | 1,411 passed, 2 skipped, 33 files |
 | Worker build | `npx wrangler deploy --dry-run` | built, 150.16 KiB |
-| SQL fixture | `supabase/tests/035_pet_registration.sql` | **NOT RUN** — see criterion 1 |
-| Staging pre-check | duplicate-name query | **NOT RUN** — see criterion 2 |
+| SQL fixture | `supabase/tests/035_pet_registration.sql` | **PASSED** on `vetai-test` — 2026-08-25, Maya + Claude Sonnet via dashboard SQL Editor; all 6 fixtures, rolled back (criterion 1) |
+| Staging pre-check | duplicate-name query | **RUN** on `vetai-staging` — 2026-08-25, same route; **0 rows** (criterion 2) |
 
 No staging or production migration was applied, no Worker was deployed, no
 secret was created or rotated, and no Meta configuration was changed while
-opening this contract.
+opening this contract. The 2026-08-25 dashboard runs above touched only
+`vetai-test` (inside a transaction that was rolled back) and a read-only
+`select` on `vetai-staging`; staging's migration history is unchanged and
+`Last migration` there is still `strict_ai_allowlist`.
 
 ---
 
