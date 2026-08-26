@@ -290,14 +290,27 @@ evidence that any KVKK question was resolved.
 
 ---
 
-# Candidate follow-on task — 036 Conversation flow, latency, and recording notice
+# Current task — 036 Conversation flow, latency, and recording notice
 
-**Not an approved contract.** Drafted 2026-08-26 from Maya's four requests after
-that day's live staging test, plus a source audit. Nothing below is
-implemented, and per `AGENTS.md` this needs Maya's approval before any code is
-written. Read this as a scope proposal with the current behavior established
-from source, so the decisions Maya has to make are visible before, not during,
-implementation.
+Status: `READY`
+
+**Approved by Maya on 2026-08-26**, with two decisions recorded at approval
+time:
+
+1. **The stage model is to be redesigned properly, not patched.** The complaint
+   must not be collected inside `pet_identification` to avoid a migration. A
+   new stage, a changed rank map, and a new migration are explicitly in scope,
+   and stage names must describe what the stage actually does. The full design
+   had to be written into this contract before implementation started; it is
+   the "Stage model redesign" section below.
+2. Everything else in the drafted scope is approved as written: the correction
+   action, the "şimdi ne yapacağım" mechanism (mechanism only — copy choice
+   stays a veterinary-approval item), the recording-notice mechanism (text
+   excluded, it belongs to the KVKK gate), inline outbound send, and lowering
+   `max_batch_timeout`.
+
+Drafted 2026-08-26 from Maya's four requests after that day's live staging
+test, plus a source audit.
 
 ## Where this came from
 
@@ -389,10 +402,25 @@ Options, in the order I would put them to Maya:
 3. **Leave it.** Legitimate only if a delay is wanted; nothing in the record
    suggests it is.
 
-One fact to confirm before costing any of this: Cloudflare Queues requires the
-Workers **Paid** plan, so this account is presumably already on it and the "Free
-tier limits" framing may not apply. I did not verify the plan from the
-repository — it is not recorded there. Confirm before pricing.
+**Plan verified 2026-08-26, before approval.** `wrangler whoami` reports the
+account `Mehmetsait7072@gmail.com's Account`
+(`1ac987ec7ff5add2ab333de15e8cff9f`), OAuth token, `queues (write)` in scope.
+`wrangler queues list` returns the provisioned intake queues and their DLQs.
+Cloudflare Queues cannot be provisioned on the Free plan at all, so this
+account is on **Workers Paid**. The "Free tier limits" framing in the draft was
+wrong and is withdrawn: neither option below is constrained by Free-plan
+limits, and the inline send adds no billable invocation, because it runs inside
+the queue-consumer invocation that already exists.
+
+Two related facts found the same way, worth having on record:
+
+- The stored OAuth token is **missing the `workers_tail:read` scope**, so
+  `wrangler tail` will fail until someone runs `wrangler login` again. The
+  draft above proposes `wrangler tail` for telling a cron wait apart from a
+  retry; that will need the re-login first.
+- The local wrangler is 4.118.0 while 4.126.0 is available. Not upgraded as
+  part of this task — the deployed staging Worker was built with 4.118.0 and
+  changing the toolchain mid-task would muddy any comparison.
 
 ## Hard constraints any design here must respect
 
@@ -417,18 +445,123 @@ approach:
   (`src/petRegistration.ts:138`). The questionnaire always precedes the pet
   confirmation. "Fewer turns" cannot be bought here.
 
+## Stage model redesign
+
+Maya's decision 1. The problem being fixed: since Task 035,
+`pet_identification` does two different jobs — work out *which* pet, and
+confirm-and-create it. Deferring the confirmation until the complaint is known
+would, under the old model, mean collecting complaints inside a stage called
+`pet_identification`. Maya rejected that. So the second job gets its own stage
+and its own name.
+
+### The new stage
+
+`intake_confirmation`, inserted between `complaint_collection` and
+`safety_check`. It is the stage in which everything collected so far is put to
+the owner in one message, and in which an `EVET` writes the `public.pets` row.
+The name matches the existing `appointment_confirmation`, which already names a
+stage the same way.
+
+### Rank map, before and after
+
+| Stage | Old rank | New rank |
+|---|---|---|
+| `pet_identification` | 0 | 0 |
+| `complaint_collection` | 1 | 1 |
+| **`intake_confirmation`** | — | **2** |
+| `safety_check` | 2 | 3 |
+| `ready_for_triage` | 3 | 4 |
+| `appointment_offer` | 4 | 5 |
+| `appointment_selection` | 5 | 6 |
+| `appointment_confirmation` | 6 | 7 |
+| `completed` | 7 | 8 |
+
+`human_handoff` stays outside the rank map, reachable from any non-terminal
+stage, exactly as today.
+
+### How this satisfies the single-step rule
+
+`advance_conversation_intake` allows a transition only when
+`rank(next) = rank(current) + 1` (`20260806000200_conversation_intake_state.sql:172`).
+The insertion keeps every rank consecutive, so every transition in the new
+graph is still exactly one step:
+
+```
+pet_identification → complaint_collection → intake_confirmation → safety_check
+  → ready_for_triage → appointment_offer → appointment_selection
+  → appointment_confirmation → completed
+```
+
+Ranks are computed inside the function from a `constant jsonb` local, never
+stored on the row, so renumbering costs nothing for conversations already in
+flight: a conversation sitting in `safety_check` simply reads as rank 3 after
+the migration instead of rank 2, and its remaining path is unchanged. **No
+backfill, no data migration.** The one behavioral consequence is intended: a
+conversation parked in `complaint_collection` when the migration lands will go
+to `intake_confirmation` next, not to `safety_check`.
+
+### Transition rules that change
+
+`decideNextStage` (`src/intakeTurn.ts:188`) gets two edits:
+
+- **Leaving `pet_identification` no longer requires a persisted pet.** Today it
+  advances only on `petResolution.kind === "matched"`, which a first-time owner
+  cannot satisfy before the row exists. It will advance when the pet identity
+  is *known*: a matched existing pet, **or** a captured candidate name for an
+  owner with no pets. The stage name stays honest — identification means we
+  know which animal, not that we have written it down.
+- **`complaint_collection` → `intake_confirmation`** on the same condition that
+  today sends it to `safety_check` (`complaint !== null || symptoms.length >
+  0`), and **`intake_confirmation` → `safety_check`** once the confirmation is
+  settled.
+
+### Where the pet row is written
+
+Unchanged mechanically, moved in time: still the `p_create_pet_name` path of
+`finalize_intake_queue_job`, still atomic with the stage advance and the outbox
+insert, still guarded by the AI-path-only duplicate rule. It now fires from
+`intake_confirmation` instead of `pet_identification`, and
+`planPetRegistrationAction`'s stage gate moves with it.
+
+### Everyone goes through `intake_confirmation`
+
+A returning owner whose pet already matches has nothing to create, but still
+gets the combined confirmation. This costs that owner one extra round trip, and
+that is deliberate: the turn it replaces is the one that produced Maya's
+complaint, where the bot had nothing left to ask and repeated *"Bilgileri
+aldım..."* at her. Replacing a dead-end filler turn with a real question is the
+"daha net" half of the request. One stage, one code path, one honest name — no
+conditional skip, which the single-step rule would reject anyway.
+
+### Migration surface
+
+One new forward-only migration, following the technique already used twice in
+this repository (`20260814000300`, `20260825000100`):
+
+1. `conversations.intake_stage` CHECK constraint — drop and re-add with
+   `intake_confirmation`.
+2. `advance_conversation_intake` — redefine with the new rank map.
+3. `finalize_intake_queue_job` — redefine (from its current 11-argument Task
+   035 body) with `intake_confirmation` in the `p_next_stage` allowlist and a
+   new `intake_confirmation` value in the `p_reply_category` allowlist.
+4. `outbound_message_outbox.reply_category` CHECK — drop and re-add with
+   `intake_confirmation`, following the precedent at
+   `20260810000200_whatsapp_appointment_flow.sql:20`.
+
+The appointment RPCs need no change: they accept only `ready_for_triage` and
+`appointment_offer` as planned stages (`20260814000300:810`), and both keep
+their meaning and their consecutive ranks.
+
+TypeScript surface: the `IntakeStage` union and its runtime array
+(`src/conversationState.ts`), the parallel arrays in `src/intakeJobLease.ts` and
+`src/liveAiDemo.ts`, `decideNextStage`, `planPetRegistrationAction`'s stage
+gate, the consumer branches, and the reply-category union.
+
 ## Proposed scope
 
 1. **Defer the confirmation and combine it.** Hold the ask until name, species,
-   and complaint (when the owner offers one) are collected, then confirm once.
-   - **Decision Maya must make.** Today a first-time owner cannot leave
-     `pet_identification` without a matched pet: `decideNextStage`
-     (`src/intakeTurn.ts:193`) advances only on `petResolution.kind ===
-     "matched"`. Deferring the confirmation means either collecting the
-     complaint *while still in* `pet_identification` — the stage name stops
-     describing what the stage does — or changing the stage model itself. This
-     is a contract-level choice, not an implementation detail, and it should be
-     settled before code.
+   and complaint (when the owner offers one) are collected, then confirm once,
+   in the new `intake_confirmation` stage designed above.
 2. **Make correction a first-class outcome.** Add a `correction` action beside
    `confirm`/`decline`/`repeat`: when the owner's reply carries a new name or
    species, keep the fields they did not contradict, apply the ones they did,
