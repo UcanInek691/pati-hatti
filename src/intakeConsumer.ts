@@ -14,7 +14,7 @@ import type { IntakeReplyPlan } from "./intakeReply";
 import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
-import { planPetRegistrationAction, planPetRegistrationReply, planPostCreationReply } from "./petRegistration";
+import { planPetRegistrationAction, planPetRegistrationReply, planPostConfirmationReply } from "./petRegistration";
 
 export type QueueDisposition = "ack" | "retry";
 
@@ -65,7 +65,19 @@ function isNoActionableFact(extraction: IntakeExtraction): boolean {
   return Object.values(extraction.reported_safety_signals).every((value) => value === null);
 }
 
-/** True when the two most recent outbound messages before the exact current inbound are identical eligible questions. */
+/**
+ * True when the last two outbound messages before the exact current inbound
+ * are byte-identical and of bounded length.
+ *
+ * Task 036 dropped the `isEligibleClinicQuestion` test here. That predicate
+ * exists to pick a message worth *feeding the extractor* as turn context,
+ * where a non-question is useless — but for detecting a stall, the shape of
+ * the message is irrelevant. Sending the owner the identical sentence twice
+ * while they tell us nothing new is the stall, question mark or not. The old
+ * test made `INTAKE_RECEIVED_TEXT` (which contains no "?") permanently exempt,
+ * which is exactly what produced the repeated "Bilgileri aldım..." Maya
+ * reported on 2026-08-26.
+ */
 function hasRepeatedNoProgressQuestion(context: ConversationIntakeContext, currentMessage: string): boolean {
   const messages = context.recentMessages;
   const last = messages[messages.length - 1];
@@ -78,7 +90,9 @@ function hasRepeatedNoProgressQuestion(context: ConversationIntakeContext, curre
   }
   if (recentOutbound.length < 2) return false;
   const [mostRecent, secondMostRecent] = recentOutbound;
-  return mostRecent === secondMostRecent && isEligibleClinicQuestion(mostRecent!);
+  if (mostRecent !== secondMostRecent) return false;
+  const length = codePointLength(mostRecent!);
+  return length >= 1 && length <= MAX_PREVIOUS_QUESTION_CODE_POINTS;
 }
 
 /** Builds a no-model handoff plan while preserving deterministic safety precedence from the canonical snapshot. */
@@ -137,10 +151,47 @@ function isHandoffConsistent(currentStage: IntakeStage, nextStage: IntakeStage, 
  * hours only when it is already a `human_handoff` send. Every other category
  * makes no operational-context request and is returned unchanged (Task 031).
  */
-async function personalizeHandoffReply(conversationId: string, reply: IntakeReplyPlan, env: Env): Promise<IntakeReplyPlan> {
-  if (reply.kind !== "send" || reply.category !== "human_handoff") return reply;
-  const context = await getConversationClinicOperationalContext(conversationId, env);
-  return applyClinicHandoffContext(reply, context);
+/**
+ * DRAFT COPY, NOT APPROVED TO SHIP. Task 036 approves the *mechanism* of a
+ * recording notice; the wording is a KVKK sign-off item, filed as the third
+ * bullet under the human gate in `docs/production-readiness.md` §1, and must
+ * not be finalized by an engineer or by the AI. Whatever KVKK returns replaces
+ * this string.
+ */
+export const RECORDING_NOTICE_DRAFT_TEXT =
+  "Bilgilendirme: Güvenlik ve yasal yükümlülükler gereği bu görüşmedeki mesajlar kayıt altına alınmaktadır.";
+
+/**
+ * Prepends the recording notice to the first reply of a conversation.
+ *
+ * `stateVersion === 1` is the signal, not "no outbound rows in
+ * `recentMessages`": `state_version` defaults to 1 and
+ * `advance_conversation_intake` increments it on every finalize, so exactly
+ * one turn per conversation ever sees 1, whereas `recentMessages` is a bounded
+ * window that could re-qualify a long conversation later. A retry of that same
+ * turn re-derives the identical text, and the outbox's one-reply-per-inbound
+ * unique constraint keeps it to one row.
+ *
+ * Known gap, accepted: a first turn that plans no reply at all never carries
+ * the notice, and no later turn picks it up. `planIntakeReply` returns `none`
+ * only for `completed` and the appointment stages, neither of which a
+ * conversation can start in.
+ */
+function withRecordingNotice(reply: IntakeReplyPlan, context: ConversationIntakeContext): IntakeReplyPlan {
+  if (reply.kind !== "send" || context.stateVersion !== 1) return reply;
+  return { ...reply, text: `${RECORDING_NOTICE_DRAFT_TEXT}\n\n${reply.text}` };
+}
+
+/** Single choke point for every reply this consumer writes to the outbox. */
+async function prepareOutboundReply(
+  conversationId: string,
+  context: ConversationIntakeContext,
+  reply: IntakeReplyPlan,
+  env: Env,
+): Promise<IntakeReplyPlan> {
+  if (reply.kind !== "send" || reply.category !== "human_handoff") return withRecordingNotice(reply, context);
+  const clinicContext = await getConversationClinicOperationalContext(conversationId, env);
+  return withRecordingNotice(applyClinicHandoffContext(reply, clinicContext), context);
 }
 
 /** Shared finalize-call/ack-retry decision for the three new pet-registration branches only; the four pre-existing call sites in this file keep their own inline form unchanged. */
@@ -225,7 +276,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
           reply = planUnsupportedMediaReply();
         }
       }
-      reply = await personalizeHandoffReply(conversationId, reply, env);
+      reply = await prepareOutboundReply(conversationId, context, reply, env);
 
       const finalizeResult = await finalizeIntakeQueueJob(
         {
@@ -259,7 +310,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       if (!snapshot.ok) return "retry";
 
       const handoffPlan = buildHandoffPlan(context.petId, snapshot.value);
-      const replyPlan = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, handoffPlan), env);
+      const replyPlan = await prepareOutboundReply(conversationId, context, planIntakeReply(context.intakeStage, handoffPlan), env);
       const finalizeInput: FinalizeIntakeQueueJobInput = {
         conversationId,
         providerMessageId,
@@ -325,7 +376,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
 
     if (petRegistrationAction.kind === "bounded_handoff") {
       const handoffPlan = buildHandoffPlan(petId, intakeData);
-      const reply = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, handoffPlan), env);
+      const reply = await prepareOutboundReply(conversationId, context, planIntakeReply(context.intakeStage, handoffPlan), env);
       return finalizeAndDecide(
         {
           conversationId,
@@ -344,40 +395,53 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     if (
       petRegistrationAction.kind === "ask_confirmation" ||
       petRegistrationAction.kind === "repeat_confirmation" ||
+      petRegistrationAction.kind === "correction" ||
       petRegistrationAction.kind === "declined"
     ) {
-      const reply = await personalizeHandoffReply(conversationId, planPetRegistrationReply(petRegistrationAction), env);
-      const adjustedIntakeData: PersistedIntakeData =
-        petRegistrationAction.kind === "declined" ? { ...intakeData, pet_name: null, species: null } : intakeData;
+      const reply = await prepareOutboundReply(conversationId, context, planPetRegistrationReply(petRegistrationAction), env);
+      // Task 036: `declined` no longer erases `pet_name`/`species`. Throwing
+      // away a correct species to fix a wrong name is what forced the owner
+      // back to the generic identity question; the reply now asks for the
+      // difference and the next turn's extraction overwrites only that.
       return finalizeAndDecide(
         {
           conversationId,
           providerMessageId,
           claimToken: claim.claimToken,
           expectedVersion: context.stateVersion,
-          nextStage: "pet_identification",
+          // One literal covers both halves of the stage: entering it from
+          // `complaint_collection` (one forward step) and holding inside it
+          // (`p_next_stage = current stage`, which the rank rule permits).
+          nextStage: "intake_confirmation",
           petId,
-          intakeData: adjustedIntakeData as unknown as Record<string, unknown>,
+          intakeData: intakeData as unknown as Record<string, unknown>,
           reply,
         },
         env,
       );
     }
 
-    if (petRegistrationAction.kind === "create" && effectivePlan.kind === "planned") {
-      const reply = await personalizeHandoffReply(conversationId, planPostCreationReply(context, effectivePlan), env);
+    if (
+      (petRegistrationAction.kind === "create" || petRegistrationAction.kind === "confirmed") &&
+      effectivePlan.kind === "planned" &&
+      context.intakeStage === "intake_confirmation"
+    ) {
+      const reply = await prepareOutboundReply(conversationId, context, planPostConfirmationReply(context, effectivePlan), env);
       return finalizeAndDecide(
         {
           conversationId,
           providerMessageId,
           claimToken: claim.claimToken,
           expectedVersion: context.stateVersion,
-          nextStage: "complaint_collection",
-          petId: null,
+          nextStage: "safety_check",
+          // A `create` has no pet id yet — the row is written inside the same
+          // transaction by `finalize_intake_queue_job` and linked there. A
+          // `confirmed` already has one and keeps it.
+          petId: petRegistrationAction.kind === "create" ? null : petId,
           intakeData: effectivePlan.intakeData as unknown as Record<string, unknown>,
           reply,
-          createPetName: petRegistrationAction.name,
-          createPetSpecies: petRegistrationAction.species,
+          createPetName: petRegistrationAction.kind === "create" ? petRegistrationAction.name : undefined,
+          createPetSpecies: petRegistrationAction.kind === "create" ? petRegistrationAction.species : undefined,
         },
         env,
       );
@@ -441,7 +505,7 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       return "retry";
     }
 
-    const replyPlan = await personalizeHandoffReply(conversationId, planIntakeReply(context.intakeStage, effectivePlan), env);
+    const replyPlan = await prepareOutboundReply(conversationId, context, planIntakeReply(context.intakeStage, effectivePlan), env);
 
     const finalizeInput: FinalizeIntakeQueueJobInput = {
       conversationId,

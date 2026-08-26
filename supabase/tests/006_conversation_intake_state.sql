@@ -179,7 +179,10 @@ begin
   select count(*) into v_count from public.advance_conversation_intake(
     p_conversation_id => '60100000-0000-0000-0000-000000000006',
     p_expected_version => 2,
-    p_next_stage => 'safety_check',
+    -- Task 036: must stay a legal one-step transition from
+    -- complaint_collection, so that this test fails on the stale version
+    -- rather than on the transition check (which runs first).
+    p_next_stage => 'intake_confirmation',
     p_pet_id => null,
     p_intake_data => '{"note": "stale"}'::jsonb
   );
@@ -562,17 +565,49 @@ declare
   v_version integer;
 begin
   perform 1 from public.get_conversation_intake_context('60100000-0000-0000-0000-000000000006');
+  -- Task 036 inserted intake_confirmation between complaint_collection and
+  -- safety_check. Walking both steps here pins the new rank on both sides:
+  -- complaint_collection -> intake_confirmation -> safety_check.
   select intake_stage, state_version into v_stage, v_version
   from public.advance_conversation_intake(
     p_conversation_id => '60100000-0000-0000-0000-000000000006',
     p_expected_version => 4,
-    p_next_stage => 'safety_check',
+    p_next_stage => 'intake_confirmation',
     p_pet_id => null,
     p_intake_data => '{"note": "service role"}'::jsonb
   );
-  if v_stage <> 'safety_check' or v_version <> 5 then
+  if v_stage <> 'intake_confirmation' or v_version <> 5 then
     raise exception 'service_role execution unexpectedly failed: %/%', v_stage, v_version;
   end if;
+
+  select intake_stage, state_version into v_stage, v_version
+  from public.advance_conversation_intake(
+    p_conversation_id => '60100000-0000-0000-0000-000000000006',
+    p_expected_version => 5,
+    p_next_stage => 'safety_check',
+    p_pet_id => null,
+    p_intake_data => '{"note": "confirmed"}'::jsonb
+  );
+  if v_stage <> 'safety_check' or v_version <> 6 then
+    raise exception 'expected safety_check/6 after confirmation, got %/%', v_stage, v_version;
+  end if;
+
+  -- And the step it replaced is now a skip, rejected like any other.
+  begin
+    perform 1 from public.advance_conversation_intake(
+      p_conversation_id => '60100000-0000-0000-0000-000000000006',
+      p_expected_version => 6,
+      p_next_stage => 'appointment_offer',
+      p_pet_id => null,
+      p_intake_data => '{}'::jsonb
+    );
+    raise exception 'expected safety_check -> appointment_offer to raise';
+  exception
+    when others then
+      if sqlerrm not like '%illegal transition%' then
+        raise;
+      end if;
+  end;
 end;
 $$;
 reset role;

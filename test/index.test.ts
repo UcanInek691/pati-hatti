@@ -799,13 +799,40 @@ describe("worker queue handler", () => {
   it("acks an invalid message body with zero network calls", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    // Task 036 sends the outbox inline from this handler; stubbed here so the
+    // assertion below still measures only the work the *message* caused.
+    vi.spyOn(outboundSender, "drainOutboundMessages").mockResolvedValue(undefined);
     const message = fakeMessage({ bogus: true });
 
-    await worker.queue!(fakeBatch([message]), env);
+    await worker.queue!(fakeBatch([message]), env, fakeExecutionContext());
 
     expect(message.ack).toHaveBeenCalledTimes(1);
     expect(message.retry).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("registers the outbound drain with waitUntil so a reply is sent without waiting for the cron tick", async () => {
+    const drainSpy = vi.spyOn(outboundSender, "drainOutboundMessages").mockResolvedValue(undefined);
+    vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockResolvedValue("ack");
+    const ctx = fakeExecutionContext();
+
+    await worker.queue!(fakeBatch([fakeMessage({ irrelevant: true })]), env, ctx);
+
+    expect(drainSpy).toHaveBeenCalledTimes(1);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets a failing outbound drain change a message's disposition", async () => {
+    vi.spyOn(outboundSender, "drainOutboundMessages").mockRejectedValue(new Error("boom"));
+    vi.spyOn(intakeConsumer, "processIntakeQueueMessage").mockResolvedValue("ack");
+    const message = fakeMessage({ irrelevant: true });
+    const ctx = fakeExecutionContext();
+
+    await worker.queue!(fakeBatch([message]), env, ctx);
+
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    const [waited] = (ctx.waitUntil as ReturnType<typeof vi.fn>).mock.calls[0] as [Promise<unknown>];
+    await expect(waited).resolves.toBeUndefined();
   });
 
   it("retries a message whose processor call rejects, without blocking other messages' own disposition", async () => {
@@ -813,7 +840,7 @@ describe("worker queue handler", () => {
     const failing = fakeMessage({ irrelevant: true });
     const succeeding = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([failing, succeeding]), env);
+    await worker.queue!(fakeBatch([failing, succeeding]), env, fakeExecutionContext());
 
     expect(failing.retry).toHaveBeenCalledTimes(1);
     expect(failing.ack).not.toHaveBeenCalled();
@@ -826,7 +853,7 @@ describe("worker queue handler", () => {
     const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
     const message = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([message], "vetai-intake"), env);
+    await worker.queue!(fakeBatch([message], "vetai-intake"), env, fakeExecutionContext());
 
     expect(primarySpy).toHaveBeenCalledTimes(1);
     expect(dlqSpy).not.toHaveBeenCalled();
@@ -838,7 +865,7 @@ describe("worker queue handler", () => {
     const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValueOnce("ack");
     const message = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([message], "vetai-intake-dlq"), env);
+    await worker.queue!(fakeBatch([message], "vetai-intake-dlq"), env, fakeExecutionContext());
 
     expect(dlqSpy).toHaveBeenCalledTimes(1);
     expect(primarySpy).not.toHaveBeenCalled();
@@ -850,7 +877,7 @@ describe("worker queue handler", () => {
     const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage");
     const message = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([message], "vetai-intake-staging"), env);
+    await worker.queue!(fakeBatch([message], "vetai-intake-staging"), env, fakeExecutionContext());
 
     expect(primarySpy).toHaveBeenCalledTimes(1);
     expect(dlqSpy).not.toHaveBeenCalled();
@@ -863,7 +890,7 @@ describe("worker queue handler", () => {
     const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValueOnce("ack");
     const message = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([message], "vetai-intake-dlq-staging"), env);
+    await worker.queue!(fakeBatch([message], "vetai-intake-dlq-staging"), env, fakeExecutionContext());
 
     expect(dlqSpy).toHaveBeenCalledTimes(1);
     expect(primarySpy).not.toHaveBeenCalled();
@@ -886,7 +913,7 @@ describe("worker queue handler", () => {
       const dlqSpy = vi.spyOn(intakeDeadLetter, "processIntakeDeadLetterQueueMessage").mockResolvedValue("ack");
       const message = fakeMessage({ irrelevant: true });
 
-      await worker.queue!(fakeBatch([message], queueName), env);
+      await worker.queue!(fakeBatch([message], queueName), env, fakeExecutionContext());
 
       expect(primarySpy.mock.calls.length + dlqSpy.mock.calls.length, `queue ${queueName} has no processor`).toBe(1);
       expect(message.ack).toHaveBeenCalledTimes(1);
@@ -901,7 +928,7 @@ describe("worker queue handler", () => {
     for (const queueName of ["vetai-intake-terminal-dlq", "vetai-intake-terminal-dlq-staging"]) {
       const message = fakeMessage({ irrelevant: true });
 
-      await worker.queue!(fakeBatch([message], queueName), env);
+      await worker.queue!(fakeBatch([message], queueName), env, fakeExecutionContext());
 
       expect(message.retry).toHaveBeenCalledTimes(1);
       expect(message.ack).not.toHaveBeenCalled();
@@ -916,7 +943,7 @@ describe("worker queue handler", () => {
     const failing = fakeMessage({ irrelevant: true });
     const succeeding = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([failing, succeeding], "vetai-intake-dlq"), env);
+    await worker.queue!(fakeBatch([failing, succeeding], "vetai-intake-dlq"), env, fakeExecutionContext());
 
     expect(failing.retry).toHaveBeenCalledTimes(1);
     expect(failing.ack).not.toHaveBeenCalled();
@@ -932,7 +959,7 @@ describe("worker queue handler", () => {
     const first = fakeMessage({ irrelevant: true });
     const second = fakeMessage({ irrelevant: true });
 
-    await worker.queue!(fakeBatch([first, second], "vetai-intake-terminal-dlq"), env);
+    await worker.queue!(fakeBatch([first, second], "vetai-intake-terminal-dlq"), env, fakeExecutionContext());
 
     expect(first.retry).toHaveBeenCalledTimes(1);
     expect(first.ack).not.toHaveBeenCalled();

@@ -292,7 +292,9 @@ evidence that any KVKK question was resolved.
 
 # Current task — 036 Conversation flow, latency, and recording notice
 
-Status: `READY`
+Status: `IN PROGRESS` (contract approved by Maya 2026-08-26; implementation
+complete and locally verified — see "Implementation record" below. Staging
+migration and deploy still require separate approval.)
 
 **Approved by Maya on 2026-08-26**, with two decisions recorded at approval
 time:
@@ -602,6 +604,59 @@ gate, the consumer branches, and the reply-category union.
 - The `stale_state` orphan-pet defect recorded in `PROJECT_CONTEXT.md`. Related
   file, unrelated fix; it deserves its own task.
 - Anything in production. This task, like 035, ends at staging.
+
+
+## Implementation record — 2026-08-26 (local verification only)
+
+Every scope item above is implemented and verified locally. Nothing has been
+applied to any database or deployed to any Worker; the staging migration and
+deploy are still waiting on the separate approval named in the table above.
+
+### Changed files
+
+| File | Change |
+|---|---|
+| `supabase/migrations/20260826000100_intake_confirmation_stage.sql` | New. The four-part migration surface designed above: the `conversations_intake_stage_check` list, the rank map inside `advance_conversation_intake`, the `outbound_message_outbox_reply_category_check` list, and the two allowlists inside `finalize_intake_queue_job`. Not applied anywhere yet. |
+| `src/conversationState.ts`, `src/intakeJobLease.ts`, `src/liveAiDemo.ts` | `intake_confirmation` inserted after `complaint_collection` in the `IntakeStage` union and in all three `INTAKE_STAGES` sets. |
+| `src/intakeTurn.ts` | `decideNextStage` rewritten around the new stage; new `isPetIdentityKnown` helper. |
+| `src/intakeReply.ts` | New `intake_confirmation` reply category. The identity ask is now keyed on `nextStage === "pet_identification"` instead of on pet resolution — see the note below. |
+| `src/petRegistration.ts` | `correction` and `confirmed` actions; `buildIntakeConfirmationText` replaces `buildPetConfirmationText`; `planPostCreationReply` renamed `planPostConfirmationReply`; decline no longer erases collected fields. |
+| `src/intakeConsumer.ts` | `prepareOutboundReply` (the single outbound choke point) now also attaches the recording notice; `hasRepeatedNoProgressQuestion` widened; the confirmation branch finalizes into `intake_confirmation` and passes `intakeData` through unchanged. |
+| `src/index.ts` | The queue handler drains the outbound outbox via `ctx.waitUntil` as soon as the turn is written; cron kept as the safety net. |
+| `src/localDemo.ts` | Stage and reply-category labels for the new values. |
+| `wrangler.toml`, `wrangler.staging.toml` | Both consumers' `max_batch_timeout` 5 → 1. |
+| `docs/database-schema.md`, `docs/intake-turn-planning.md` | Stage chain and transition rules updated. |
+
+### One design consequence found during implementation
+
+Deferring pet creation means a first-time owner's pet resolution stays
+`needs_clarification` for the whole conversation, because there is no `pets`
+row to match against until they confirm. `planIntakeReply` used to key the
+"hangi hayvanınız" question on exactly that, so it would have re-asked for the
+pet on every turn after the deferral. The question is now keyed on the planned
+stage instead, which is the fact it was really asking about. Two tests in
+`test/intakeReply.test.ts` pin both halves of this.
+
+### Verification actually run
+
+| Check | Result |
+|---|---|
+| `npx vitest run` | 1421 passed, 2 skipped, 0 failed (33 files) |
+| `npx tsc --noEmit` | clean |
+| `npx wrangler deploy --dry-run` | ok, 152.54 KiB |
+| `npx wrangler deploy --dry-run --config wrangler.staging.toml` | ok, 152.54 KiB |
+
+### Verification NOT run, and why
+
+The SQL fixtures in `supabase/tests/` were updated for the new stage —
+`006` (the stale-version case had to stay a legal one-step transition, and the
+service-role block now walks `complaint_collection -> intake_confirmation ->
+safety_check`), `024` (the full-chain walk array and the two state_version
+assertions that follow from it), and `035` (a new Fixture 7 that creates the
+pet on the real `intake_confirmation -> safety_check` edge and proves nothing
+is written to `pets` before the owner confirms). They have **not been
+executed**: they run against a live Postgres, which means applying this
+migration first. That is the approval gate, not a local step.
 
 ---
 

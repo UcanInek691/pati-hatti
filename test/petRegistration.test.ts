@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  INTAKE_CORRECTION_PROMPT_TEXT,
   MAX_PET_IDENTIFICATION_ATTEMPTS,
-  buildPetConfirmationText,
+  buildIntakeConfirmationText,
   planPetRegistrationAction,
   planPetRegistrationReply,
-  planPostCreationReply,
+  planPostConfirmationReply,
 } from "../src/petRegistration";
 import { PET_IDENTITY_TEXT } from "../src/intakeReply";
 import type { ConversationIntakeContext, IntakeMessage, IntakeStage } from "../src/conversationState";
@@ -41,6 +42,11 @@ function intakeData(overrides: Partial<PersistedIntakeData> = {}): PersistedInta
   };
 }
 
+/**
+ * Task 036: the flow now lives in `intake_confirmation`, and
+ * `planPetRegistrationAction` keys off the *planned* next stage, so that is
+ * this helper's default.
+ */
 function planned(
   overrides: {
     nextStage?: IntakeStage;
@@ -52,7 +58,7 @@ function planned(
 ): PlanResult {
   return {
     kind: "planned",
-    nextStage: overrides.nextStage ?? "pet_identification",
+    nextStage: overrides.nextStage ?? "intake_confirmation",
     petId: overrides.petId ?? null,
     intakeData: intakeData(overrides.data),
     petResolution: overrides.petResolution ?? { kind: "needs_clarification" },
@@ -77,7 +83,7 @@ function baseContext(overrides: Partial<ConversationIntakeContext> = {}): Conver
     ownerId: "33333333-3333-3333-3333-333333333333",
     petId: null,
     status: "active",
-    intakeStage: "pet_identification",
+    intakeStage: "intake_confirmation",
     intakeData: {},
     stateVersion: 1,
     ownerName: "Ada Lovelace",
@@ -87,81 +93,86 @@ function baseContext(overrides: Partial<ConversationIntakeContext> = {}): Conver
   };
 }
 
-describe("buildPetConfirmationText", () => {
-  it("asks for name-only confirmation when species is null", () => {
-    expect(buildPetConfirmationText("Pamuk", null)).toBe(
-      '"Pamuk" adında yeni bir kayıt oluşturuyorum, doğru mu? Onaylamak için EVET, değilse HAYIR yazın.',
+describe("buildIntakeConfirmationText", () => {
+  it("summarizes the name alone when nothing else is known", () => {
+    expect(buildIntakeConfirmationText("Pamuk", null, null)).toBe(
+      'Anladığım kadarıyla — Ad: "Pamuk". Doğru mu? Onaylamak için EVET, düzeltmek için HAYIR yazın.',
     );
   });
 
-  it("asks for name-only confirmation when species is an empty or whitespace-only string", () => {
-    expect(buildPetConfirmationText("Pamuk", "")).toBe(
-      '"Pamuk" adında yeni bir kayıt oluşturuyorum, doğru mu? Onaylamak için EVET, değilse HAYIR yazın.',
-    );
-    expect(buildPetConfirmationText("Pamuk", "   ")).toBe(
-      '"Pamuk" adında yeni bir kayıt oluşturuyorum, doğru mu? Onaylamak için EVET, değilse HAYIR yazın.',
+  it("treats an empty or whitespace-only species as unknown", () => {
+    const nameOnly = buildIntakeConfirmationText("Pamuk", null, null);
+    expect(buildIntakeConfirmationText("Pamuk", "", null)).toBe(nameOnly);
+    expect(buildIntakeConfirmationText("Pamuk", "   ", null)).toBe(nameOnly);
+  });
+
+  it("combines name, species and complaint in one ask", () => {
+    expect(buildIntakeConfirmationText("Pamuk", "kedi", "sarhoş gibi yürüyor")).toBe(
+      'Anladığım kadarıyla — Ad: "Pamuk", Tür: kedi, Şikayet: sarhoş gibi yürüyor. Doğru mu? Onaylamak için EVET, düzeltmek için HAYIR yazın.',
     );
   });
 
-  it("combines name and species in one confirmation when species is known", () => {
-    expect(buildPetConfirmationText("Pamuk", "kedi")).toBe(
-      '"Pamuk" adında, kedi türünde yeni bir kayıt oluşturuyorum, doğru mu? Onaylamak için EVET, değilse HAYIR yazın.',
+  it("omits only the parts that are missing", () => {
+    expect(buildIntakeConfirmationText("Pamuk", null, "topallıyor")).toBe(
+      'Anladığım kadarıyla — Ad: "Pamuk", Şikayet: topallıyor. Doğru mu? Onaylamak için EVET, düzeltmek için HAYIR yazın.',
     );
   });
 
-  it("trims surrounding whitespace from species before interpolating", () => {
-    expect(buildPetConfirmationText("Pamuk", "  kedi  ")).toBe(
-      '"Pamuk" adında, kedi türünde yeni bir kayıt oluşturuyorum, doğru mu? Onaylamak için EVET, değilse HAYIR yazın.',
+  it("trims surrounding whitespace from species and complaint before interpolating", () => {
+    expect(buildIntakeConfirmationText("Pamuk", "  kedi  ", "  topallıyor  ")).toBe(
+      buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor"),
     );
   });
 
   it("truncates a name longer than 200 code points", () => {
-    const longName = "a".repeat(250);
-    const result = buildPetConfirmationText(longName, null);
+    const result = buildIntakeConfirmationText("a".repeat(250), null, null);
     expect(result).toContain(`"${"a".repeat(200)}"`);
     expect(result).not.toContain("a".repeat(201));
   });
 
   it("truncates a species longer than 100 code points", () => {
-    const longSpecies = "b".repeat(150);
-    const result = buildPetConfirmationText("Pamuk", longSpecies);
-    expect(result).toContain(`${"b".repeat(100)} türünde`);
+    const result = buildIntakeConfirmationText("Pamuk", "b".repeat(150), null);
+    expect(result).toContain(`Tür: ${"b".repeat(100)}`);
     expect(result).not.toContain("b".repeat(101));
   });
 
+  it("truncates a complaint longer than 300 code points", () => {
+    const result = buildIntakeConfirmationText("Pamuk", null, "c".repeat(400));
+    expect(result).toContain(`Şikayet: ${"c".repeat(300)}`);
+    expect(result).not.toContain("c".repeat(301));
+  });
+
   it("is a pure function returning the same result for the same input", () => {
-    expect(buildPetConfirmationText("Pamuk", "kedi")).toBe(buildPetConfirmationText("Pamuk", "kedi"));
+    expect(buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor")).toBe(buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor"));
   });
 });
 
 // `context.recentMessages`'s last element is always the current inbound
 // message being processed (mirrors production shape — see
 // `intakeConsumer.ts`'s `selectPreviousClinicQuestion`), so every fixture
-// below that expects `wasAskedThisExactConfirmation` to see a prior
-// outbound must end with an inbound matching the `messageText` argument.
-// A 2026-08-25 preliminary review caught the original fixtures using a
-// production-impossible shape (trailing outbound, no current inbound) that
-// hid a real bug where the confirmation flow could never match in
-// production; these fixtures intentionally include the trailing inbound.
+// below that expects a prior confirmation ask to be recognized must end with
+// an inbound matching the `messageText` argument. A 2026-08-25 preliminary
+// review caught the original fixtures using a production-impossible shape
+// (trailing outbound, no current inbound) that hid a real bug where the
+// confirmation flow could never match in production; these fixtures
+// intentionally include the trailing inbound.
 
 describe("planPetRegistrationAction", () => {
   it("a failed plan never triggers pet registration", () => {
     expect(planPetRegistrationAction(baseContext(), FAILED, "evet")).toEqual({ kind: "none" });
   });
 
-  it.each<IntakeStage>(["complaint_collection", "safety_check", "ready_for_triage", "appointment_offer", "human_handoff", "completed"])(
-    "does nothing while the current stage is %s, even with a pending pet_name and zero pets",
-    (intakeStage) => {
-      const context = baseContext({ intakeStage });
-      const plan = planned({ nextStage: intakeStage === "human_handoff" ? "human_handoff" : "complaint_collection" });
-      expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
+  it.each<IntakeStage>(["pet_identification", "complaint_collection", "safety_check", "ready_for_triage", "appointment_offer", "completed"])(
+    "does nothing while the plan's next stage is %s, even with a pending pet_name and zero pets",
+    (nextStage) => {
+      const context = baseContext({ intakeStage: nextStage });
+      expect(planPetRegistrationAction(context, planned({ nextStage }), "evet")).toEqual({ kind: "none" });
     },
   );
 
   it("does nothing when the plan's next stage is human_handoff", () => {
-    const context = baseContext();
     const plan = planned({ nextStage: "human_handoff", safetyDecision: { kind: "human_handoff", reason: "user_requested_human" } });
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
+    expect(planPetRegistrationAction(baseContext(), plan, "evet")).toEqual({ kind: "none" });
   });
 
   it.each<SafetyDecision>([
@@ -169,67 +180,80 @@ describe("planPetRegistrationAction", () => {
     { kind: "human_handoff", reason: "user_requested_human" },
     { kind: "needs_safety_check", unknownSignals: ["heavy_bleeding"] },
   ])(
-    "does nothing when the safety decision is not continue_intake, even mid pet-registration flow (safety precedence, matches appointmentFlow.ts)",
+    "does nothing when the safety decision is not continue_intake, even mid-confirmation (safety precedence, matches appointmentFlow.ts)",
     (safetyDecision) => {
-      const confirmationText = buildPetConfirmationText("Pamuk", null);
+      const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
       const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("evet")] });
       const plan = planned({ data: { pet_name: "Pamuk", species: null }, safetyDecision });
       expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
     },
   );
 
-  it("does nothing when the pet is already matched", () => {
-    const context = baseContext();
-    const plan = planned({ petResolution: { kind: "matched", petId } });
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
-  });
-
-  it("does nothing when the owner already has at least one registered pet", () => {
-    const context = baseContext({ pets: [{ id: petId, name: "Tarçın", species: "dog" }] });
-    const plan = planned();
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
-  });
-
-  it("does nothing when no pet_name has been extracted yet", () => {
-    const context = baseContext();
-    const plan = planned({ data: { pet_name: null } });
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
+  it("does nothing when no pet_name has been extracted and no pet matched", () => {
+    expect(planPetRegistrationAction(baseContext(), planned({ data: { pet_name: null } }), "evet")).toEqual({ kind: "none" });
   });
 
   it("does nothing when pet_name is only whitespace", () => {
-    const context = baseContext();
-    const plan = planned({ data: { pet_name: "   " } });
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
+    expect(planPetRegistrationAction(baseContext(), planned({ data: { pet_name: "   " } }), "evet")).toEqual({ kind: "none" });
   });
 
-  it("asks for confirmation on a fresh extraction with no prior confirmation prompt", () => {
-    const context = baseContext({ recentMessages: [outbound(PET_IDENTITY_TEXT), inbound("Pamuk")] });
-    const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: null });
+  it("asks for confirmation on entering the stage, with everything collected so far in one message", () => {
+    const context = baseContext({ intakeStage: "complaint_collection", recentMessages: [outbound(PET_IDENTITY_TEXT), inbound("topallıyor")] });
+    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" } });
+    expect(planPetRegistrationAction(context, plan, "topallıyor")).toEqual({
+      kind: "ask_confirmation",
+      name: "Pamuk",
+      species: "kedi",
+      complaint: "topallıyor",
+    });
   });
 
-  it("includes species in the ask_confirmation action when already extracted", () => {
-    const context = baseContext({ recentMessages: [outbound(PET_IDENTITY_TEXT), inbound("Pamuk, kedi")] });
-    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi" } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk, kedi")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: "kedi" });
-  });
-
-  it("confirms and creates when the owner replies evet to the exact confirmation just asked", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", "kedi");
+  it("creates when the owner replies evet to the exact summary just asked", () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor");
     const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("evet")] });
-    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi" } });
+    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" } });
     expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "create", name: "Pamuk", species: "kedi" });
   });
 
   it("accepts case/whitespace-insensitive evet per the shared normalization", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("  EVET  ")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
     expect(planPetRegistrationAction(context, plan, "  EVET  ")).toEqual({ kind: "create", name: "Pamuk", species: null });
   });
 
-  it("declines when the owner replies hayır to the exact confirmation just asked", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+  // Task 036: a returning owner goes through the same stage and the same
+  // question, but there is nothing to insert.
+  it("confirms without creating when the pet is already on file", () => {
+    const confirmationText = buildIntakeConfirmationText("Tarçın", "köpek", "topallıyor");
+    const context = baseContext({
+      pets: [{ id: petId, name: "Tarçın", species: "köpek" }],
+      recentMessages: [outbound(confirmationText), inbound("evet")],
+    });
+    const plan = planned({
+      petResolution: { kind: "matched", petId },
+      data: { pet_name: "Tarçın", species: "köpek", complaint: "topallıyor" },
+    });
+    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "confirmed" });
+  });
+
+  it("summarizes a matched pet from its stored row, not from extraction alone", () => {
+    const context = baseContext({
+      intakeStage: "complaint_collection",
+      pets: [{ id: petId, name: "Tarçın", species: "köpek" }],
+      recentMessages: [outbound(PET_IDENTITY_TEXT), inbound("topallıyor")],
+    });
+    const plan = planned({ petResolution: { kind: "matched", petId }, data: { pet_name: null, species: null, complaint: "topallıyor" } });
+    expect(planPetRegistrationAction(context, plan, "topallıyor")).toEqual({
+      kind: "ask_confirmation",
+      name: "Tarçın",
+      species: "köpek",
+      complaint: "topallıyor",
+    });
+  });
+
+  it("declines, without erasing anything, when the owner replies hayır to the exact summary", () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
     expect(
       planPetRegistrationAction(baseContext({ recentMessages: [outbound(confirmationText), inbound("hayır")] }), plan, "hayır"),
@@ -239,58 +263,94 @@ describe("planPetRegistrationAction", () => {
     ).toEqual({ kind: "declined" });
   });
 
-  it("re-asks confirmation (repeat_confirmation) on an unrecognized reply to the exact confirmation just asked", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+  // Task 036's correction flow. Before it, "hayır, adı Karabaş" either reset
+  // the owner to the generic identity question or was re-asked verbatim while
+  // burning an attempt, even though the extractor had already read the name.
+  it("treats a reply that changes the summary as a correction, keeping the fields the owner did not contradict", () => {
+    const askedText = buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor");
+    const context = baseContext({ recentMessages: [outbound(askedText), inbound("hayır, adı Karabaş")] });
+    const plan = planned({ data: { pet_name: "Karabaş", species: "kedi", complaint: "topallıyor" } });
+    expect(planPetRegistrationAction(context, plan, "hayır, adı Karabaş")).toEqual({
+      kind: "correction",
+      name: "Karabaş",
+      species: "kedi",
+      complaint: "topallıyor",
+    });
+  });
+
+  it("treats an evet that also changes a value as a correction, never creating under an unseen name", () => {
+    const askedText = buildIntakeConfirmationText("Pamuk", null, null);
+    const context = baseContext({ recentMessages: [outbound(askedText), inbound("evet, kedi")] });
+    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi" } });
+    expect(planPetRegistrationAction(context, plan, "evet, kedi")).toEqual({
+      kind: "correction",
+      name: "Pamuk",
+      species: "kedi",
+      complaint: null,
+    });
+  });
+
+  it("a correction is never bounded, however many identical asks came before it", () => {
+    const askedText = buildIntakeConfirmationText("Pamuk", null, null);
+    const priorAsks: IntakeMessage[] = Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () => outbound(askedText));
+    const context = baseContext({ recentMessages: [...priorAsks, inbound("adı Karabaş")] });
+    const plan = planned({ data: { pet_name: "Karabaş", species: null } });
+    expect(planPetRegistrationAction(context, plan, "adı Karabaş")).toEqual({
+      kind: "correction",
+      name: "Karabaş",
+      species: null,
+      complaint: null,
+    });
+  });
+
+  it("re-asks (repeat_confirmation) on an unrecognized reply that changes nothing", () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("tamam")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "tamam")).toEqual({ kind: "repeat_confirmation", name: "Pamuk", species: null });
+    expect(planPetRegistrationAction(context, plan, "tamam")).toEqual({
+      kind: "repeat_confirmation",
+      name: "Pamuk",
+      species: null,
+      complaint: null,
+    });
   });
 
   it("asks fresh confirmation (not repeat) when the last outbound message was some other prompt", () => {
-    const context = baseContext({ recentMessages: [outbound(PET_IDENTITY_TEXT), inbound("Pamuk")] });
+    const context = baseContext({ recentMessages: [outbound(INTAKE_CORRECTION_PROMPT_TEXT), inbound("Pamuk")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: null });
-  });
-
-  it("treats a confirmation text for a different name/species as not-yet-asked (ask_confirmation, not repeat)", () => {
-    const otherConfirmation = buildPetConfirmationText("Tarçın", null);
-    const context = baseContext({ recentMessages: [outbound(otherConfirmation), inbound("Pamuk")] });
-    const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: null });
+    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({
+      kind: "ask_confirmation",
+      name: "Pamuk",
+      species: null,
+      complaint: null,
+    });
   });
 
   it("fails closed to ask_confirmation (never matches a stale confirmation) when the window's last message does not equal messageText", () => {
     // Defensive: if recentMessages were ever loaded stale/out of sync with
     // the claimed message, this must not accidentally treat an unrelated
     // trailing inbound as confirming an earlier ask.
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("some other older message")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: null });
+    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({
+      kind: "ask_confirmation",
+      name: "Pamuk",
+      species: null,
+      complaint: null,
+    });
   });
 
   it("does NOT apply the attempt bound to an explicit evet confirmation — a valid confirm always creates", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
-    // MAX_PET_IDENTIFICATION_ATTEMPTS worth of prior asks, plus the final
-    // ask/reply pair being confirmed now.
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const priorAsks: IntakeMessage[] = Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () => outbound(confirmationText));
     const context = baseContext({ recentMessages: [...priorAsks, inbound("evet")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
     expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "create", name: "Pamuk", species: null });
   });
 
-  it("forces bounded_handoff instead of a fresh ask once the attempt bound is reached", () => {
-    const recentMessages: IntakeMessage[] = [
-      ...Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () => outbound(PET_IDENTITY_TEXT)),
-      inbound("Pamuk"),
-    ];
-    const context = baseContext({ recentMessages });
-    const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({ kind: "bounded_handoff" });
-  });
-
-  it("forces bounded_handoff instead of repeat_confirmation once the attempt bound is reached on an unrecognized reply", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+  it("forces bounded_handoff instead of repeat_confirmation once the identical ask has been sent to the bound", () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const recentMessages: IntakeMessage[] = [
       ...Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () => outbound(confirmationText)),
       inbound("tamam"),
@@ -301,7 +361,7 @@ describe("planPetRegistrationAction", () => {
   });
 
   it("does not force bounded_handoff on decline, even at the attempt bound", () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const recentMessages: IntakeMessage[] = [
       ...Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () => outbound(confirmationText)),
       inbound("hayır"),
@@ -312,15 +372,20 @@ describe("planPetRegistrationAction", () => {
   });
 
   it("does not count an unrelated outbound (e.g. a safety-questions or unsupported-media prompt) against the attempt bound", () => {
-    // pet_identification can also emit safety_questions/intake_received
-    // copy (see intakeReply.ts); those must not exhaust this flow's own
-    // 3-attempt bound before a single pet-identity prompt has been sent.
+    // intake_confirmation can also emit safety_questions/intake_received copy
+    // (see intakeReply.ts); those must not exhaust this flow's own 3-attempt
+    // bound before a single confirmation has been sent.
     const unrelatedOutbound: IntakeMessage[] = Array.from({ length: MAX_PET_IDENTIFICATION_ATTEMPTS }, () =>
       outbound("Bu bot şu anda görsel, ses, video, belge, konum veya kişi kartı içeriğini değerlendiremiyor. Lütfen durumu yazılı mesajla açıklayın."),
     );
     const context = baseContext({ recentMessages: [...unrelatedOutbound, inbound("Pamuk")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
-    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({ kind: "ask_confirmation", name: "Pamuk", species: null });
+    expect(planPetRegistrationAction(context, plan, "Pamuk")).toEqual({
+      kind: "ask_confirmation",
+      name: "Pamuk",
+      species: null,
+      complaint: null,
+    });
   });
 
   it("is a pure function that never mutates its inputs", () => {
@@ -334,36 +399,46 @@ describe("planPetRegistrationAction", () => {
 });
 
 describe("planPetRegistrationReply", () => {
-  it("sends the confirmation text under the pet_identity category for ask_confirmation", () => {
-    expect(planPetRegistrationReply({ kind: "ask_confirmation", name: "Pamuk", species: "kedi" })).toEqual({
+  it("sends the summary under the intake_confirmation category for ask_confirmation", () => {
+    expect(planPetRegistrationReply({ kind: "ask_confirmation", name: "Pamuk", species: "kedi", complaint: "topallıyor" })).toEqual({
       kind: "send",
-      category: "pet_identity",
-      text: buildPetConfirmationText("Pamuk", "kedi"),
+      category: "intake_confirmation",
+      text: buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor"),
     });
   });
 
-  it("sends the same confirmation text under pet_identity for repeat_confirmation", () => {
-    expect(planPetRegistrationReply({ kind: "repeat_confirmation", name: "Pamuk", species: null })).toEqual({
+  it("sends the same summary for repeat_confirmation", () => {
+    expect(planPetRegistrationReply({ kind: "repeat_confirmation", name: "Pamuk", species: null, complaint: null })).toEqual({
       kind: "send",
-      category: "pet_identity",
-      text: buildPetConfirmationText("Pamuk", null),
+      category: "intake_confirmation",
+      text: buildIntakeConfirmationText("Pamuk", null, null),
     });
   });
 
-  it("sends the base pet-identity question again on declined", () => {
+  it("sends the corrected summary back for confirmation on correction", () => {
+    expect(planPetRegistrationReply({ kind: "correction", name: "Karabaş", species: "kedi", complaint: "topallıyor" })).toEqual({
+      kind: "send",
+      category: "intake_confirmation",
+      text: buildIntakeConfirmationText("Karabaş", "kedi", "topallıyor"),
+    });
+  });
+
+  it("asks what to correct on declined, instead of restarting from the generic identity question", () => {
     expect(planPetRegistrationReply({ kind: "declined" })).toEqual({
       kind: "send",
-      category: "pet_identity",
-      text: PET_IDENTITY_TEXT,
+      category: "intake_confirmation",
+      text: INTAKE_CORRECTION_PROMPT_TEXT,
     });
+    expect(INTAKE_CORRECTION_PROMPT_TEXT).not.toBe(PET_IDENTITY_TEXT);
   });
 
   it("sends nothing for none", () => {
     expect(planPetRegistrationReply({ kind: "none" })).toEqual({ kind: "none" });
   });
 
-  it("sends nothing for create (the caller plans that turn's reply separately)", () => {
+  it("sends nothing for create or confirmed (the caller plans that turn's reply separately)", () => {
     expect(planPetRegistrationReply({ kind: "create", name: "Pamuk", species: null })).toEqual({ kind: "none" });
+    expect(planPetRegistrationReply({ kind: "confirmed" })).toEqual({ kind: "none" });
   });
 
   it("sends nothing for bounded_handoff (the caller builds a handoff plan separately)", () => {
@@ -371,31 +446,31 @@ describe("planPetRegistrationReply", () => {
   });
 });
 
-describe("planPostCreationReply", () => {
-  it("delegates to the ordinary complaint-collection reply for a freshly created pet with no complaint yet", () => {
+describe("planPostConfirmationReply", () => {
+  it("delegates to the ordinary complaint reply when the confirmed summary carried no complaint", () => {
     const context = baseContext();
     const plan = planned({ data: { pet_name: "Pamuk", species: null, complaint: null, symptoms: [] } }) as Extract<PlanResult, { kind: "planned" }>;
-    expect(planPostCreationReply(context, plan)).toEqual({
+    expect(planPostConfirmationReply(context, plan)).toEqual({
       kind: "send",
       category: "complaint",
       text: "Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?",
     });
   });
 
-  it("delegates to the intake_received reply when a complaint was already collected in the same turn", () => {
+  it("delegates to the intake_received reply when a complaint was collected", () => {
     const context = baseContext();
     const plan = planned({ data: { pet_name: "Pamuk", species: null, complaint: "kontrol" } }) as Extract<PlanResult, { kind: "planned" }>;
-    expect(planPostCreationReply(context, plan)).toEqual({
+    expect(planPostConfirmationReply(context, plan)).toEqual({
       kind: "send",
       category: "intake_received",
       text: "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun.",
     });
   });
 
-  it("never routes to human_handoff or emergency copy from a plain post-creation turn", () => {
+  it("never routes to human_handoff or emergency copy from a plain post-confirmation turn", () => {
     const context = baseContext();
     const plan = planned({ data: { pet_name: "Pamuk", species: null } }) as Extract<PlanResult, { kind: "planned" }>;
-    const reply = planPostCreationReply(context, plan);
+    const reply = planPostConfirmationReply(context, plan);
     expect(reply.kind).toBe("send");
     if (reply.kind === "send") {
       expect(reply.category).not.toBe("human_handoff");

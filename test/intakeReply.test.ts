@@ -191,12 +191,25 @@ describe("planIntakeReply", () => {
     });
   });
 
-  it("pet clarification beats a missing complaint", () => {
-    const result = planned({ petResolution: NEEDS_CLARIFICATION, data: { complaint: null, symptoms: [] } });
+  it("a plan still held in pet_identification asks for the pet, ahead of a missing complaint", () => {
+    const result = planned({ nextStage: "pet_identification", petResolution: NEEDS_CLARIFICATION, data: { complaint: null, symptoms: [] } });
     expect(planIntakeReply("pet_identification", result)).toEqual({
       kind: "send",
       category: "pet_identity",
       text: PET_IDENTITY_TEXT,
+    });
+  });
+
+  // Task 036: a first-time owner keeps resolving as `needs_clarification` for
+  // the whole conversation, because the pet row is not written until the
+  // confirmation. Keying the identity ask on the resolution instead of the
+  // stage re-asked "hangi hayvanınız" forever once the flow had moved on.
+  it("does not re-ask for the pet once the plan has moved past pet_identification", () => {
+    const result = planned({ nextStage: "intake_confirmation", petResolution: NEEDS_CLARIFICATION, data: { complaint: null, symptoms: [] } });
+    expect(planIntakeReply("complaint_collection", result)).toEqual({
+      kind: "send",
+      category: "complaint",
+      text: COMPLAINT_TEXT,
     });
   });
 

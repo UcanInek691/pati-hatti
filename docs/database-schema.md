@@ -197,9 +197,10 @@ Defined in
   used for optimistic concurrency.
 
 The stage graph is forward-only:
-`pet_identification -> complaint_collection -> safety_check ->
-ready_for_triage -> appointment_offer -> appointment_selection ->
-appointment_confirmation -> completed`, with a side-channel transition to
+`pet_identification -> complaint_collection -> intake_confirmation ->
+safety_check -> ready_for_triage -> appointment_offer ->
+appointment_selection -> appointment_confirmation -> completed`, with a
+side-channel transition to
 `human_handoff` permitted from any non-completed stage. `human_handoff` and
 `completed` are terminal — only a same-stage data refresh is allowed once a
 conversation reaches either one. Moving to `human_handoff` sets operational

@@ -45,6 +45,9 @@ create function pg_temp.run_pet_turn(
   p_next_stage text,
   p_create_pet_name text,
   p_create_pet_species text,
+  -- Task 036 added 'intake_confirmation' to the reply-category allowlist;
+  -- default keeps every pre-036 call site unchanged.
+  p_reply_category text default 'complaint',
   out o_result text,
   out o_conversation_id uuid,
   out o_state_version integer
@@ -97,7 +100,7 @@ begin
     p_next_stage,
     null,
     jsonb_build_object('pet_name', p_create_pet_name),
-    'complaint',
+    p_reply_category,
     'Synthetic pet-registration fixture reply',
     p_create_pet_name,
     p_create_pet_species
@@ -368,6 +371,64 @@ begin
 
   if not v_raised then
     raise exception 'fixture 6: create_pet_species without create_pet_name did not raise';
+  end if;
+end;
+$$;
+
+-- =========================================================================
+-- Fixture 7 (Task 036): the real production path. Confirmation is now its own
+-- stage, so the pet is created on the intake_confirmation -> safety_check
+-- step, not on pet_identification -> complaint_collection. This walks both
+-- new edges through the same RPC the Worker calls, and exercises the
+-- 'intake_confirmation' reply category the migration added.
+-- =========================================================================
+do $$
+declare
+  v_result text;
+  v_conversation_id uuid;
+  v_stage text;
+  v_owner_id uuid;
+  v_pet_id uuid;
+begin
+  -- The shared fixture conversation is parked at complaint_collection.
+  select t.o_result, t.o_conversation_id into v_result, v_conversation_id
+  from pg_temp.run_pet_turn(
+    'wamid.PETREG036A', 'Findik, topalliyor', 'intake_confirmation', null, null, 'intake_confirmation'
+  ) t;
+
+  if v_result <> 'applied' then
+    raise exception 'fixture 7: expected applied entering intake_confirmation, got %', v_result;
+  end if;
+
+  select c.intake_stage into v_stage from public.conversations c where c.id = v_conversation_id;
+  if v_stage <> 'intake_confirmation' then
+    raise exception 'fixture 7: expected intake_confirmation, got %', v_stage;
+  end if;
+
+  -- No pet may exist under this name before the owner confirms.
+  select o.id into v_owner_id from public.owners o where o.clinic_id = '35000000-0000-0000-0000-000000000001';
+  if exists (select 1 from public.pets p where p.owner_id = v_owner_id and p.name = 'Findik') then
+    raise exception 'fixture 7: a pet was created before confirmation';
+  end if;
+
+  -- The owner confirms: the same atomic finalize creates the pet and advances.
+  select t.o_result into v_result
+  from pg_temp.run_pet_turn('wamid.PETREG036B', 'evet', 'safety_check', 'Findik', 'kedi') t;
+
+  if v_result <> 'applied' then
+    raise exception 'fixture 7: expected applied on confirmation, got %', v_result;
+  end if;
+
+  select c.intake_stage, c.pet_id into v_stage, v_pet_id
+  from public.conversations c where c.id = v_conversation_id;
+  if v_stage <> 'safety_check' then
+    raise exception 'fixture 7: expected safety_check after confirmation, got %', v_stage;
+  end if;
+  if v_pet_id is null then
+    raise exception 'fixture 7: conversation was not bound to the created pet';
+  end if;
+  if (select p.name from public.pets p where p.id = v_pet_id) <> 'Findik' then
+    raise exception 'fixture 7: conversation bound to the wrong pet';
   end if;
 end;
 $$;

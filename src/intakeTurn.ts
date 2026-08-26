@@ -185,16 +185,38 @@ function resolvePetForContext(context: ConversationIntakeContext, extraction: In
   return resolution.kind === "matched" ? { petId: resolution.petId, resolution } : { petId: null, resolution };
 }
 
-function decideNextStage(currentStage: IntakeStage, safetyDecision: SafetyDecision, petResolution: PetResolution, merged: PersistedIntakeData): IntakeStage {
+/**
+ * True once we know *which* animal the conversation is about, whether or not a
+ * `public.pets` row exists for it yet. Task 036 separated the two: a matched
+ * pet, or — for an owner with no pets on file — a captured candidate name that
+ * `intake_confirmation` will put back to the owner before anything is written.
+ */
+function isPetIdentityKnown(context: ConversationIntakeContext, petResolution: PetResolution, merged: PersistedIntakeData): boolean {
+  if (petResolution.kind === "matched") return true;
+  return context.pets.length === 0 && merged.pet_name !== null;
+}
+
+function decideNextStage(
+  currentStage: IntakeStage,
+  safetyDecision: SafetyDecision,
+  identityKnown: boolean,
+  merged: PersistedIntakeData,
+): IntakeStage {
   if (currentStage === "completed") return "completed";
   if (safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") return "human_handoff";
   if (currentStage === "human_handoff") return "human_handoff";
 
   if (currentStage === "pet_identification") {
-    return petResolution.kind === "matched" ? "complaint_collection" : "pet_identification";
+    return identityKnown ? "complaint_collection" : "pet_identification";
   }
   if (currentStage === "complaint_collection") {
-    return merged.complaint !== null || merged.symptoms.length > 0 ? "safety_check" : "complaint_collection";
+    return merged.complaint !== null || merged.symptoms.length > 0 ? "intake_confirmation" : "complaint_collection";
+  }
+  if (currentStage === "intake_confirmation") {
+    // Held deliberately. Only an owner's answer settles a confirmation, and
+    // that answer is read by `planPetRegistrationAction`, which drives the
+    // advance to `safety_check` through the consumer.
+    return "intake_confirmation";
   }
   if (currentStage === "safety_check") {
     return safetyDecision.kind === "continue_intake" ? "ready_for_triage" : "safety_check";
@@ -222,7 +244,12 @@ export function planIntakeTurn(context: ConversationIntakeContext, extraction: I
     if (petOutcome === null) return { kind: "failed" };
 
     const safetyDecision = evaluateSafetyDecision(merged);
-    const nextStage = decideNextStage(context.intakeStage, safetyDecision, petOutcome.resolution, merged);
+    const nextStage = decideNextStage(
+      context.intakeStage,
+      safetyDecision,
+      isPetIdentityKnown(context, petOutcome.resolution, merged),
+      merged,
+    );
 
     return {
       kind: "planned",

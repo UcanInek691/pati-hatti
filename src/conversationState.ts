@@ -45,6 +45,7 @@ export type AdvanceResult =
 export type IntakeStage =
   | "pet_identification"
   | "complaint_collection"
+  | "intake_confirmation"
   | "safety_check"
   | "ready_for_triage"
   | "appointment_offer"
@@ -56,6 +57,7 @@ export type IntakeStage =
 const INTAKE_STAGES = new Set<IntakeStage>([
   "pet_identification",
   "complaint_collection",
+  "intake_confirmation",
   "safety_check",
   "ready_for_triage",
   "appointment_offer",

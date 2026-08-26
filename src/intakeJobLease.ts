@@ -51,6 +51,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const INTAKE_STAGES = new Set<IntakeStage>([
   "pet_identification",
   "complaint_collection",
+  "intake_confirmation",
   "safety_check",
   "ready_for_triage",
   "appointment_offer",

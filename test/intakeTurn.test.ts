@@ -423,11 +423,11 @@ describe("planIntakeTurn — safety precedence and stage progression", () => {
     expect(holds.nextStage).toBe("pet_identification");
   });
 
-  it("advances complaint_collection only once complaint or symptoms are present", () => {
+  it("advances complaint_collection to intake_confirmation only once complaint or symptoms are present", () => {
     const advances = planIntakeTurn(context({ intakeStage: "complaint_collection" }), extraction({ complaint: "limping" }));
     const holds = planIntakeTurn(context({ intakeStage: "complaint_collection" }), extraction());
     if (advances.kind !== "planned" || holds.kind !== "planned") throw new Error("expected planned");
-    expect(advances.nextStage).toBe("safety_check");
+    expect(advances.nextStage).toBe("intake_confirmation");
     expect(holds.nextStage).toBe("complaint_collection");
   });
 

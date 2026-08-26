@@ -8,6 +8,7 @@ export type IntakeReplyCategory =
   | "human_handoff"
   | "safety_questions"
   | "pet_identity"
+  | "intake_confirmation"
   | "complaint"
   | "intake_received"
   | "appointment_offer"
@@ -86,7 +87,7 @@ export function planIntakeReply(currentStage: IntakeStage, result: PlanResult): 
 
   if (result.kind === "failed") return sendReply("human_handoff", HUMAN_HANDOFF_TEXT);
 
-  const { nextStage, petResolution, intakeData, safetyDecision } = result;
+  const { nextStage, intakeData, safetyDecision } = result;
 
   if (safetyDecision.kind === "emergency_handoff") return sendReply("emergency_handoff", EMERGENCY_HANDOFF_TEXT);
   if (safetyDecision.kind === "human_handoff") return sendReply("human_handoff", HUMAN_HANDOFF_TEXT);
@@ -94,7 +95,13 @@ export function planIntakeReply(currentStage: IntakeStage, result: PlanResult): 
 
   if (safetyDecision.kind === "needs_safety_check") return planSafetyQuestionsReply(safetyDecision.unknownSignals);
 
-  if (petResolution.kind === "needs_clarification") return sendReply("pet_identity", PET_IDENTITY_TEXT);
+  // Task 036: keyed on the stage, not on `petResolution`. Since the pet row is
+  // no longer written in `pet_identification`, a first-time owner keeps
+  // resolving as `needs_clarification` for the rest of the conversation — this
+  // used to re-ask "hangi hayvanınız" forever once the flow had moved on.
+  // `decideNextStage` holds at `pet_identification` exactly while the identity
+  // is still unknown, so that is the honest condition.
+  if (nextStage === "pet_identification") return sendReply("pet_identity", PET_IDENTITY_TEXT);
 
   if (intakeData.complaint === null && intakeData.symptoms.length === 0) return sendReply("complaint", COMPLAINT_TEXT);
 

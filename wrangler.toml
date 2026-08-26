@@ -10,10 +10,13 @@ WHATSAPP_GRAPH_API_VERSION = "v25.0"
 queue = "vetai-intake"
 binding = "INTAKE_QUEUE"
 
+# Task 036: max_batch_timeout lowered 5 -> 1. With max_batch_size = 1 a single
+# message already fills a batch, so this only bounds the empty-batch wait, but
+# every second it can still cost is dead air in front of an owner.
 [[queues.consumers]]
 queue = "vetai-intake"
 max_batch_size = 1
-max_batch_timeout = 5
+max_batch_timeout = 1
 max_retries = 3
 retry_delay = 120
 dead_letter_queue = "vetai-intake-dlq"
@@ -21,7 +24,7 @@ dead_letter_queue = "vetai-intake-dlq"
 [[queues.consumers]]
 queue = "vetai-intake-dlq"
 max_batch_size = 1
-max_batch_timeout = 5
+max_batch_timeout = 1
 max_retries = 3
 retry_delay = 300
 dead_letter_queue = "vetai-intake-terminal-dlq"

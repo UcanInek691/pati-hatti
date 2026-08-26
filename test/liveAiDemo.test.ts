@@ -375,7 +375,9 @@ describe("POST /api/message success path uses the real adapter with mocked fetch
     expect(second.status).toBe(200);
     const data = (await second.json()) as any;
     expect(data.state.callCount).toBe(2);
-    expect(data.plan.nextStage).toBe("safety_check");
+    // Task 036 inserted intake_confirmation between complaint_collection and
+    // safety_check, so the second turn now lands there.
+    expect(data.plan.nextStage).toBe("intake_confirmation");
   });
 
   it("parses usage totals when the provider reports them", async () => {

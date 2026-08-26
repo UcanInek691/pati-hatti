@@ -206,7 +206,7 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 
-  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<unknown>, env: Env, ctx: ExecutionContext): Promise<void> {
     let processor: ((body: unknown, env: Env) => Promise<QueueDisposition>) | null;
     if (INTAKE_QUEUE_NAMES.has(batch.queue)) {
       processor = processIntakeQueueMessage;
@@ -234,6 +234,21 @@ export default {
         message.retry();
       }
     }
+
+    // Task 036: the reply an intake turn just wrote to
+    // `outbound_message_outbox` used to sit there until the next `* * * * *`
+    // cron tick — 0-60s of dead air per turn, ~30s on average, and cron's
+    // finest granularity on Cloudflare is already one minute, so the schedule
+    // cannot be tightened. Draining here sends it as soon as it exists.
+    //
+    // Safe to call from two places at once: `drainOutboundMessages` claims
+    // each row under a lease before sending and never throws, so the cron run
+    // below is now a safety net for rows this call misses (a crashed
+    // invocation, a row written by another path) rather than the only sender.
+    //
+    // Skipped for an unrecognized queue: nothing ran, so nothing can have been
+    // written to send.
+    if (processor !== null) ctx.waitUntil(drainOutboundMessages(env).catch(() => {}));
   },
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

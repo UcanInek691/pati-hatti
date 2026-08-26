@@ -302,6 +302,7 @@ const LOCAL_DEMO_APP_JS = `"use strict";
 const STAGE_LABELS = {
   pet_identification: "Hayvan kimliği belirleniyor",
   complaint_collection: "Şikayet toplanıyor",
+  intake_confirmation: "Bilgi onayı bekleniyor",
   safety_check: "Güvenlik kontrolü",
   ready_for_triage: "Değerlendirmeye hazır",
   appointment_offer: "Randevu teklif aşaması",
@@ -333,6 +334,7 @@ const REPLY_CATEGORY_LABELS = {
   human_handoff: "Personel yönlendirme mesajı",
   safety_questions: "Güvenlik soruları",
   pet_identity: "Hayvan kimliği sorusu",
+  intake_confirmation: "Bilgi onay sorusu",
   complaint: "Şikayet sorusu",
   intake_received: "Bilgi alındı mesajı",
 };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { processIntakeQueueMessage } from "../src/intakeConsumer";
+import { RECORDING_NOTICE_DRAFT_TEXT, processIntakeQueueMessage } from "../src/intakeConsumer";
 import type { QueueDisposition } from "../src/intakeConsumer";
 import * as intakeReplyModule from "../src/intakeReply";
 import * as intakeTurnModule from "../src/intakeTurn";
@@ -7,7 +7,7 @@ import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
 import { PET_IDENTITY_TEXT } from "../src/intakeReply";
-import { buildPetConfirmationText } from "../src/petRegistration";
+import { INTAKE_CORRECTION_PROMPT_TEXT, buildIntakeConfirmationText } from "../src/petRegistration";
 
 const CONVERSATION_ID = "11111111-1111-1111-1111-111111111111";
 const PROVIDER_MESSAGE_ID = "wamid.ID1";
@@ -84,7 +84,11 @@ function contextRow(overrides: Record<string, unknown> = {}): Response {
       status: "active",
       intake_stage: "safety_check",
       intake_data: {},
-      state_version: 1,
+      // Mid-conversation by default, consistent with the prior `recent_messages`
+      // entry below. Task 036 keys the recording notice on `state_version === 1`
+      // (the conversation's very first turn), so a fixture that is not modelling
+      // a first turn must not claim to be one.
+      state_version: 2,
       owner_name: OWNER_NAME,
       pets: [{ id: PET_ID, name: "Fluffy", species: "cat" }],
       recent_messages: [{ direction: "inbound", content: "OLD MESSAGE TEXT", created_at: "2026-01-01T00:00:00Z" }],
@@ -338,7 +342,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
     expect(finalizeBody.p_pet_id).toBe(PET_ID);
     expect(finalizeBody.p_claim_token).toBe(CLAIM_TOKEN);
-    expect(finalizeBody.p_expected_version).toBe(1);
+    expect(finalizeBody.p_expected_version).toBe(2);
     expect(finalizeBody.p_reply_category).toBe("intake_received");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
     expect((finalizeBody.p_reply_text as string).length).toBeGreaterThan(0);
@@ -763,7 +767,7 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     expect(offerBody.p_conversation_id).toBe(CONVERSATION_ID);
     expect(offerBody.p_provider_message_id).toBe(PROVIDER_MESSAGE_ID);
     expect(offerBody.p_claim_token).toBe(CLAIM_TOKEN);
-    expect(offerBody.p_expected_version).toBe(1);
+    expect(offerBody.p_expected_version).toBe(2);
     expect(offerBody.p_planned_next_stage).toBe("ready_for_triage");
     expect(offerBody.p_pet_id).toBe(PET_ID);
   });
@@ -844,7 +848,7 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
     expect(decisionBody.p_decision).toBe("confirm");
     expect(decisionBody.p_pet_id).toBe(PET_ID);
     expect(decisionBody.p_claim_token).toBe(CLAIM_TOKEN);
-    expect(decisionBody.p_expected_version).toBe(1);
+    expect(decisionBody.p_expected_version).toBe(2);
   });
 
   it.each([
@@ -1599,42 +1603,45 @@ describe("processIntakeQueueMessage: non-ai claim short-circuit (Task 033 race w
   });
 });
 
-describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)", () => {
-  it("a first-time owner's fresh pet_name extraction asks for confirmation instead of finalizing the ordinary way", async () => {
+describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", () => {
+  it("entering intake_confirmation asks one combined name/species/complaint question", async () => {
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
-          intake_stage: "pet_identification",
+          intake_stage: "complaint_collection",
           pet_id: null,
           pets: [],
           recent_messages: [
             { direction: "outbound", content: PET_IDENTITY_TEXT, created_at: "2026-01-01T00:00:00Z" },
-            { direction: "inbound", content: "Pamuk", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "inbound", content: "Pamuk, topallıyor", created_at: "2026-01-01T00:00:01Z" },
           ],
         }),
-      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Pamuk" }),
-      extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
-      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Pamuk, topallıyor" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" }),
+      finalize: () => finalizeRow("applied", { intake_stage: "intake_confirmation", state_version: 3 }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
-
-    expect(result).toBe("ack");
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     const body = bodyOf(fetchMock, 3);
-    expect(body.p_next_stage).toBe("pet_identification");
-    expect(body.p_reply_category).toBe("pet_identity");
-    expect(body.p_reply_text).toBe(buildPetConfirmationText("Pamuk", null));
+    expect(body.p_next_stage).toBe("intake_confirmation");
+    expect(body.p_reply_category).toBe("intake_confirmation");
+    expect(body.p_reply_text).toBe(buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor"));
+    // Nothing is written to `pets` until the owner has actually confirmed.
     expect(body.p_create_pet_name).toBeNull();
-    expect(body.p_create_pet_species).toBeNull();
+    expect(body.p_pet_id).toBeNull();
+    // Task 036: the pending fields survive the turn — they are what the next
+    // turn compares the owner's answer against.
+    expect((body.p_intake_data as Record<string, unknown>).pet_name).toBe("Pamuk");
+    expect((body.p_intake_data as Record<string, unknown>).complaint).toBe("topallıyor");
   });
 
-  it("an explicit evet reply to the exact confirmation just sent creates the pet via finalize_intake_queue_job", async () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", "kedi");
+  it("an explicit evet to the exact combined summary creates the pet and advances to safety_check", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor");
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
-          intake_stage: "pet_identification",
+          intake_stage: "intake_confirmation",
           pet_id: null,
           pets: [],
           recent_messages: [
@@ -1643,27 +1650,51 @@ describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)
           ],
         }),
       claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
-      extraction: extractionJson({ pet_name: "Pamuk", species: "kedi", complaint: null }),
-      finalize: () => finalizeRow("applied", { intake_stage: "complaint_collection", state_version: 2 }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 3 }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
-
-    expect(result).toBe("ack");
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     const body = bodyOf(fetchMock, 3);
-    expect(body.p_next_stage).toBe("complaint_collection");
-    expect(body.p_pet_id).toBeNull();
+    expect(body.p_next_stage).toBe("safety_check");
     expect(body.p_create_pet_name).toBe("Pamuk");
     expect(body.p_create_pet_species).toBe("kedi");
+    expect(body.p_pet_id).toBeNull();
+    expect(body.p_reply_category).toBe("intake_received");
   });
 
-  it("an explicit hayır reply clears the pending pet_name/species and re-asks the base pet-identity question", async () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+  it("an evet from an owner whose pet is already on file advances without creating a duplicate row", async () => {
+    const confirmationText = buildIntakeConfirmationText("Fluffy", "cat", "topallıyor");
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
-          intake_stage: "pet_identification",
+          intake_stage: "intake_confirmation",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
+      extraction: extractionJson({ pet_name: "Fluffy", species: "cat", complaint: "topallıyor" }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 3 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("safety_check");
+    expect(body.p_create_pet_name).toBeNull();
+    expect(body.p_pet_id).toBe(PET_ID);
+  });
+
+  it("a hayır asks what to correct and — unlike Task 035 — keeps the collected fields", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "intake_confirmation",
           pet_id: null,
           pets: [],
           recent_messages: [
@@ -1673,46 +1704,71 @@ describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)
         }),
       claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "hayır" }),
       extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
-      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "intake_confirmation", state_version: 3 }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
-
-    expect(result).toBe("ack");
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     const body = bodyOf(fetchMock, 3);
-    expect(body.p_next_stage).toBe("pet_identification");
-    expect(body.p_reply_category).toBe("pet_identity");
-    expect(body.p_reply_text).toBe(PET_IDENTITY_TEXT);
+    expect(body.p_next_stage).toBe("intake_confirmation");
+    expect(body.p_reply_category).toBe("intake_confirmation");
+    expect(body.p_reply_text).toBe(INTAKE_CORRECTION_PROMPT_TEXT);
     expect(body.p_create_pet_name).toBeNull();
-    expect((body.p_intake_data as Record<string, unknown>).pet_name).toBeNull();
-    expect((body.p_intake_data as Record<string, unknown>).species).toBeNull();
+    // The Task 035 behaviour was to null these out and restart from the
+    // generic identity question; the correction flow keeps them so the owner
+    // only has to restate the part that is wrong.
+    expect((body.p_intake_data as Record<string, unknown>).pet_name).toBe("Pamuk");
   });
 
-  it("forces human_handoff once the attempt bound is reached, instead of asking again", async () => {
+  it("a correcting reply re-confirms the updated summary rather than creating under the old one", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "intake_confirmation",
+          pet_id: null,
+          pets: [],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "hayır, adı Karabaş", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "hayır, adı Karabaş" }),
+      extraction: extractionJson({ pet_name: "Karabaş", species: null, complaint: null }),
+      finalize: () => finalizeRow("applied", { intake_stage: "intake_confirmation", state_version: 3 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("intake_confirmation");
+    expect(body.p_reply_text).toBe(buildIntakeConfirmationText("Karabaş", null, null));
+    expect(body.p_create_pet_name).toBeNull();
+  });
+
+  it("forces human_handoff once the identical confirmation has been asked to the bound", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const recentMessages = [
       ...Array.from({ length: 3 }, (_, i) => ({
         direction: "outbound" as const,
-        content: PET_IDENTITY_TEXT,
+        content: confirmationText,
         created_at: `2026-01-01T00:00:0${i}Z`,
       })),
-      { direction: "inbound" as const, content: "Pamuk", created_at: "2026-01-01T00:00:03Z" },
+      { direction: "inbound" as const, content: "tamam", created_at: "2026-01-01T00:00:03Z" },
     ];
     const fetchMock = happyRoutes({
-      context: () => contextRow({ intake_stage: "pet_identification", pet_id: null, pets: [], recent_messages: recentMessages }),
-      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Pamuk" }),
+      context: () => contextRow({ intake_stage: "intake_confirmation", pet_id: null, pets: [], recent_messages: recentMessages }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "tamam" }),
       extraction: extractionJson({ pet_name: "Pamuk", species: null, complaint: null }),
-      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 2 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 3 }),
       clinic: () => clinicRow(),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
-
-    expect(result).toBe("ack");
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     // 5 calls: claim, context, OpenAI, clinic-operational-context (a
     // human_handoff-category reply is personalized before finalize — see
-    // `personalizeHandoffReply`), finalize.
+    // `prepareOutboundReply`), finalize.
     expect(fetchMock).toHaveBeenCalledTimes(5);
     const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("human_handoff");
@@ -1720,12 +1776,12 @@ describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)
     expect(body.p_create_pet_name).toBeNull();
   });
 
-  it("a needs_safety_check signal takes precedence over an in-progress pet confirmation (safety must never be deferred)", async () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+  it("a needs_safety_check signal takes precedence over an in-progress confirmation (safety must never be deferred)", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
-          intake_stage: "pet_identification",
+          intake_stage: "intake_confirmation",
           pet_id: null,
           pets: [],
           recent_messages: [
@@ -1740,26 +1796,24 @@ describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)
         complaint: null,
         reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: null },
       }),
-      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "intake_confirmation", state_version: 3 }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
-
-    expect(result).toBe("ack");
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
     const body = bodyOf(fetchMock, 3);
-    // Must be the safety questionnaire, not a pet-identity confirmation and
-    // not a pet creation — no p_create_pet_name on this turn.
+    // Must be the safety questionnaire, not a confirmation and not a pet
+    // creation — no p_create_pet_name on this turn.
     expect(body.p_reply_category).toBe("safety_questions");
     expect(body.p_create_pet_name).toBeNull();
   });
 
   it("a duplicate_pet_name RPC result is treated as retryable, not acked", async () => {
-    const confirmationText = buildPetConfirmationText("Pamuk", null);
+    const confirmationText = buildIntakeConfirmationText("Pamuk", null, null);
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
-          intake_stage: "pet_identification",
+          intake_stage: "intake_confirmation",
           pet_id: null,
           pets: [],
           recent_messages: [
@@ -1773,8 +1827,42 @@ describe("processIntakeQueueMessage: pet-onboarding routing (Task 034 follow-on)
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await processIntakeQueueMessage(validBody, env);
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
+  });
+});
 
-    expect(result).toBe("retry");
+describe("processIntakeQueueMessage: recording notice (Task 036)", () => {
+  // The notice TEXT is a draft pending KVKK sign-off; these tests read the
+  // exported constant rather than restating it, so a sign-off rewording does
+  // not have to touch this file. What they pin is the mechanism: attached
+  // once, on the conversation's first turn only.
+  it("prefixes the first turn's reply with the recording notice", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          state_version: 1,
+          recent_messages: [{ direction: "inbound", content: "merhaba", created_at: "2026-01-01T00:00:00Z" }],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "merhaba" }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    const text = bodyOf(fetchMock, 3).p_reply_text as string;
+    expect(text.startsWith(RECORDING_NOTICE_DRAFT_TEXT)).toBe(true);
+    // Prefixed, not replacing: the turn's own reply still follows it.
+    expect(text.length).toBeGreaterThan(RECORDING_NOTICE_DRAFT_TEXT.length + 2);
+  });
+
+  it("does not repeat the notice on later turns", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ state_version: 4 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 5 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(bodyOf(fetchMock, 3).p_reply_text as string).not.toContain(RECORDING_NOTICE_DRAFT_TEXT);
   });
 });

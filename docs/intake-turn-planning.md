@@ -82,13 +82,21 @@ In order, first match wins:
    `human_handoff` safety decision always routes to (or keeps)
    `human_handoff`.
 3. `human_handoff` otherwise stays `human_handoff`.
-4. `pet_identification` advances to `complaint_collection` only when pet
-   resolution is `matched`.
-5. `complaint_collection` advances to `safety_check` only once the merged
-   complaint is non-null or merged symptoms are non-empty.
-6. `safety_check` advances to `ready_for_triage` only for `continue_intake`;
+4. `pet_identification` advances to `complaint_collection` once the pet's
+   identity is known — either pet resolution is `matched`, or the owner has
+   no pets on file yet and a name has been extracted. The second case is new
+   in Task 036: the pet row is no longer written at this point, so a
+   first-time owner's resolution stays `needs_clarification` for the rest of
+   the conversation and cannot be used as the gate.
+5. `complaint_collection` advances to `intake_confirmation` only once the
+   merged complaint is non-null or merged symptoms are non-empty.
+6. `intake_confirmation` always holds. Only the owner's own answer settles
+   it, and that answer is read by `planPetRegistrationAction`
+   (`src/petRegistration.ts`), which is what moves the conversation on to
+   `safety_check` — creating the pet row in the same atomic finalize.
+7. `safety_check` advances to `ready_for_triage` only for `continue_intake`;
    `needs_safety_check` (any unknown signal) always holds it back.
-7. `ready_for_triage` and the three appointment stages always hold. Triage
+8. `ready_for_triage` and the three appointment stages always hold. Triage
    and appointment progression belong to a later task; this planner
    deliberately never invents that logic.
 

@@ -383,7 +383,10 @@ declare
   v_stage text;
   v_advanced_stage text;
   v_advanced_version integer;
-  v_stages text[] := array['complaint_collection', 'safety_check', 'ready_for_triage', 'appointment_offer', 'appointment_selection', 'appointment_confirmation', 'completed'];
+  -- Task 036: intake_confirmation sits between complaint_collection and
+  -- safety_check; this walk must list every rank in order or it trips the
+  -- one-step-forward rule.
+  v_stages text[] := array['complaint_collection', 'intake_confirmation', 'safety_check', 'ready_for_triage', 'appointment_offer', 'appointment_selection', 'appointment_confirmation', 'completed'];
 begin
   foreach v_stage in array v_stages loop
     select advanced.intake_stage, advanced.state_version into v_advanced_stage, v_advanced_version
@@ -395,8 +398,8 @@ begin
     end if;
     v_version := v_advanced_version;
   end loop;
-  if v_version <> 8 then
-    raise exception 'expected conv W final state_version 8, got %', v_version;
+  if v_version <> 9 then
+    raise exception 'expected conv W final state_version 9, got %', v_version;
   end if;
 end;
 $$;
@@ -420,7 +423,7 @@ begin
   end if;
 
   if (select intake_stage from public.conversations where id = '02400000-0000-0000-0000-000000000032') <> 'completed'
-    or (select state_version from public.conversations where id = '02400000-0000-0000-0000-000000000032') <> 8 then
+    or (select state_version from public.conversations where id = '02400000-0000-0000-0000-000000000032') <> 9 then
     raise exception 'already_terminal must never regress or advance conv W';
   end if;
 
