@@ -36,6 +36,34 @@ itself.
     hosting provider.
   - This step cannot be satisfied by an engineer's judgment call; it requires
     sign-off from whoever is accountable for KVKK compliance for the clinic.
+  - **Open questions raised by Task 035 and carried here on 2026-08-26.** Task
+    035 (pet onboarding) shipped `COMPLETE` with these deliberately unanswered;
+    they were moved out of that task rather than closed inside it, because they
+    are legal decisions and no engineering work can settle them. They are
+    listed here so the `COMPLETE` stamp on Task 035 cannot be read as covering
+    them:
+    - **Is the pet-confirmation prompt itself an adequate disclosure moment?**
+      The bot asks the owner to confirm a pet name and species before writing
+      a `public.pets` row. Whether that prompt discharges any notice duty, or
+      whether a separate notice must precede it, is unanswered.
+    - **Do pet records need provenance for export?** `public.pets` has no
+      column recording whether a row was created by the AI path or by clinic
+      staff. Whether a data-subject export or deletion response must
+      distinguish the two is unanswered. Adding such a column is also the
+      prerequisite for the partial unique index named in
+      `20260825000100_pet_registration.sql`, so a legal answer here has a
+      direct engineering consequence.
+    - **What notice, if any, must open a conversation, and in what words?**
+      Raised by Maya on 2026-08-26 (see the Task 036 candidate in
+      `CURRENT_TASK.md`): she wants a one-line notice at the start of a
+      conversation saying messages are recorded for safety/legal reasons. The
+      wording is a legal artifact, not a copy decision, and must not be
+      finalized by an engineer or by the AI. It is the same
+      notice-timing question as the first bullet, now with a concrete
+      placement proposal attached.
+  - `docs/kvkk-inceleme-paketi.md` is the technical package prepared for the
+    reviewing expert; it states verified facts only and deliberately answers
+    none of the above.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

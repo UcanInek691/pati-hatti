@@ -1,6 +1,10 @@
 # Current task — 035 Pet onboarding (first-time owner pet registration)
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-08-26 — see "Task 035 closure record" below,
+directly above the Task 034 record). **This stamp covers engineering only.** Criterion 5's KVKK
+questions were moved out of this task unanswered, to the human gate in
+`docs/production-readiness.md` §1; nothing here is a legal sign-off, and the
+production release gate is unchanged by this closure.
 
 Contract opened by: Claude Opus, standing in for Codex under Maya's explicit
 delegation of 2026-08-25. Reverts to Codex ownership when Codex returns.
@@ -204,11 +208,17 @@ inference it carried has now been checked against the real files):
      (`src/petRegistration.ts:138`). The questionnaire always precedes the pet
      confirmation, and the shortest possible path to a created pet is three
      inbound turns.
-5. **KVKK.** §3/§4/§5/§8 are updated with the verified technical facts, but the
-   legal decisions they open are unfilled and belong to the reviewing expert —
-   in particular whether the confirmation prompt is itself an adequate
-   disclosure moment, and whether pet records need provenance for export. This
-   task must not answer those.
+5. **KVKK.** `MOVED OUT` — 2026-08-26, on Maya's decision. The engineering half
+   was done: `docs/kvkk-inceleme-paketi.md` §3/§4/§5/§8 carry the verified
+   technical facts of pet onboarding. The legal half was never this task's to
+   answer, and closing this task does **not** answer it. Both open questions —
+   whether the confirmation prompt is itself an adequate disclosure moment, and
+   whether pet records need provenance for export — now live as named,
+   individually visible bullets under the KVKK human gate in
+   `docs/production-readiness.md` §1, alongside the third question Maya raised
+   the same day about an opening recording notice. They block production
+   release exactly as they did before; only their home changed. Do not treat
+   this task's `COMPLETE` as covering them.
 
 ## Out of scope
 
@@ -240,6 +250,225 @@ Maya's separate explicit approvals, `20260825000100_pet_registration.sql` was
 pushed to staging and the staging Worker was redeployed — see criterion 3 for
 the outputs. Staging's last migration is no longer `strict_ai_allowlist`. No
 production change and no secret rotation at any point.
+
+---
+
+## Task 035 closure record — 2026-08-26
+
+Closed by Claude Opus in Codex's role under Maya's standing delegation of
+2026-08-25, on Maya's explicit instruction of 2026-08-26.
+
+### What `COMPLETE` means here, and what it does not
+
+Criteria 1-4 are met and recorded above with their evidence. Criterion 5 was
+**moved out unanswered**, not met: its two KVKK questions are now named bullets
+under the human gate in `docs/production-readiness.md` §1, together with the
+third question Maya raised the same day. They block production release exactly
+as before.
+
+The move was Maya's call and it had a concrete reason: `AGENTS.md:23` forbids
+starting a second task while the current one is `READY` or `IN_REVIEW`. Holding
+035 open for a legal sign-off that no engineer can produce would have blocked
+all further work indefinitely. `COMPLETE` here therefore means *the engineering
+is done and proven on staging*, and nothing more. It is not a compliance
+statement, it does not shorten the production gate, and it must not be cited as
+evidence that any KVKK question was resolved.
+
+### State at closure
+
+- Pet onboarding for first-time owners is live on `vetai-staging` and on no
+  production surface. `20260825000100_pet_registration.sql` is in staging's
+  migration history; the staging Worker carrying `src/petRegistration.ts` is
+  deployed.
+- The duplicate-name rule binds the AI write path only; staff writes through
+  the `pets_all` RLS policy are deliberately unconstrained (Maya, 2026-08-25).
+- One defect found during closure is recorded but not fixed: on `stale_state`,
+  `finalize_intake_queue_job` returns without rolling back an already-committed
+  pet insert, leaving an orphan row and a lease stuck in `processing`. Full
+  description in `PROJECT_CONTEXT.md` under "Not implemented". The Worker's
+  retry self-heals it, so it is not a release blocker; it is a candidate task.
+
+---
+
+# Candidate follow-on task — 036 Conversation flow, latency, and recording notice
+
+**Not an approved contract.** Drafted 2026-08-26 from Maya's four requests after
+that day's live staging test, plus a source audit. Nothing below is
+implemented, and per `AGENTS.md` this needs Maya's approval before any code is
+written. Read this as a scope proposal with the current behavior established
+from source, so the decisions Maya has to make are visible before, not during,
+implementation.
+
+## Where this came from
+
+Maya's words after the live run: conversations should move **"daha hızlı, daha
+insancıl ve daha net."** Her concrete complaint from that run: she asked
+*"şimdi ne yapacam peki"* and the bot replied with a byte-identical repeat of
+its previous "Bilgileri aldım..." message — it answered nothing and read like a
+machine.
+
+That specific symptom is now explained from source, and it is not a bug in the
+repeat detector. `intakeConsumer.ts`'s `hasRepeatedNoProgressQuestion` only
+counts an outbound as repeatable if `isEligibleClinicQuestion` is true, which
+requires the text to contain `?`. `INTAKE_RECEIVED_TEXT` has no question mark,
+so the no-progress handoff can never fire on it, and an owner can be shown that
+same closing line indefinitely. Whether the fix is to widen the eligibility
+rule, to answer "what happens now" with real copy, or both, is part of this
+task's scope.
+
+## Current behavior, established from source
+
+### 1. Confirmation timing
+
+`planPetRegistrationAction` (`src/petRegistration.ts:129`) asks for confirmation
+the moment it has a name: zero registered pets, safety clear, and a non-null
+`plan.intakeData.pet_name` is enough. It does not wait for species and does not
+wait for a complaint. The ask pins the conversation to `pet_identification`
+(`src/intakeConsumer.ts`, ask branch) so the stage cannot advance while a
+confirmation is outstanding.
+
+### 2. What `HAYIR` does today
+
+Maya's guess was right, and it is worse than she described:
+
+- `parseYesNoReply` (`src/petRegistration.ts`) accepts **only** the exact
+  strings `evet`, `hayır`, `hayir` after NFKC normalization, Turkish-locale
+  lowercasing, and whitespace collapse. Everything else returns `"repeat"`.
+- A `decline` produces `{ kind: "declined" }`, and `src/intakeConsumer.ts` then
+  writes `{ ...intakeData, pet_name: null, species: null }` — both fields
+  erased — and replies with the generic `PET_IDENTITY_TEXT`, *"Hangi evcil
+  hayvanınız için yazıyorsunuz? Lütfen adını belirtin."* The owner starts over.
+- A natural correction such as *"hayır, adı Karabaş"* is **not** a decline and
+  **not** a correction: it is `"repeat"`, so the same confirmation is re-asked
+  verbatim and the attempt counter advances toward `bounded_handoff`. The
+  owner's actual correction is discarded even though the extractor already
+  parsed the new name out of that same message.
+
+### 3. Recording notice
+
+There is none. No reply category, no prefix, nothing at conversation start. The
+only privacy surface is the static `/privacy` page (`src/privacyPage.ts`).
+
+### 4. The ~1 minute delay — found, and it is not a retry
+
+The path, end to end:
+
+| Step | Cost |
+|---|---|
+| Meta webhook → `enqueueIntakeJob` (`src/index.ts:130`) | immediate, in-request |
+| Queue batching (`max_batch_timeout = 5`, `wrangler.staging.toml`) | 0-5 s |
+| `extractIntakeViaOpenAi` — `gpt-5.6-luna`, `reasoning: { effort: "none" }`, `max_output_tokens: 1200`, 30 s ceiling | typically low single-digit seconds |
+| `finalize_intake_queue_job` writes the reply into `outbound_message_outbox` — **it does not send it** | immediate |
+| `drainOutboundMessages`, reachable **only** from the `scheduled` handler (`src/index.ts:239`) on cron `* * * * *` | **0-60 s** |
+
+The delay is the last row. The reply is composed within seconds and then sits in
+the outbox waiting for the next cron tick — ~30 s on average, ~60 s worst case,
+every turn. It is structural, not a retry and not the model.
+
+`retry_delay = 120` is a real setting but a different signature: it applies only
+to genuine retries (`stale_state`, `duplicate_pet_name`, transient failures) and
+would present as ~2 minutes on *some* turns, not ~1 minute on nearly all of
+them. `wrangler tail` distinguishes the two cleanly — a retry logs a second
+consumer invocation for the same message; the cron case logs exactly one.
+
+**The cron cannot be made faster.** `* * * * *` is already Cloudflare's finest
+cron granularity. Any real improvement has to stop waiting for cron at all.
+
+Options, in the order I would put them to Maya:
+
+1. **Send inline after finalize, keep cron as the safety net.** Call the
+   existing claim/send/accept path from the queue consumer once the outbox row
+   is written, and leave the cron drain untouched for anything the inline send
+   misses. `drainOutboundMessages` already claims with a token before sending
+   and accepts or releases afterwards, so reusing that path — never bypassing
+   it — is what keeps double-send impossible. Removes essentially the whole
+   delay. No new infrastructure, no new schedule, no extra Worker invocation
+   beyond the one already running.
+2. **Drop `max_batch_timeout` to 0-1 s.** Saves up to 5 s. One line, safe,
+   trivially reversible, and worth doing regardless of option 1.
+3. **Leave it.** Legitimate only if a delay is wanted; nothing in the record
+   suggests it is.
+
+One fact to confirm before costing any of this: Cloudflare Queues requires the
+Workers **Paid** plan, so this account is presumably already on it and the "Free
+tier limits" framing may not apply. I did not verify the plan from the
+repository — it is not recorded there. Confirm before pricing.
+
+## Hard constraints any design here must respect
+
+These came out of the audit and each one rules out an otherwise obvious
+approach:
+
+- **One outbound reply per inbound message.** `outbound_message_outbox` carries
+  `unique (clinic_id, source_provider_message_id)`
+  (`20260809000100_intake_reply_outbox.sql:200`). A standalone recording notice
+  as its *own* message on turn 1 is impossible without a schema change; a
+  prefix on the existing first reply is not.
+- **The reply-category set is closed in SQL.** `finalize_intake_queue_job`
+  accepts exactly `emergency_handoff`, `human_handoff`, `safety_questions`,
+  `pet_identity`, `complaint`, `intake_received`. A new category means a new
+  migration.
+- **Stages advance exactly one step.** `advance_conversation_intake` raises on
+  anything else. Any reordering of the flow has to be expressible as
+  single-step transitions.
+- **Safety precedence is not negotiable.** On the first turn all eight safety
+  signals are `null`, so `evaluateSafetyDecision` returns `needs_safety_check`
+  and `planPetRegistrationAction` returns `none`
+  (`src/petRegistration.ts:138`). The questionnaire always precedes the pet
+  confirmation. "Fewer turns" cannot be bought here.
+
+## Proposed scope
+
+1. **Defer the confirmation and combine it.** Hold the ask until name, species,
+   and complaint (when the owner offers one) are collected, then confirm once.
+   - **Decision Maya must make.** Today a first-time owner cannot leave
+     `pet_identification` without a matched pet: `decideNextStage`
+     (`src/intakeTurn.ts:193`) advances only on `petResolution.kind ===
+     "matched"`. Deferring the confirmation means either collecting the
+     complaint *while still in* `pet_identification` — the stage name stops
+     describing what the stage does — or changing the stage model itself. This
+     is a contract-level choice, not an implementation detail, and it should be
+     settled before code.
+2. **Make correction a first-class outcome.** Add a `correction` action beside
+   `confirm`/`decline`/`repeat`: when the owner's reply carries a new name or
+   species, keep the fields they did not contradict, apply the ones they did,
+   and re-confirm with the updated values. Stop erasing both fields on decline.
+   A correction is progress and must not count against
+   `MAX_PET_IDENTIFICATION_ATTEMPTS`; only genuinely unparseable repeats should.
+3. **Answer "şimdi ne yapacam peki" instead of repeating.** Either widen
+   `isEligibleClinicQuestion` so a repeated non-question closing line can still
+   trigger the no-progress path, or give that state real copy. Copy choice is a
+   veterinary-review item (below), not an engineering one.
+4. **Recording notice — draft only, do not finalize.** Given the one-reply-per-
+   inbound constraint, the cheapest shape is a one-line prefix on the
+   conversation's first outbound reply rather than a new message or new
+   category. Candidate Turkish text, **explicitly a draft**:
+
+   > *Bilgilendirme: Güvenlik ve yasal yükümlülükler gereği bu görüşmedeki
+   > mesajlar kayıt altına alınmaktadır.*
+
+   This wording must not ship on an engineer's or the AI's say-so. It is the
+   same notice-timing question already open under the KVKK gate, and it is
+   filed there (`docs/production-readiness.md` §1, third bullet). Implementing
+   the *mechanism* can proceed on Maya's approval; the *text* ships only after
+   KVKK sign-off.
+5. **Latency.** Options 1 and 2 above, presented to Maya with the plan question
+   answered first.
+
+## Approvals this task will need, separately
+
+| Item | Whose approval |
+|---|---|
+| Recording-notice wording | KVKK sign-off — already filed under the production-readiness gate |
+| Any change to the confirmation, complaint, or closing copy | Reviewing veterinarian (`docs/veteriner-hekim-onay-paketi.md`) |
+| Stage-model change implied by deferring confirmation | Maya, as a contract decision |
+| Inline outbound send | Maya, plus a staging deploy under the `docs/staging-runbook.md` §12.1 order |
+
+## Explicitly out of scope
+
+- The `stale_state` orphan-pet defect recorded in `PROJECT_CONTEXT.md`. Related
+  file, unrelated fix; it deserves its own task.
+- Anything in production. This task, like 035, ends at staging.
 
 ---
 

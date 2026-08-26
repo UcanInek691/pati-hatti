@@ -527,13 +527,20 @@ that Coexistence's absence implies remains a controlled-pilot blocker and is
 deliberately unbuilt. Same-number Coexistence
 is `UNAVAILABLE` without a WhatsApp Business App pilot number. Recognizable
 group traffic is now excluded before automation, and critical Supabase RPC
-fetches are bounded at 10 seconds. Task 035 (pet onboarding for first-time owners) is `READY` with its
-implementation reviewed, committed, and now proven on staging: the `vetai-test`
-fixture, the staging apply/deploy, and the live first-time-owner registration
-(criterion 4, closed by derivation on 2026-08-26) have all run, each under the
-explicit user approval `AGENTS.md` requires. Its only outstanding criterion is
-the KVKK sign-off, which is the reviewing expert's to give and was excluded
-from this task's scope. Its duplicate-name
+fetches are bounded at 10 seconds. Task 035 (pet onboarding for first-time owners) is `COMPLETE` as of 2026-08-26,
+with its implementation reviewed, committed, and proven on staging: the
+`vetai-test` fixture, the staging apply/deploy, and the live first-time-owner
+registration (criterion 4, closed by derivation) have all run, each under the
+explicit user approval `AGENTS.md` requires. That `COMPLETE` covers engineering
+only. Its KVKK criterion was **moved out unanswered**, on Maya's decision, to
+the human gate in `docs/production-readiness.md` §1 — whether the confirmation
+prompt is an adequate disclosure moment, whether pet records need provenance
+for export, and what notice must open a conversation are all still open, still
+the reviewing expert's to answer, and still blocking production. Task 035's
+closure must never be cited as resolving them. Task 036 (conversation flow,
+correction handling, recording notice, and outbound latency) is drafted as a
+**candidate contract only** in `CURRENT_TASK.md` and awaits Maya's approval;
+no code for it exists. Its duplicate-name
 rule binds the AI write path only: clinic staff inserting through the `pets_all`
 RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
 Canary, failure injection, observability, and the controlled pilot gate remain
