@@ -165,6 +165,45 @@ inference it carried has now been checked against the real files):
 4. **Prove the loop is closed on staging**: a first-time owner sends a message,
    confirms with `EVET`, the pet row appears, and the conversation advances to
    `complaint_collection` instead of looping.
+   `DONE` — 2026-08-26, on `vetai-staging`, driven from Maya's whitelisted
+   number. Closed **by derivation from the run's own recorded state**, not by a
+   literal `complaint_collection` snapshot; Maya reviewed the derivation,
+   accepted it, and declined a second run.
+   - **The run.** Four inbound turns in one new conversation
+     (`1aa4d07a-012b-45b0-b663-c7213ba9fd45`, `state_version` 5): the pet name,
+     an answer to the safety questionnaire, `evet`, and one follow-up question.
+     It deviated from the written plan — the first message was conversational
+     ("merhaba köpeğimin adı karamel") and the safety answer carried a symptom
+     with it ("bunlardan birisi yok sarhoş gibi yürüyor 15 dakikadır") — which
+     is exactly what carried the conversation one stage past the point this
+     criterion's wording anticipated observing.
+   - **The pet row.** One row, `c0e06f64-3239-4289-85fd-c889ce7b4296`,
+     `karamel`/`köpek`, correct `clinic_id`, and `conversations.pet_id` points
+     at it. Both writes happen inside the same `finalize_intake_queue_job`
+     call, so the row and the stage advance are atomic by construction — the
+     property this criterion exists to prove.
+   - **Why `complaint_collection` is proven even though the snapshot reads
+     `safety_check`.** `advance_conversation_intake`
+     (`20260806000200_conversation_intake_state.sql`) accepts exactly one
+     forward step and raises on anything else. `pet_identification →
+     safety_check` is two steps and therefore cannot have happened. The
+     conversation being in `safety_check` today *requires* that it passed
+     through `complaint_collection`. This is a database guarantee, not an
+     inference.
+   - **Corroboration.** `state_version` 5 is the default 1 plus exactly four
+     advances, one per inbound turn — no room for a failed, repeated, or extra
+     turn. And the reply sent on the `EVET` turn was the `intake_received`
+     copy, which on a zero-pet `pet_identification` turn can only come from the
+     creation branch: the ordinary path would have resolved
+     `needs_clarification` and sent `PET_IDENTITY_TEXT`. That branch passes the
+     literal `nextStage: "complaint_collection"` (`src/intakeConsumer.ts`).
+   - **The safety detour was not a deviation from the design.** No "clean"
+     re-run could have avoided it: on a first turn all eight safety signals are
+     `null`, so `evaluateSafetyDecision` returns `needs_safety_check` and
+     `planPetRegistrationAction` returns `none` on safety precedence
+     (`src/petRegistration.ts:138`). The questionnaire always precedes the pet
+     confirmation, and the shortest possible path to a created pet is three
+     inbound turns.
 5. **KVKK.** §3/§4/§5/§8 are updated with the verified technical facts, but the
    legal decisions they open are unfilled and belong to the reviewing expert —
    in particular whether the confirmation prompt is itself an adequate

@@ -464,15 +464,32 @@ Verified evidence before the context-system change:
   Meta-side coexistence remains a staging gate.
 - External/background staff notification and administrative user or clinic
   management.
-- New-pet creation is **written but not live**. Task 035's code is in the
-  repository (`supabase/migrations/20260825000100_pet_registration.sql`,
+- New-pet creation is **live on staging only**. Task 035's code
+  (`supabase/migrations/20260825000100_pet_registration.sql`,
   `src/petRegistration.ts`, the fixture `supabase/tests/035_pet_registration.sql`)
-  and passes typecheck, the unit suite and a Worker dry-run build, but the
-  migration has been applied to **no** database, the SQL fixture has **never
-  been executed anywhere**, and no Worker carrying it has been deployed. Until
-  those happen a first-time owner still cannot pass `pet_identification` in any
-  running environment. Treat this as unimplemented behavior with reviewed code
-  behind it, not as a shipped feature.
+  passes typecheck, the unit suite and a Worker dry-run build; the fixture ran
+  green on `vetai-test`, the migration is in `vetai-staging`'s migration
+  history, the staging Worker carrying it is deployed, and a first-time owner
+  registering a pet through `EVET` was proven end to end on staging
+  (2026-08-26, Task 035 criterion 4). The migration has been applied to **no**
+  production database and no production Worker carries it, so in production a
+  first-time owner still cannot pass `pet_identification`. Not a shipped
+  feature yet.
+- **Known defect, recorded not fixed — candidate follow-on task.**
+  `finalize_intake_queue_job` inserts the new pet *before* calling
+  `advance_conversation_intake`. When that advance returns `stale_state` the
+  RPC exits through `return query select 'stale_state'`, a normal PL/pgSQL
+  return, which does **not** roll back the transaction. The pet row therefore
+  commits while `conversations.pet_id` stays null and the intake lease is left
+  in `processing` — `complete_intake_queue_job` is never reached — until the
+  lease expires. The Worker self-heals (the retry reads a context with
+  `pets.length > 0` and resolves the orphan row instead of creating a second
+  one), so there is no permanent corruption, but the window leaves an orphan
+  pet and a burned lease. The fix is most likely `raise exception` on that
+  branch so the insert rolls back with everything else, which needs its own
+  review of the Worker's RPC error path before it is written. Found by
+  inspection on 2026-08-26 while closing Task 035 criterion 4, and deliberately
+  left out of Task 035's scope.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
@@ -511,9 +528,12 @@ deliberately unbuilt. Same-number Coexistence
 is `UNAVAILABLE` without a WhatsApp Business App pilot number. Recognizable
 group traffic is now excluded before automation, and critical Supabase RPC
 fetches are bounded at 10 seconds. Task 035 (pet onboarding for first-time owners) is `READY` with its
-implementation already reviewed and committed, and is gated on two runs that
-have not happened — the `vetai-test` fixture and the staging apply/deploy — plus
-the explicit user approval `AGENTS.md` requires for both. Its duplicate-name
+implementation reviewed, committed, and now proven on staging: the `vetai-test`
+fixture, the staging apply/deploy, and the live first-time-owner registration
+(criterion 4, closed by derivation on 2026-08-26) have all run, each under the
+explicit user approval `AGENTS.md` requires. Its only outstanding criterion is
+the KVKK sign-off, which is the reviewing expert's to give and was excluded
+from this task's scope. Its duplicate-name
 rule binds the AI write path only: clinic staff inserting through the `pets_all`
 RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
 Canary, failure injection, observability, and the controlled pilot gate remain
