@@ -606,11 +606,12 @@ gate, the consumer branches, and the reply-category union.
 - Anything in production. This task, like 035, ends at staging.
 
 
-## Implementation record — 2026-08-26 (local verification only)
+## Implementation record — 2026-08-26
 
-Every scope item above is implemented and verified locally. Nothing has been
-applied to any database or deployed to any Worker; the staging migration and
-deploy are still waiting on the separate approval named in the table above.
+Every scope item above is implemented, verified locally, proven against a live
+Postgres on vetai-test, and applied to vetai-staging with the Worker deployed
+back to back on Maya's approval. Production stays out of scope. The one item
+still open is the live smoke test, recorded at the end of this section.
 
 ### Changed files
 
@@ -646,7 +647,7 @@ stage instead, which is the fact it was really asking about. Two tests in
 | `npx wrangler deploy --dry-run` | ok, 152.54 KiB |
 | `npx wrangler deploy --dry-run --config wrangler.staging.toml` | ok, 152.54 KiB |
 
-### Verification NOT run, and why
+### SQL fixtures — run on vetai-test (`cyjpiapxvalqltcsywam`) 2026-08-26
 
 The SQL fixtures in `supabase/tests/` were updated for the new stage —
 `006` (the stale-version case had to stay a legal one-step transition, and the
@@ -654,9 +655,66 @@ service-role block now walks `complaint_collection -> intake_confirmation ->
 safety_check`), `024` (the full-chain walk array and the two state_version
 assertions that follow from it), and `035` (a new Fixture 7 that creates the
 pet on the real `intake_confirmation -> safety_check` edge and proves nothing
-is written to `pets` before the owner confirms). They have **not been
-executed**: they run against a live Postgres, which means applying this
-migration first. That is the approval gate, not a local step.
+is written to `pets` before the owner confirms).
+
+All three were run against vetai-test after this migration was applied there,
+and all three passed: `006` and `024` returned their `PASS` row, `035`
+returned no rows as designed. That run found one fixture bug, fixed here.
+`006`'s last service-role block passed `p_intake_data => '{}'::jsonb` to a
+call it expected to fail on `illegal transition`, but
+`advance_conversation_intake` validates its arguments *before* the transition
+check, so the call raised `invalid intake_data` and the block re-raised. The
+payload is now `'{"test": true}'::jsonb`, matching the ten other
+non-intake_data error tests in the same file. The two permission tests keep
+`'{}'` deliberately: `EXECUTE` is checked before the body runs, so the payload
+never reaches validation there.
+
+Two earlier fixture failures were investigated and ruled out as unrelated to
+this task. `013` and `017` have been broken since Task 033 (2026-08-22): they
+call `ingest_whatsapp_text_message` without a `whatsapp_contact_routes` row,
+which the strict AI allowlist now answers `'ignored'`. Both were withdrawn
+from this task's runbook and left for a separate fix.
+
+### Staging migration and deploy — 2026-08-26, on Maya's approval of the pair
+
+Applied and deployed back to back in one session, deliberately, because the
+new rank map inside `advance_conversation_intake` shifts
+`complaint_collection -> safety_check` from +1 to +2. The Task 035 Worker and
+the Task 036 schema are incompatible on exactly that one transition, and
+`finalize_intake_queue_job` has no exception handler around that call, so a
+turn on that edge inside the window would have surfaced as a queue retry.
+
+| Step | Output |
+|---|---|
+| Exposure check, immediately before | one active conversation, at `safety_check`; zero at `complaint_collection`, so the only affected edge was empty |
+| `supabase migration list` before | `20260826000100` local-only, Remote column empty |
+| `supabase db push --linked` | `Applying migration 20260826000100_intake_confirmation_stage.sql` then `Finished`. 18:59:49Z to 18:59:52Z |
+| `npx wrangler deploy --config wrangler.staging.toml` | `Uploaded vetai-staging`, version `12ae7efb-3f1e-4fe9-9df4-2c62f6cc9958`, producer and both consumers listed. Done 19:00:27Z |
+| Window between the two | **38 seconds**, against a consumer `retry_delay` of 120s: anything caught in it would have retried after the new Worker was live |
+| `supabase migration list` after | Local and Remote both `20260826000100`, applied `2026-08-26 00:01:00`. No history drift |
+| Schema check on staging | all four objects carry `intake_confirmation`; `finalize_intake_queue_job` has exactly **1** overload, so the old 11-argument signature really was dropped |
+| `GET /health` | `200` `{"status":"ok","version":"0.1.0"}` |
+| `GET /ready` | `200` `{"status":"ready"}` |
+| Failure check after the pair | no new failed outbox rows; the single `failed_at` row dates from 2026-08-23 and is unrelated. Zero handoffs |
+
+The migration went through `supabase db push`, not the dashboard, so
+`supabase_migrations.schema_migrations` recorded it. That distinction matters:
+vetai-test received the same migration by dashboard paste, which applies the
+DDL without writing the history row, so a later `db push` against that project
+will try to apply it a second time and fail. Accepted on a disposable test
+project, never acceptable here.
+
+**There is no rollback out of this.** `wrangler rollback` would restore the
+Task 035 code against the Task 036 schema, which is the broken combination the
+back-to-back pair existed to avoid. Recovery is fix-forward only.
+
+### Still open
+
+The live smoke test from the allowlisted test number: one turn confirming the
+conversation stops at `intake_confirmation` with nothing written to `pets`,
+and that only `evet` creates the pet and moves it to `safety_check`. It needs
+a real inbound WhatsApp message, so it is Maya's step, not a command this
+session can run.
 
 ---
 

@@ -599,7 +599,7 @@ begin
       p_expected_version => 6,
       p_next_stage => 'appointment_offer',
       p_pet_id => null,
-      p_intake_data => '{}'::jsonb
+      p_intake_data => '{"test": true}'::jsonb
     );
     raise exception 'expected safety_check -> appointment_offer to raise';
   exception
