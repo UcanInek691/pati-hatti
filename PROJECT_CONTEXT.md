@@ -1,7 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-25 by Claude Opus, standing in for Codex under Maya's
-explicit delegation (Codex unavailable).
+Last verified: 2026-08-27 by Codex.
 
 ## Product
 
@@ -580,6 +579,27 @@ RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
 Canary, failure injection, observability, and the controlled pilot gate remain
 deferred. Task 034 inbound/outbound evidence and the Task 036 fresh zero-pet
 journey passed on staging; neither is production evidence.
+
+Maya's recorded next-product requirements (2026-08-27), not yet claimed as
+verified behavior:
+
+- Safety questions are **not** eight mandatory one-by-one form fields. In the
+  context of the preceding safety-question block, owners may answer naturally
+  with an aggregate negative (for example, “hiçbiri yok”), identify only the
+  listed condition or conditions that are present, or say that the listed
+  conditions are absent while reporting a different symptom. The extractor
+  must preserve the other symptom, map only justified listed signals, and the
+  deterministic safety gate must keep precedence. These compact and mixed
+  forms require explicit prompt/eval tests and a staging smoke before they are
+  treated as proven.
+- A successful safe intake must continue into appointment booking rather than
+  stop at information collection. The system must use only the exact
+  tenant-scoped future slots returned by the existing appointment engine,
+  display times in `Europe/Istanbul`, hold the selected slot, and confirm it
+  only after the owner's explicit `EVET`. It must never invent availability;
+  no-slot, expired-hold, safety, or handoff outcomes remain fail-closed. The
+  engine exists, but configured staging slots and a complete live appointment
+  selection/confirmation journey are still an open gate.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; the existing resources and secrets
