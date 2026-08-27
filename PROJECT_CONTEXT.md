@@ -490,6 +490,35 @@ Verified evidence before the context-system change:
   review of the Worker's RPC error path before it is written. Found by
   inspection on 2026-08-26 while closing Task 035 criterion 4, and deliberately
   left out of Task 035's scope.
+- **Related observation, recorded not fixed — same follow-on candidate.** On
+  2026-08-27, during the Task 036 smoke test, a new complaint about a
+  different animal landed in a two-day-old conversation and was merged into
+  it: `intake_data` was rewritten to `pet_name: "Minnoş" / species: "Kedi"`
+  while `conversations.pet_id` still pointed at the earlier pet `karamel`
+  (`köpek`). Collected intake fields and the linked pet row can therefore
+  disagree inside one active conversation. Related to the `stale_state`
+  orphan-pet defect above but distinct — no orphan row and no burned lease
+  here, only a stale link. Out of scope for Task 036, no fix attempted.
+- **Known defect, bounded not fixed — candidate follow-on task.** The intake
+  model has no case for "this owner already has a pet on file, and is now
+  writing about a *different* animal". `PetResolution`
+  (`src/intakeExtraction.ts`) offers only `matched | needs_clarification`, and
+  `isPetIdentityKnown` (`src/intakeTurn.ts`) accepts a fresh candidate name
+  only when `context.pets.length === 0`. Any owner with at least one pet who
+  names a second one therefore resolves `needs_clarification` on every turn,
+  holds at `pet_identification`, and is asked the identical question forever.
+  The Task 029 no-progress net does not catch it, because the owner re-sends
+  the name each turn and `isNoActionableFact` stays false. Found live on
+  2026-08-27 in the Task 036 smoke test, which locked a real conversation.
+  Mitigated the same day by a bounded handoff (`stalledOnPetIdentity` in
+  `src/intakeConsumer.ts`): holding at `pet_identification` after the identical
+  question has already gone out twice now hands off to a human, so no owner is
+  left without an exit. The reviewed Worker-only mitigation was deployed to
+  `vetai-staging` on 2026-08-27; production remains unchanged. That is a floor,
+  not the feature — the permanent fix is
+  a second-pet registration flow (a `PetResolution` case for a known owner with
+  a new animal, routed into `intake_confirmation`), which is its own design
+  decision and its own task.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
@@ -538,14 +567,19 @@ prompt is an adequate disclosure moment, whether pet records need provenance
 for export, and what notice must open a conversation are all still open, still
 the reviewing expert's to answer, and still blocking production. Task 035's
 closure must never be cited as resolving them. Task 036 (conversation flow,
-correction handling, recording notice, and outbound latency) is drafted as a
-**candidate contract only** in `CURRENT_TASK.md` and awaits Maya's approval;
-no code for it exists. Its duplicate-name
+correction handling, recording notice, and outbound latency) is `COMPLETE` as
+of 2026-08-27. Its migration and affected SQL proofs passed on `vetai-test`,
+the migration and reviewed Worker are live on `vetai-staging`, and a fresh
+zero-pet WhatsApp journey proved: recording notice on the first reply,
+deterministic safety questions, combined `intake_confirmation`, zero pet rows
+before explicit `EVET`, then exactly one created pet linked to the same
+conversation at `safety_check` after `EVET`. Inline outbound delivery removed the former
+cron-scale wait in that live journey. Production remains unchanged. Its duplicate-name
 rule binds the AI write path only: clinic staff inserting through the `pets_all`
 RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
 Canary, failure injection, observability, and the controlled pilot gate remain
-deferred; they must not proceed by pretending the missing Task 034 inbound
-evidence passed.
+deferred. Task 034 inbound/outbound evidence and the Task 036 fresh zero-pet
+journey passed on staging; neither is production evidence.
 
 Production release remains blocked on the human approvals and operational
 setup in `docs/production-readiness.md`; the existing resources and secrets

@@ -353,9 +353,22 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         console.warn("intake consumer: terminal_safety_signal");
       }
 
+      // An owner who already has a pet on file but names a *different* animal
+      // never leaves `pet_identification`: `isPetIdentityKnown` accepts a new
+      // name only when `pets.length === 0`, and `PetResolution` has no
+      // "new pet" case at all, so the turn resolves `needs_clarification`
+      // forever. The Task 029 net above cannot catch it, because the owner
+      // re-sends the name every turn and `isNoActionableFact` stays false.
+      // Holding at `pet_identification` after the identical question has
+      // already gone out twice *is* the stall, extracted fact or not.
+      // This is a bounded handoff only. The real fix is a second-pet
+      // registration flow (a `PetResolution` case for "known owner, new
+      // animal"), which is its own design decision — see PROJECT_CONTEXT.md.
+      const stalledOnPetIdentity = context.intakeStage === "pet_identification" && plan.nextStage === "pet_identification";
+
       const planned =
         context.intakeStage !== "completed" &&
-        isNoActionableFact(extraction) &&
+        (isNoActionableFact(extraction) || stalledOnPetIdentity) &&
         hasRepeatedNoProgressQuestion(context, claim.messageText)
           ? { ...plan, nextStage: "human_handoff" as const }
           : plan;

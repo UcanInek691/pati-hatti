@@ -292,9 +292,9 @@ evidence that any KVKK question was resolved.
 
 # Current task — 036 Conversation flow, latency, and recording notice
 
-Status: `IN PROGRESS` (contract approved by Maya 2026-08-26; implementation
-complete and locally verified — see "Implementation record" below. Staging
-migration and deploy still require separate approval.)
+Status: `COMPLETE` (closed 2026-08-27; implementation, database proof,
+staging migration/deploy, bounded second-pet handoff, and the fresh zero-pet
+live WhatsApp smoke all passed. Production remains unchanged.)
 
 **Approved by Maya on 2026-08-26**, with two decisions recorded at approval
 time:
@@ -715,6 +715,128 @@ conversation stops at `intake_confirmation` with nothing written to `pets`,
 and that only `evet` creates the pet and moves it to `safety_check`. It needs
 a real inbound WhatsApp message, so it is Maya's step, not a command this
 session can run.
+
+### Smoke test round 1 — 2026-08-27, and the loop it found
+
+Round 1 first hit a stale conversation. Maya's message landed in
+`1aa4d07a…`, created 2026-08-25, which already carried pet `karamel` and had
+passed pet identity long before this task existed — so it answered
+`intake_received` at `ready_for_triage` with no recording notice
+(`withRecordingNotice` fires only at `state_version === 1`) and proved nothing
+either way. It was the same single active conversation the pre-migration
+exposure check had found at `safety_check`. Closed with `status='completed'`
+on Maya's approval, which releases the
+`(clinic_id, owner_id) where status in ('active','handoff')` partial unique
+index so the next inbound opens a fresh conversation.
+
+Round 1 proper then exposed a real defect, and it is a blocker for closing
+this task. Conversation `7d006d0c…` opened clean, sent the recording notice on
+turn 1 (so that half of Task 036 is proven), asked the safety questions, and
+then locked at `pet_identification`, re-sending the identical
+`PET_IDENTITY_TEXT` on every turn with no exit. Cause: `PetResolution` has no
+"known owner, new animal" case and `isPetIdentityKnown` accepts a candidate
+name only when the owner has no pets on file, so Maya's test account — which
+still owns `karamel` from Task 035 — can never register a second pet. The
+Task 029 net misses it because the owner re-sends the name each turn, keeping
+`isNoActionableFact` false. Full analysis and the permanent-fix direction are
+recorded in `PROJECT_CONTEXT.md`.
+
+Mitigated here, not fixed: `stalledOnPetIdentity` in `src/intakeConsumer.ts`
+adds `pet_identification` to the same bounded-handoff floor
+`intake_confirmation` already had. Holding at `pet_identification` while the
+identical question has already gone out twice now hands off to a human. Three
+tests in `test/intakeConsumer.test.ts` pin it: the loop hands off, one prior
+question does not, and a name that actually advances the stage is untouched.
+The pre-existing fixture that asserted the opposite was rewritten — with
+`pet_name: "Pamuk"` against an owner whose only pet is Fluffy it was pinning
+this very loop as correct behaviour, and its `not.toBe` form would also have
+passed on an undefined body.
+
+`npx vitest run` 1423 passed, 2 skipped, 0 failed. `npx tsc --noEmit` clean.
+`npx wrangler deploy --dry-run --config wrangler.staging.toml` ok. Worker-only
+change, no migration.
+
+#### Round 1 recovery and reviewed Worker deploy — 2026-08-27
+
+Codex resumed the review and reran the complete local gate: frozen install,
+typecheck, 1,423 tests with the two paid eval gates skipped, production and
+staging Wrangler dry-runs, and `git diff --check` all passed. The accidental
+`ponytail:` word in the new source comment was removed; runtime behavior did
+not change. Supabase staging migration history matched all 20 local migrations.
+
+On Maya's explicit approval, the Worker-only mitigation was deployed to
+`vetai-staging` as version `82573d66-3907-4935-9749-54556793eb6e`. The real
+staging URL then returned `200` from both `/health` and `/ready`. A read-only
+Meta audit confirmed that the staging app is published, its registered number
+is subscribed, its callback targets the staging Worker, and the `messages`
+webhook field is subscribed. No production resource changed.
+
+Maya separately approved deleting the synthetic `karamel` pet so Task 036 can
+exercise its real zero-pet path. Read-only inspection established exactly one
+pet row, exactly one referencing conversation (already `completed`), no
+appointment row, and no pet link on the active `7d006d0c…` conversation. The
+core composite FK is `ON DELETE NO ACTION`, so a guarded atomic staging block
+first set the completed conversation's `pet_id` to null and then deleted only
+that exact pet row. Postcondition query: zero matching pets, the completed
+conversation unlinked, and `7d006d0c…` still `active`,
+`pet_identification`, `state_version = 4`, `pet_id is null`.
+
+One test-procedure correction is now explicit: a `handoff` conversation is
+still reused by `ingest_whatsapp_text_message`, because the partial unique/open
+conversation predicate covers both `active` and `handoff`. Handoff alone can
+never open the next fresh conversation; the old row must first be closed.
+
+The next real inbound exposed a second sequencing mistake in the original
+test plan rather than a product failure. Because `karamel` had already been
+deleted, the owner was genuinely zero-pet at context read. The old
+`pet_identification` conversation therefore unlocked normally instead of
+reaching `stalledOnPetIdentity`: the inbound persisted, an outbound reply was
+accepted, and the conversation advanced to `complaint_collection`,
+`state_version = 5`, still with `pet_id is null`. On Maya's separate approval,
+Codex then changed only that staging conversation's operational `status` from
+`active` to `completed`; message history, intake stage/data, owner data, and
+outbox rows were retained. The open-conversation partial unique constraint is
+now released, so the following inbound — not the one just processed — is the
+first genuinely fresh zero-pet Task 036 smoke turn. The bounded second-pet
+handoff remains covered by local regression tests and deployed code, but this
+specific live run did not exercise it after the pet fixture was removed.
+
+### Smoke test round 2 — fresh zero-pet path passed, 2026-08-27
+
+Maya then sent a genuinely fresh complaint from the allowlisted staging
+number. A new active conversation opened with `pet_id is null`; its first
+outbound reply carried the recording-notice prefix and the deterministic
+safety questions. `public.pets` still contained zero rows.
+
+After Maya explicitly answered all eight safety questions negatively, the
+conversation produced the combined `intake_confirmation` prompt for
+`Minnoş` / `Kedi` / `2 gündür yemek yemiyor`. A second read of `public.pets`
+still showed zero rows, proving that extraction and the confirmation prompt do
+not create a pet.
+
+Only after Maya sent the exact `EVET` confirmation did staging contain one
+`public.pets` row (`Minnoş`, `Kedi`). The same active conversation's `pet_id`
+then referenced that exact row, advanced to `safety_check` at
+`state_version = 4`, and the Worker emitted its normal
+post-confirmation reply. This closes the live acceptance criterion: pet
+creation is deferred until explicit confirmation and the created row is linked
+to the conversation in the same finalized turn. No production resource was
+changed.
+
+### Task 036 closure record
+
+- Local gate: frozen install, typecheck, 1,423 tests passed with two paid eval
+  gates skipped, production and staging dry-runs, and `git diff --check` all
+  passed.
+- Database gate: the Task 036 migration and affected rollback fixtures passed
+  on `vetai-test`; migration history is aligned on `vetai-staging`.
+- Live gate: recording notice, deterministic safety questions, deferred
+  combined confirmation, zero rows before `EVET`, one linked pet after `EVET`,
+  and inline outbound delivery were observed on staging.
+- Known limitation: owners who already have a different pet on file still use
+  the bounded human-handoff floor; the full second-pet registration flow is a
+  separate task recorded in `PROJECT_CONTEXT.md`.
+- Production deployment and the external veterinary/KVKK gates remain open.
 
 ---
 

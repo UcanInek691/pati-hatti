@@ -1212,7 +1212,13 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
   });
 
-  it("an actionable extracted fact does not trigger the fallback even with two identical prior questions", async () => {
+  // Was "an actionable extracted fact does not trigger the fallback even with
+  // two identical prior questions", asserted with `pet_name: "Pamuk"` against
+  // an owner whose only pet is Fluffy. That combination does not advance the
+  // stage, so the old fixture was pinning the pet_identification loop as
+  // correct. The guard it was really meant to provide — a turn that makes
+  // progress must not be handed off — is kept here with a name that resolves.
+  it("an actionable extracted fact that advances the stage does not trigger the fallback", async () => {
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
@@ -1225,14 +1231,71 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
             { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
           ],
         }),
-      extraction: extractionJson({ pet_name: "Pamuk", reported_safety_signals: ALL_NULL_SIGNALS }),
+      extraction: extractionJson({ pet_name: "Fluffy", reported_safety_signals: ALL_NULL_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    // Asserted positively: `not.toBe` also passes on an undefined body, which
+    // is how the old fixture could have gone green for the wrong reason.
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("complaint_collection");
+  });
+
+  // The live-smoke loop of 2026-08-27: an owner with a pet already on file
+  // names a different animal, so the turn resolves `needs_clarification`,
+  // holds at `pet_identification`, and re-sends the identical question — but
+  // the re-extracted name keeps `isNoActionableFact` false, so the Task 029
+  // net alone never fires. Bounded here instead.
+  it("an owner with an existing pet naming a different animal is handed off after the identical question repeats", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "Minnoş", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({ pet_name: "Minnoş", species: "kedi", reported_safety_signals: ALL_NULL_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    // Index 4, not 3: a human_handoff reply fetches clinic operational context
+    // before finalizing, exactly as the sibling fallback test above does.
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  // The other half of the bound: one identical question is not yet a stall,
+  // so a real customer still gets a second chance before any handoff.
+  it("an owner naming a different animal is not handed off after only one prior question", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: MESSAGE_TEXT, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      extraction: extractionJson({ pet_name: "Minnoş", species: "kedi", reported_safety_signals: ALL_NULL_SIGNALS }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await processIntakeQueueMessage(validBody, env);
 
     const finalizeBody = bodyOf(fetchMock, 3);
-    expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
+    expect(finalizeBody.p_next_stage).toBe("pet_identification");
   });
 
   it("two different prior questions do not trigger the fallback", async () => {
