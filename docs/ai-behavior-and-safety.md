@@ -31,9 +31,15 @@ best-effort acceptance.
 free-text `pet_name` (or the single known pet, when unambiguous) to a `petId`
 already present in the caller-supplied `pets` list from
 `ConversationIntakeContext`, using exact matching after Unicode `NFKC`,
-whitespace, and Turkish-locale-lowercase normalization. Zero or multiple
-matches — including duplicate normalized names — always fall back to
-`needs_clarification` rather than guessing.
+whitespace, and Turkish-locale-lowercase normalization. Multiple matches —
+including duplicate normalized names — fall back to `needs_clarification`
+rather than guessing. An explicit name that matches zero registered pets is a
+`new_candidate` (Task 037): identity-known only when no pet is already
+selected for the conversation, and the only resolution `planPetRegistrationAction`
+will ever create a pet from. When a pet is already selected and the turn
+names a different or unmatched animal, that is a conflict, never a
+`new_candidate` — see `docs/inbound-queue.md` for how the conflict is
+handled.
 
 ## What the prompt asks of the model
 

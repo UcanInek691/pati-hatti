@@ -1243,12 +1243,15 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
   });
 
-  // The live-smoke loop of 2026-08-27: an owner with a pet already on file
-  // names a different animal, so the turn resolves `needs_clarification`,
-  // holds at `pet_identification`, and re-sends the identical question — but
-  // the re-extracted name keeps `isNoActionableFact` false, so the Task 029
-  // net alone never fires. Bounded here instead.
-  it("an owner with an existing pet naming a different animal is handed off after the identical question repeats", async () => {
+  // Was "an owner with an existing pet naming a different animal is handed
+  // off after the identical question repeats" (the live-smoke loop of
+  // 2026-08-27, bounded by Task 036's fallback because the turn resolved
+  // `needs_clarification` and held at `pet_identification` forever). Task 037
+  // makes an unmatched name against an *unbound* conversation a `new_candidate`
+  // instead, so the second pet now registers on the very first turn and the
+  // bounded fallback is never reached — even with two identical prior
+  // questions already on record.
+  it("an owner with an existing pet naming a distinct second pet now advances instead of hitting the bounded fallback", async () => {
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
@@ -1268,16 +1271,15 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    // Index 4, not 3: a human_handoff reply fetches clinic operational context
-    // before finalizing, exactly as the sibling fallback test above does.
-    const finalizeBody = bodyOf(fetchMock, 4);
-    expect(finalizeBody.p_next_stage).toBe("human_handoff");
-    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("complaint_collection");
+    expect(finalizeBody.p_reply_category).not.toBe("human_handoff");
   });
 
-  // The other half of the bound: one identical question is not yet a stall,
-  // so a real customer still gets a second chance before any handoff.
-  it("an owner naming a different animal is not handed off after only one prior question", async () => {
+  // Same fix (Task 037), with only one prior identical question on record:
+  // the old bound never engaged this case anyway, but the second pet must
+  // still register normally rather than stalling at `pet_identification`.
+  it("an owner naming a distinct second pet advances after only one prior question too", async () => {
     const fetchMock = happyRoutes({
       context: () =>
         contextRow({
@@ -1295,7 +1297,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     await processIntakeQueueMessage(validBody, env);
 
     const finalizeBody = bodyOf(fetchMock, 3);
-    expect(finalizeBody.p_next_stage).toBe("pet_identification");
+    expect(finalizeBody.p_next_stage).toBe("complaint_collection");
   });
 
   it("two different prior questions do not trigger the fallback", async () => {
@@ -1422,6 +1424,100 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const finalizeBody = bodyOf(fetchMock, 3);
     expect(finalizeBody.p_next_stage).toBe("completed");
     expect(finalizeBody.p_reply_category).toBeNull();
+  });
+});
+
+describe("processIntakeQueueMessage: selected-pet conflict handoff (Task 037)", () => {
+  it("naming a different, unmatched pet while one is already selected routes to human_handoff without relinking, creating, or persisting the new animal's identity or clinical facts", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "complaint_collection",
+          pet_id: PET_ID,
+          pets: [{ id: PET_ID, name: "Fluffy", species: "cat" }],
+          intake_data: {
+            schema_version: 1,
+            intent: "report_symptom",
+            pet_name: "Fluffy",
+            species: "cat",
+            complaint: "eating less",
+            symptoms: [],
+            reported_safety_signals: ALL_NULL_SIGNALS,
+            missing_information: [],
+            user_requested_human: false,
+          },
+        }),
+      extraction: extractionJson({ pet_name: "Rocky", species: "dog", complaint: "kusuyor" }),
+      clinic: () => clinicRow(),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    // 5 calls: claim, context, OpenAI, clinic-operational-context (a
+    // human_handoff-category reply is personalized before finalize), finalize.
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const body = bodyOf(fetchMock, 4);
+    expect(body.p_next_stage).toBe("human_handoff");
+    expect(body.p_reply_category).toBe("human_handoff");
+    expect(body.p_pet_id).toBe(PET_ID);
+    expect(body.p_create_pet_name).toBeNull();
+    const intakeData = body.p_intake_data as Record<string, unknown>;
+    // The already-selected pet's identity and clinical facts are preserved;
+    // the conflicting animal's name/species/complaint are never persisted.
+    expect(intakeData.pet_name).toBe("Fluffy");
+    expect(intakeData.species).toBe("cat");
+    expect(intakeData.complaint).toBe("eating less");
+  });
+
+  it("a true safety signal reported alongside a conflicting pet name still merges through for escalation", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "complaint_collection",
+          pet_id: PET_ID,
+          pets: [{ id: PET_ID, name: "Fluffy", species: "cat" }],
+          intake_data: {
+            schema_version: 1,
+            intent: "report_symptom",
+            pet_name: "Fluffy",
+            species: "cat",
+            complaint: "eating less",
+            symptoms: [],
+            reported_safety_signals: ALL_NULL_SIGNALS,
+            missing_information: [],
+            user_requested_human: false,
+          },
+        }),
+      extraction: extractionJson({
+        pet_name: "Rocky",
+        species: "dog",
+        complaint: "kusuyor",
+        reported_safety_signals: { ...ALL_FALSE_SIGNALS, heavy_bleeding: true },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    // 4 calls: claim, context, OpenAI, finalize — an emergency-grade reply is
+    // not clinic-personalized (Task 031's gate is human_handoff-only).
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("human_handoff");
+    const intakeData = body.p_intake_data as Record<string, unknown>;
+    expect(intakeData.pet_name).toBe("Fluffy");
+    expect((intakeData.reported_safety_signals as Record<string, unknown>).heavy_bleeding).toBe(true);
+  });
+
+  it("does not call OpenAI on the turn after a conflict has already forced human_handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 3 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    // claim, context, clinic-operational-context, finalize — no OpenAI call.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -1725,6 +1821,33 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     expect(body.p_create_pet_species).toBe("kedi");
     expect(body.p_pet_id).toBeNull();
     expect(body.p_reply_category).toBe("intake_received");
+  });
+
+  it("creates a distinct second pet after exact evet when the unbound owner already has another pet", async () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor");
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "intake_confirmation",
+          pet_id: null,
+          pets: [{ id: PET_ID, name: "Fluffy", species: "cat" }],
+          recent_messages: [
+            { direction: "outbound", content: confirmationText, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "evet" }),
+      extraction: extractionJson({ pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" }),
+      finalize: () => finalizeRow("applied", { intake_stage: "safety_check", state_version: 3 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_next_stage).toBe("safety_check");
+    expect(body.p_pet_id).toBeNull();
+    expect(body.p_create_pet_name).toBe("Pamuk");
+    expect(body.p_create_pet_species).toBe("kedi");
   });
 
   it("an evet from an owner whose pet is already on file advances without creating a duplicate row", async () => {

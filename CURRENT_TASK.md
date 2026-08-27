@@ -1,6 +1,8 @@
 # Current task — 037 Second-pet registration and atomic pet finalization
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-08-28; Codex engineering/database gate and
+mandatory Claude Opus read-only review passed. Staging and production remain
+unchanged.)
 
 Opened by Codex on 2026-08-27 after Task 036 closed and the fresh zero-pet
 staging smoke passed. This task intentionally does **not** change the model
@@ -154,8 +156,9 @@ Do not edit `PROJECT_CONTEXT.md`; Codex owns it after verification.
 ## Required tests and checks
 
 - Add focused unit/integration tests for every behavior listed above, including
-  no OpenAI call on the selected-pet conflict handoff and no create parameters
-  before exact confirmation.
+  no repeated OpenAI call after the selected-pet conflict has persisted the
+  handoff stage, and no create parameters before exact confirmation. Detecting
+  the conflict on its first turn still requires the one normal extraction call.
 - Preserve all existing safety, first-pet, appointment, routing, and outbound
   tests.
 - Run:
@@ -186,11 +189,273 @@ git diff --check
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence.
+- Repository was clean at task start on top of commit
+  `096b26c docs: define Task 037 second-pet integrity contract`; the only
+  other pending change (`M .gitignore`) predates this task and was left
+  untouched.
+- `supabase/migrations/` ended at `20260826000100_intake_confirmation_stage.sql`
+  (Task 036); `supabase/tests/` ended at `035_pet_registration.sql` — used as
+  the exact byte-for-byte base for the new migration and as the structural
+  template (`run_pet_turn` helper, multi-turn stage progression) for the new
+  fixture.
+- `finalize_intake_queue_job` (as of `20260826000100`) already validated
+  `p_expected_version` against `advance_conversation_intake`'s own
+  `WHERE state_version = p_expected_version` guard, but only *after* an
+  unconditional `p_create_pet_name` insert into `pets` when that parameter
+  was supplied — a stale-version retry on the create path could therefore
+  insert a real pet row and then return `stale_state` with that row already
+  committed. This is exactly the defect Goal item 2 and decisions 7–8
+  describe; confirmed by reading the migration directly before editing.
+- `src/intakeExtraction.ts`'s `resolvePet` already normalized names via
+  NFKC/whitespace/Turkish-lowercase and never fuzzy-matched, but collapsed
+  both the zero-match and multiple-match cases into `needs_clarification`
+  (`PetResolution` had no third case) — so an owner with an existing pet who
+  named a genuinely new second animal could never be distinguished, in the
+  type system, from an owner whose input was ambiguous.
+- `src/petRegistration.ts`'s `planPetRegistrationAction` authorized `create`
+  on exact `"evet"` for any resolution kind, not only an unmatched name —
+  the confirmation-text/duplicate-name guards were the only things standing
+  between an ambiguous resolution and a created row.
+- `src/intakeConsumer.ts` needed no code change: `preserveHumanHandledPetBoundary`
+  and `isHandoffConsistent` operate on `plan.nextStage`/`plan.safetyDecision`
+  and are agnostic to *why* a plan chose `human_handoff`, and the existing
+  `context.intakeStage === "human_handoff" || "completed"` short-circuit
+  (line 45) already skips the OpenAI call on every turn after a conflict has
+  forced the stage there — confirmed by tracing both functions and by the
+  new end-to-end test added under "selected-pet conflict handoff" below.
+- Two existing tests in `test/intakeConsumer.test.ts` (previously titled
+  around "naming a different animal is handed off after the identical
+  question repeats" / "...after only one prior question") asserted the
+  pre-Task-037 defect itself — an owner with a registered pet naming a
+  distinct second pet got stuck at `pet_identification` — as correct
+  behavior. Renamed and re-asserted per Goal item 1; this is a behavior fix,
+  not a preserved regression.
 
 ## Delivery record
 
-To be filled by the implementing agent.
+### Changed files
+
+- `supabase/migrations/20260827000100_second_pet_registration_atomicity.sql`
+  (new) — byte-for-byte copy of `20260826000100_intake_confirmation_stage.sql`
+  except: (1) locks the conversation row and checks `state_version` before
+  the `p_create_pet_name` insert, returning `stale_state` immediately on a
+  mismatch instead of inserting; (2) the post-`advance_conversation_intake`
+  zero-row branch (which previously returned `stale_state` after the pet was
+  already inserted) is now `raise exception` — a zero-row result after the
+  pre-insert version check already succeeded is an invariant violation, not
+  a retryable outcome. **NOT APPLIED to any database.**
+- `supabase/tests/037_second_pet_registration_atomicity.sql` (new) —
+  rollback-only (`begin ... rollback`) fixture: two-clinic setup, a
+  `pg_temp.run_second_pet_turn` helper mirroring `035`'s `run_pet_turn` with
+  an added expected-version override, and five `do $$ ... $$` blocks
+  covering (1) second-pet registration for an owner with an existing pet via
+  proper one-hop-per-call stage progression, (2) the core atomicity proof —
+  a stale-version create attempt mutates zero rows, (3) a same-turn retry
+  with the corrected version succeeds, (4) duplicate-name refusal, (5)
+  cross-tenant isolation. **NOT RUN against any database.**
+- `src/intakeExtraction.ts` — `PetResolution` gains `{ kind: "new_candidate" }`;
+  `resolvePet`'s explicit-name branch returns it on zero normalized matches
+  (decision 1); multiple matches still return `needs_clarification`
+  (decision 2).
+- `src/intakeTurn.ts` — added `detectSelectedPetConflict` (true when
+  `context.petId` is non-null and the turn's resolved name doesn't match
+  that pet), `mergeSnapshotPreservingIdentity` (keeps the stored pet's
+  identity/clinical fields exactly, merges only `intent`,
+  `reported_safety_signals`, `user_requested_human` — decision 5), and a
+  `petConflict` parameter on `decideNextStage` that forces `human_handoff`.
+  `resolvePetForContext` was read but not modified: it already returns
+  `context.petId` unchanged whenever one is selected, which structurally
+  guarantees decision 3 (`new_candidate` is reachable only when
+  `context.petId === null`) without an extra guard.
+- `src/petRegistration.ts` — `planPetRegistrationAction`'s `confirm` branch
+  now requires `resolution.kind === "new_candidate"` before returning
+  `create`; every other resolution kind returns `none` (decision 4).
+- `src/localDemo.ts` — added the required `new_candidate` entry to
+  `PET_RESOLUTION_LABELS` (TS strict indexing over the widened union).
+- `test/intakeExtraction.test.ts` — updated the two zero-match
+  `resolvePet` expectations from `needs_clarification` to `new_candidate`;
+  added a zero-registered-pets case; left the duplicate-match
+  (`needs_clarification`) test unchanged.
+- `test/intakeTurn.test.ts` — split one combined test into an ambiguous-
+  duplicate case (`needs_clarification`, unchanged outcome) and a new
+  no-match-with-other-pets-present case (`new_candidate`); added a
+  zero-pets `new_candidate` case; added three new tests proving a
+  selected-pet conflict routes to `human_handoff` without merging the
+  conflicting animal's identity/clinical fields, for both an unmatched
+  explicit name and a brand-new name, and that a true safety signal still
+  merges through during a conflict turn.
+- `test/petRegistration.test.ts` — changed the shared `planned()` helper's
+  default `petResolution` from `{ kind: "needs_clarification" }` to
+  `{ kind: "new_candidate" }` (traced every call site first; several
+  existing `create`-expecting tests relied on the old default and would
+  otherwise have silently broken under the tightened production guard);
+  added an explicit test overriding `petResolution: { kind:
+  "needs_clarification" }` and asserting `{ kind: "none" }` on exact
+  `"evet"`, proving decision 4 directly.
+- `test/intakeConsumer.test.ts` — audited every `pet_name:`/`pets:`
+  occurrence in the file against the new resolution/conflict logic.
+  Renamed and re-asserted the two tests described in Observed context
+  above (now expect `complaint_collection`, not `human_handoff`/stall).
+  Added a new `describe("processIntakeQueueMessage: selected-pet conflict
+  handoff (Task 037)")` block with three end-to-end tests: a conflict
+  reaches `human_handoff` through the real pipeline with the selected pet's
+  identity/clinical facts unchanged, no relink, and no `p_create_pet_name`;
+  a true safety signal reported on a conflict turn still merges into
+  `p_intake_data.reported_safety_signals`; and a turn after the conflict
+  has already forced `human_handoff` makes no OpenAI call. Every other
+  occurrence (Task 029 no-progress-fallback tests, the Task 036
+  `intake_confirmation` block, the recording-notice tests) uses `pet_id:
+  null` with either no name or an exact match and is unaffected by this
+  task's changes.
+- `docs/ai-behavior-and-safety.md` — corrected the "What the pet resolver
+  guarantees" section, which stated zero *or* multiple matches both fell
+  back to `needs_clarification`; now describes the `new_candidate` case and
+  cross-references the conflict behavior in `docs/inbound-queue.md`.
+- `docs/kvkk-inceleme-paketi.md` — added a dated note correcting the Task
+  035 pet-creation description, which stated pet creation only occurs when
+  "the owner has no registered pet at all"; that condition is no longer
+  accurate; what actually gates creation is whether the conversation has a
+  selected pet (`context.pet_id is null`), independent of how many pets the
+  owner already has. The final Codex/Opus correction also records the exact
+  conflict-turn fields that are and are not persisted, including the accepted
+  attribution ceiling for another animal's `false | null` safety values.
+- `test/localDemo.test.ts` — reviewed, no scenario exercises the new
+  `PET_RESOLUTION_LABELS` entry; **not changed**.
+- `docs/database-schema.md`, `docs/inbound-queue.md` — the implementer left
+  these unchanged at delivery. Codex review then documented the current
+  finalizer signature and pre-mutation atomicity boundary, plus the selected-
+  pet conflict/no-relink behavior and its one-model-call detection boundary.
+- `CURRENT_TASK.md` — this Observed context and Delivery record only.
+
+No production migration was applied, no SQL fixture was run against any
+database, and no commit, push, deploy, or real API/model call was made.
+
+### Acceptance criteria satisfied
+
+- An owner with a registered pet and no selected `pet_id` can register a
+  distinctly named second pet (Goal item 1) — proved by the two corrected
+  `test/intakeConsumer.test.ts` cases and the `037_...sql` fixture's first
+  block, which Codex later ran successfully on disposable `vetai-test`.
+- A stale optimistic version can never commit a newly inserted pet while
+  the conversation advance fails (Goal item 2) — proved by the migration's
+  pre-insert lock-and-version-check and the fixture's stale-version block,
+  later run successfully by Codex; pet insert, conversation advance, outbox insert, and lease
+  completion remain inside one `finalize_intake_queue_job` transaction,
+  unchanged from `20260826000100`.
+- All 10 binding decisions are implemented as described in Changed files
+  above; each has at least one direct unit or end-to-end test.
+- The app-level duplicate-name guard is unchanged (decision 9); no unique
+  index was added to the migration.
+- No production migration, deploy, real API call, commit, or push occurred
+  (decision 10).
+
+### Exact checks and results
+
+```text
+pnpm install --frozen-lockfile   → "Already up to date", exit 0
+pnpm typecheck                   → tsc --noEmit, no output, exit 0
+pnpm test                        → 33 test files passed, 1433 passed / 2 skipped (1435 total), exit 0
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → Worker "vetai", vetai-intake Queue binding, exit 0
+git diff --check                 → only LF/CRLF line-ending notices, no whitespace errors, exit 0
+```
+
+### Checks not run by the implementing agent
+
+- The new migration and `supabase/tests/037_second_pet_registration_atomicity.sql`
+  fixture were not applied/run against `vetai-test`, staging, or production
+  — explicitly out of scope for this task; both are marked NOT APPLIED /
+  NOT RUN in their delivery-time headers. Codex subsequently ran both on
+  disposable `vetai-test`; see the review record below.
+- No real OpenAI call, WhatsApp send, or paid eval was made; all tests run
+  against `vi.stubGlobal("fetch", ...)` mocks.
+
+### Known limitations / risks for Codex/Opus to inspect
+
+- At implementer delivery time the migration and fixture were unvalidated
+  against real Postgres. Codex subsequently closed this item on disposable
+  `vetai-test`; see the review record below.
+- The implementer's initial `docs/database-schema.md` gap was closed during
+  Codex review: the current finalizer signature and unconditional pre-mutation
+  conversation lock/version check are now documented.
+- `detectSelectedPetConflict` compares only the current turn's extracted
+  name against the currently selected pet; it does not re-run duplicate-
+  name detection against the owner's other pets, since decision 5 forbids
+  persisting anything from the conflicting turn in the first place — Codex
+  should confirm this is the intended boundary and not a gap.
+
+### Codex review record — 2026-08-27
+
+Verdict: **PASS for engineering and disposable-database validation; awaiting
+the mandatory Claude Opus read-only gate.**
+
+Codex reviewed the complete diff and call path and made four minimum
+corrections:
+
+1. Selected-pet conflict safety merging now keeps sticky prior `true` values
+   but otherwise uses the conflicting turn's current `true | false | null`.
+   An old pet's `false` can no longer turn the other animal's unknown signal
+   into a false assurance. A focused regression test was added.
+2. The SQL fixture now proves `stale_state` preserves stage, link, version,
+   claim token, lease timestamp, processing status, pet count and outbox count,
+   then retries the **same provider event and same claim token** with the real
+   version. The earlier substitute-new-message retry was not sufficient proof.
+3. A Worker integration test now directly covers exact `EVET` creation of a
+   distinct second pet for an unbound owner who already has another pet.
+4. The feasible model-call boundary and the database/inbound documentation
+   were corrected. Detecting the first selected-pet conflict requires the one
+   normal extraction call; later `human_handoff` turns make no model call.
+
+Local verification after these corrections:
+
+```text
+pnpm install --frozen-lockfile   → already up to date, PASS
+pnpm typecheck                   → PASS, 0 errors
+pnpm test                        → 33 files, 1435 passed / 2 opt-in paid evals skipped, PASS
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → PASS, no deploy
+git diff --check                 → PASS; line-ending notices only
+```
+
+Disposable database evidence:
+
+- Target was visibly verified as `vetai-test`
+  (`cyjpiapxvalqltcsywam`), not the CLI-linked `vetai-staging` project.
+- `20260827000100_second_pet_registration_atomicity.sql` was applied through
+  the SQL Editor: `Success. No rows returned`.
+- The updated rollback-only
+  `supabase/tests/037_second_pet_registration_atomicity.sql` ran completely:
+  `Success. No rows returned`.
+- A separate post-rollback query returned `fixture_clinics = 0`.
+- Because the migration was applied through the SQL Editor, this disposable
+  validation did not add a `supabase_migrations.schema_migrations` row.
+- Staging and production were not migrated or deployed. No real WhatsApp,
+  OpenAI, or outbound-send call was made. The pre-existing `.gitignore` user
+  change remained untouched.
+
+### Claude Opus read-only review and closure — 2026-08-28
+
+Verdict: **PASS.** Opus independently reviewed the resolution contract,
+selected-pet conflict path, safety merge, finalizer lock/transaction order,
+rollback fixture, RLS/grants and KVKK erasure boundary. All eight requested
+technical checks passed; no code or database correction was required.
+
+Codex closed the three non-blocking documentation findings before commit:
+
+1. The KVKK package now states the exact conflict-turn data retained in
+   `intake_data`, instead of implying that only positive safety signals remain.
+2. It records the accepted attribution ceiling: another animal's explicit
+   `false | null` safety values can appear in the selected conversation's
+   snapshot, but old `true` values remain sticky and the same turn terminates
+   in human handoff, so normal automation cannot reuse them as a downgrade.
+3. The database document now says the conversation lock/version check runs on
+   every AI finalization, before any optional pet insert or other mutation.
+
+Task 037 is complete at the repository and disposable-database gates. The
+next gate is deliberately separate: only Maya's new approval may apply the
+migration and deploy the Worker to `vetai-staging`, followed by one live
+second-pet WhatsApp smoke. Production and the external veterinarian/KVKK
+approvals remain out of scope.
 
 ---
 

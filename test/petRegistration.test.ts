@@ -61,7 +61,7 @@ function planned(
     nextStage: overrides.nextStage ?? "intake_confirmation",
     petId: overrides.petId ?? null,
     intakeData: intakeData(overrides.data),
-    petResolution: overrides.petResolution ?? { kind: "needs_clarification" },
+    petResolution: overrides.petResolution ?? { kind: "new_candidate" },
     safetyDecision: overrides.safetyDecision ?? { kind: "continue_intake" },
   };
 }
@@ -220,6 +220,21 @@ describe("planPetRegistrationAction", () => {
     const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("  EVET  ")] });
     const plan = planned({ data: { pet_name: "Pamuk", species: null } });
     expect(planPetRegistrationAction(context, plan, "  EVET  ")).toEqual({ kind: "create", name: "Pamuk", species: null });
+  });
+
+  // Task 037 decision 4: `needs_clarification` must never be treated as a new
+  // pet, even on an exact EVET with a captured name. This state should not be
+  // reachable through `planIntakeTurn` today (it never advances to
+  // `intake_confirmation` while ambiguous), but the guard here is explicit
+  // rather than relying on that being permanently true.
+  it("never creates on an exact evet when the pet resolution is still needs_clarification", () => {
+    const confirmationText = buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor");
+    const context = baseContext({ recentMessages: [outbound(confirmationText), inbound("evet")] });
+    const plan = planned({
+      data: { pet_name: "Pamuk", species: "kedi", complaint: "topallıyor" },
+      petResolution: { kind: "needs_clarification" },
+    });
+    expect(planPetRegistrationAction(context, plan, "evet")).toEqual({ kind: "none" });
   });
 
   // Task 036: a returning owner goes through the same stage and the same

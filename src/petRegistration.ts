@@ -223,7 +223,14 @@ export function planPetRegistrationAction(context: ConversationIntakeContext, pl
     // forward-progress signal this flow has; it must never itself be turned
     // into a handoff by the same bound that exists to stop *unproductive*
     // repeats. Only the ask/repeat paths below count against the bound.
-    if (decision === "confirm") return matchedPet !== undefined ? { kind: "confirmed" } : { kind: "create", name, species };
+    // Task 037 decision 4: `create` is authorized for `new_candidate` only —
+    // never for `matched` (nothing to recreate) or `needs_clarification`
+    // (which cannot reach here through `planIntakeTurn` today, but must stay
+    // refused even if some future caller manages it).
+    if (decision === "confirm") {
+      if (matchedPet !== undefined) return { kind: "confirmed" };
+      return resolution.kind === "new_candidate" ? { kind: "create", name, species } : { kind: "none" };
+    }
     if (decision === "decline") return { kind: "declined" };
     // "repeat": unrecognized reply while awaiting confirmation, and nothing in
     // it changed the summary, falls through to the bound check below.

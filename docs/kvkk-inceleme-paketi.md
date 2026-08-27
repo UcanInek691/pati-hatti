@@ -120,6 +120,28 @@ hayvanı olabilir ve bu meşru kaydı hukuken engellemek için bir sebep yoktur.
 Normalizasyon Türkçe noktalı/noktasız "I" kurallarını taklit etmez; yalnızca
 sıradan durumu kapatır.
 
+**Not — ikinci hayvan kaydı (2026-08-27, Task 037):** Yukarıdaki "sahibin
+kayıtlı hiçbir hayvanı yoksa" koşulu artık tam doğru değildir: belirleyici
+olan, sahibin kayıtlı hayvanı olup olmadığı değil, konuşmada henüz seçili bir
+hayvan olup olmadığıdır (`context.pet_id is null`). Bir sahibin
+zaten kayıtlı hayvanı varken konuşma seçili hayvana bağlanmamışsa ve çıkarılan
+ad mevcut hayvanların hiçbiriyle tam eşleşmiyorsa, bot aynı "aynen geri
+oku + tam 'EVET'" onay akışıyla ikinci bir `pets` satırı oluşturabilir. Buna
+karşılık, konuşma zaten belirli bir hayvana bağlıyken (`context.pet_id`
+doluyken) çıkarılan ad o hayvanla eşleşmiyorsa hiçbir zaman yeni kayıt
+oluşturulmaz veya mevcut bağ değiştirilmez; çelişen hayvanın adı, türü,
+şikâyeti, belirtileri ve eksik-bilgi listesi seçili hayvanın yapılandırılmış
+özetine yazılmaz. Bu durum aynı turda insana devredilir. Güvenlik kapısının
+çalışabilmesi için ise turun niyeti (yeni değer `unknown` değilse), insan
+talebi ve sekiz anahtarlı güvenlik-sinyali haritasının tamamı konuşmanın
+`intake_data` alanına yazılır: önceden `true` olan sinyaller yapışkan kalır,
+diğer anahtarlarda çatışan turun açık `true | false | null` değeri kullanılır.
+Bu nedenle başka hayvan için söylenmiş bir `false` veya `null`, teknik olarak
+seçili hayvana bağlı konuşma özetinde görünebilir. Bu kabul edilmiş pilot
+sınırında otomasyon aynı turda terminal insan devrine geçtiği için bu değerler
+normal otomasyonda yeniden kullanılmaz; personel asıl mesajı inceleyerek hangi
+hayvana ait olduğunu doğrulamalıdır.
+
 ## 4. İşleme faaliyeti karar tablosu
 
 Her satırda amacı, hukuki sebebi ve aktarımı ayrı ayrı belirleyin. “Hizmet için

@@ -327,6 +327,7 @@ const SAFETY_REASON_LABELS = {
 const PET_RESOLUTION_LABELS = {
   matched: "Hayvan eşleşti",
   needs_clarification: "Hangi hayvan olduğu belirsiz",
+  new_candidate: "Yeni hayvan adayı",
 };
 
 const REPLY_CATEGORY_LABELS = {

@@ -43,7 +43,10 @@ export interface IntakeExtraction {
 
 export type ParseResult = { ok: true; value: IntakeExtraction } | { ok: false };
 
-export type PetResolution = { kind: "matched"; petId: string } | { kind: "needs_clarification" };
+export type PetResolution =
+  | { kind: "matched"; petId: string }
+  | { kind: "needs_clarification" }
+  | { kind: "new_candidate" };
 
 const INTENTS = new Set<string>([
   "report_symptom",
@@ -237,7 +240,9 @@ export function resolvePet(extraction: IntakeExtraction, pets: readonly IntakePe
   if (extraction.pet_name !== null) {
     const target = normalizeForComparison(extraction.pet_name);
     const matches = pets.filter((pet) => normalizeForComparison(pet.name) === target);
-    return matches.length === 1 ? { kind: "matched", petId: matches[0]!.id } : { kind: "needs_clarification" };
+    if (matches.length === 1) return { kind: "matched", petId: matches[0]!.id };
+    if (matches.length === 0) return { kind: "new_candidate" };
+    return { kind: "needs_clarification" };
   }
   return pets.length === 1 ? { kind: "matched", petId: pets[0]!.id } : { kind: "needs_clarification" };
 }

@@ -337,15 +337,28 @@ describe("planIntakeTurn — pet selection", () => {
     expect(result.petResolution).toEqual({ kind: "matched", petId: "p2" });
   });
 
-  it("needs clarification on ambiguous duplicate names or no match", () => {
+  it("needs clarification on ambiguous duplicate names", () => {
     const ambiguous = planIntakeTurn(
       context({ pets: [pet("p1", "Waffles"), pet("p2", "waffles")] }),
       extraction({ pet_name: "Waffles" }),
     );
-    const noMatch = planIntakeTurn(context({ pets: [pet("p1", "Waffles")] }), extraction({ pet_name: "Mochi" }));
-    if (ambiguous.kind !== "planned" || noMatch.kind !== "planned") throw new Error("expected planned");
+    if (ambiguous.kind !== "planned") throw new Error("expected planned");
     expect(ambiguous.petResolution).toEqual({ kind: "needs_clarification" });
-    expect(noMatch.petResolution).toEqual({ kind: "needs_clarification" });
+  });
+
+  it("is a new candidate when no selected pet and an explicit name matches none of the owner's pets", () => {
+    const result = planIntakeTurn(context({ pets: [pet("p1", "Waffles")] }), extraction({ pet_name: "Mochi" }));
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.petResolution).toEqual({ kind: "new_candidate" });
+    expect(result.petId).toBeNull();
+  });
+
+  it("is a new candidate for an explicit name when the owner has no pets at all, and identity is known", () => {
+    const result = planIntakeTurn(context(), extraction({ pet_name: "Minnoş" }));
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.petResolution).toEqual({ kind: "new_candidate" });
+    expect(result.petId).toBeNull();
+    expect(result.nextStage).toBe("complaint_collection");
   });
 
   it("retains an already-selected pet when the turn names no pet", () => {
@@ -371,6 +384,72 @@ describe("planIntakeTurn — pet selection", () => {
     if (result.kind !== "planned") throw new Error("expected planned");
     expect(result.petResolution).toEqual({ kind: "needs_clarification" });
     expect(result.petId).toBe("p1");
+  });
+
+  it("routes a conflicting pet name to human_handoff without merging the other animal's identity or clinical facts", () => {
+    const stored = validSnapshot({
+      pet_name: "Waffles",
+      species: "dog",
+      complaint: "vomiting",
+      symptoms: ["vomiting"],
+    });
+    const result = planIntakeTurn(
+      context({
+        petId: "p1",
+        pets: [pet("p1", "Waffles"), pet("p2", "Mochi")],
+        intakeStage: "safety_check",
+        intakeData: stored,
+      }),
+      extraction({ pet_name: "Mochi", species: "cat", complaint: "itching", symptoms: ["itching"] }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.petResolution).toEqual({ kind: "needs_clarification" });
+    expect(result.petId).toBe("p1");
+    expect(result.nextStage).toBe("human_handoff");
+    expect(result.intakeData.pet_name).toBe("Waffles");
+    expect(result.intakeData.species).toBe("dog");
+    expect(result.intakeData.complaint).toBe("vomiting");
+    expect(result.intakeData.symptoms).toEqual(["vomiting"]);
+  });
+
+  it("routes a brand-new unmatched pet name to human_handoff the same way while a pet is selected", () => {
+    const result = planIntakeTurn(
+      context({ petId: "p1", pets: [pet("p1", "Waffles")], intakeStage: "safety_check" }),
+      extraction({ pet_name: "Ghost" }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.petResolution).toEqual({ kind: "needs_clarification" });
+    expect(result.petId).toBe("p1");
+    expect(result.nextStage).toBe("human_handoff");
+  });
+
+  it("still evaluates a true safety signal fail-closed on a selected-pet conflict turn", () => {
+    const stored = validSnapshot({ pet_name: "Waffles" });
+    const result = planIntakeTurn(
+      context({ petId: "p1", pets: [pet("p1", "Waffles"), pet("p2", "Mochi")], intakeStage: "safety_check", intakeData: stored }),
+      extraction({ pet_name: "Mochi", reported_safety_signals: safetySignals({ heavy_bleeding: true }) }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.nextStage).toBe("human_handoff");
+    expect(result.intakeData.reported_safety_signals.heavy_bleeding).toBe(true);
+    expect(result.safetyDecision.kind).not.toBe("continue_intake");
+  });
+
+  it("does not reuse the selected pet's false signals when the conflicting animal's signals are unknown", () => {
+    const unknownSignals = Object.fromEntries(Object.keys(safetySignals()).map((key) => [key, null])) as unknown as ReportedSafetySignals;
+    const result = planIntakeTurn(
+      context({
+        petId: "p1",
+        pets: [pet("p1", "Waffles")],
+        intakeStage: "safety_check",
+        intakeData: validSnapshot({ pet_name: "Waffles", reported_safety_signals: safetySignals() }),
+      }),
+      extraction({ pet_name: "Ghost", reported_safety_signals: unknownSignals }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(Object.values(result.intakeData.reported_safety_signals)).toEqual(Array(8).fill(null));
+    expect(result.safetyDecision.kind).toBe("needs_safety_check");
+    expect(result.nextStage).toBe("human_handoff");
   });
 });
 

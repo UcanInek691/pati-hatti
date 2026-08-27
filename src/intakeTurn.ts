@@ -132,6 +132,19 @@ function mergeSafetySignals(stored: ReportedSafetySignals, current: ReportedSafe
   return merged;
 }
 
+/**
+ * A selected-pet conflict is about a different animal, so an old explicit
+ * `false` must not turn the new animal's `null` into a false assurance. Keep
+ * only sticky prior emergencies; otherwise the current turn is authoritative.
+ */
+function mergeConflictSafetySignals(stored: ReportedSafetySignals, current: ReportedSafetySignals): ReportedSafetySignals {
+  const merged: ReportedSafetySignals = { ...current };
+  for (const key of Object.keys(stored) as (keyof ReportedSafetySignals)[]) {
+    if (stored[key] === true) merged[key] = true;
+  }
+  return merged;
+}
+
 /** Deterministic merge of a validated current-turn extraction into the accepted persisted snapshot. See `docs/intake-turn-planning.md`. */
 function mergeSnapshot(stored: PersistedIntakeData, extraction: IntakeExtraction): PersistedIntakeData {
   return {
@@ -187,13 +200,47 @@ function resolvePetForContext(context: ConversationIntakeContext, extraction: In
 
 /**
  * True once we know *which* animal the conversation is about, whether or not a
- * `public.pets` row exists for it yet. Task 036 separated the two: a matched
- * pet, or — for an owner with no pets on file — a captured candidate name that
- * `intake_confirmation` will put back to the owner before anything is written.
+ * `public.pets` row exists for it yet: a matched pet, or (Task 037 decision 3)
+ * an unbound conversation's captured candidate name that `intake_confirmation`
+ * will put back to the owner before anything is written. `resolvePetForContext`
+ * never yields `new_candidate` while a pet is already selected, so this is
+ * decision 3's "only when `context.petId === null`" rule without repeating it.
  */
-function isPetIdentityKnown(context: ConversationIntakeContext, petResolution: PetResolution, merged: PersistedIntakeData): boolean {
-  if (petResolution.kind === "matched") return true;
-  return context.pets.length === 0 && merged.pet_name !== null;
+function isPetIdentityKnown(petResolution: PetResolution): boolean {
+  return petResolution.kind === "matched" || petResolution.kind === "new_candidate";
+}
+
+/**
+ * Task 037 decision 5: while a pet is already selected, an explicit name that
+ * does not resolve back to that same pet (a different match, an ambiguous
+ * one, or a brand-new candidate) is a conflicting second animal, not a
+ * correction — the active conversation may carry the selected pet's clinical
+ * history and must not be silently relinked or blended with another animal's.
+ */
+function detectSelectedPetConflict(context: ConversationIntakeContext, extraction: IntakeExtraction): boolean {
+  if (context.petId === null || extraction.pet_name === null) return false;
+  const attempt = resolvePet(extraction, context.pets);
+  return !(attempt.kind === "matched" && attempt.petId === context.petId);
+}
+
+/**
+ * Task 037 decision 5: on a selected-pet conflict, keep the selected pet's
+ * identity and clinical facts exactly as stored — only the safety-gate inputs
+ * (`intent`, `reported_safety_signals`, `user_requested_human`) still merge,
+ * so a true emergency reported alongside the conflicting name still escalates.
+ */
+function mergeSnapshotPreservingIdentity(stored: PersistedIntakeData, extraction: IntakeExtraction): PersistedIntakeData {
+  return {
+    schema_version: 1,
+    intent: extraction.intent !== "unknown" ? extraction.intent : stored.intent,
+    pet_name: stored.pet_name,
+    species: stored.species,
+    complaint: stored.complaint,
+    symptoms: stored.symptoms,
+    reported_safety_signals: mergeConflictSafetySignals(stored.reported_safety_signals, extraction.reported_safety_signals),
+    missing_information: stored.missing_information,
+    user_requested_human: stored.user_requested_human || extraction.user_requested_human,
+  };
 }
 
 function decideNextStage(
@@ -201,9 +248,10 @@ function decideNextStage(
   safetyDecision: SafetyDecision,
   identityKnown: boolean,
   merged: PersistedIntakeData,
+  petConflict: boolean,
 ): IntakeStage {
   if (currentStage === "completed") return "completed";
-  if (safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") return "human_handoff";
+  if (petConflict || safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") return "human_handoff";
   if (currentStage === "human_handoff") return "human_handoff";
 
   if (currentStage === "pet_identification") {
@@ -238,7 +286,8 @@ export function planIntakeTurn(context: ConversationIntakeContext, extraction: I
     if (snapshotResult.kind === "invalid") return { kind: "failed" };
     const stored = snapshotResult.kind === "snapshot" ? snapshotResult.value : emptySnapshot();
 
-    const merged = mergeSnapshot(stored, extraction);
+    const petConflict = detectSelectedPetConflict(context, extraction);
+    const merged = petConflict ? mergeSnapshotPreservingIdentity(stored, extraction) : mergeSnapshot(stored, extraction);
 
     const petOutcome = resolvePetForContext(context, extraction, merged);
     if (petOutcome === null) return { kind: "failed" };
@@ -247,8 +296,9 @@ export function planIntakeTurn(context: ConversationIntakeContext, extraction: I
     const nextStage = decideNextStage(
       context.intakeStage,
       safetyDecision,
-      isPetIdentityKnown(context, petOutcome.resolution, merged),
+      isPetIdentityKnown(petOutcome.resolution),
       merged,
+      petConflict,
     );
 
     return {

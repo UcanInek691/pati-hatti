@@ -315,19 +315,37 @@ outbox insert.
 > compatibility.
 > Production still requires the managed migration workflow.
 
+> **Second-pet atomicity validation passed (2026-08-27).** Codex applied
+> `20260827000100_second_pet_registration_atomicity.sql` only to disposable
+> `vetai-test` through the SQL Editor. The updated rollback-only
+> `supabase/tests/037_second_pet_registration_atomicity.sql` passed and a
+> separate residue query returned `fixture_clinics = 0`. This SQL Editor run
+> did not add a CLI migration-history row. Staging and production remain
+> unchanged.
+
 A lease guarantees one successful completer, not one executing worker after
 expiry/reclaim (see [`docs/inbound-queue.md`](inbound-queue.md)). Calling
 `advance_conversation_intake` and `complete_intake_queue_job` as two separate
 HTTP RPCs would leave a crash window where the same persisted message could
 advance conversation state twice. `public.finalize_intake_queue_job(
 p_conversation_id, p_provider_message_id, p_claim_token, p_expected_version,
-p_next_stage, p_pet_id, p_intake_data, p_reply_category, p_reply_text)`
+p_next_stage, p_pet_id, p_intake_data, p_reply_category, p_reply_text,
+p_create_pet_name, p_create_pet_species)`
 closes that window by composing both existing, already-validated operations
 inside one transaction instead of duplicating their
 transition/pet-ownership/completion logic, and now also persists the planned
 reply (if any) in the same transaction. It is `SECURITY INVOKER`, `VOLATILE`,
 empty-`search_path`, and granted to `service_role` only (revoked from
 `PUBLIC`, `anon`, `authenticated`).
+
+On every AI-path finalization, the current version first locks the exact
+tenant-scoped conversation row and checks `p_expected_version` before any
+optional pet insert or other mutation. A mismatch returns `stale_state` with
+the current lease unchanged and no pet/state/outbox mutation. After the lock
+succeeds, a zero-row advance is an invariant violation that raises, rolling
+back pet creation with the entire call. The AI-path normalized duplicate-name
+guard remains application-level; no table-wide uniqueness rule was added for
+staff writes.
 
 `p_reply_category` and `p_reply_text` must both be null (no reply owed) or
 both non-null (a planned reply); a mismatched pair, an unrecognized category,

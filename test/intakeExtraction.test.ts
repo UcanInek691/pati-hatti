@@ -257,8 +257,12 @@ describe("resolvePet", () => {
     expect(resolvePet(extraction(null), [waffles, mochi])).toEqual({ kind: "needs_clarification" });
   });
 
-  it("requires clarification when an explicit name matches zero pets", () => {
-    expect(resolvePet(extraction("Ghost"), [waffles, mochi])).toEqual({ kind: "needs_clarification" });
+  it("is a new candidate when an explicit name matches zero pets", () => {
+    expect(resolvePet(extraction("Ghost"), [waffles, mochi])).toEqual({ kind: "new_candidate" });
+  });
+
+  it("is a new candidate when an explicit name matches zero pets among zero registered pets", () => {
+    expect(resolvePet(extraction("Minnoş"), [])).toEqual({ kind: "new_candidate" });
   });
 
   it("requires clarification when an explicit name matches duplicate normalized names", () => {
@@ -266,7 +270,7 @@ describe("resolvePet", () => {
     expect(resolvePet(extraction("Waffles"), [waffles, duplicate])).toEqual({ kind: "needs_clarification" });
   });
 
-  it("never fuzzy-matches a near-miss name", () => {
-    expect(resolvePet(extraction("Waffle"), [waffles])).toEqual({ kind: "needs_clarification" });
+  it("never fuzzy-matches a near-miss name, treating it as a new candidate instead", () => {
+    expect(resolvePet(extraction("Waffle"), [waffles])).toEqual({ kind: "new_candidate" });
   });
 });

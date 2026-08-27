@@ -315,6 +315,28 @@ lease still completes and the corrupt snapshot cannot cause an infinite
 retry loop. The conversation's persisted messages remain the true record;
 only the bounded working snapshot is replaced.
 
+### Selected-pet conflict and second-pet registration (Task 037)
+
+An explicit pet name with zero exact normalized matches is a
+`new_candidate`. When the current conversation has no selected `pet_id`, this
+candidate may follow the ordinary complaint and combined-confirmation flow;
+only the owner's exact `EVET` authorizes the atomic finalizer to create and
+link the second pet. The number of other pets already owned does not block
+that path, and an explicit name with multiple normalized matches remains
+`needs_clarification` rather than guessing.
+
+When the conversation already has a selected pet, a different, ambiguous, or
+unmatched explicit name is not allowed to relink it. The turn moves to the
+truthful human-handoff path while preserving the selected pet's stored
+identity and clinical snapshot. The conflicting animal's name, species,
+complaint, and symptoms are not merged. Safety is evaluated separately:
+sticky prior `true` signals remain true, while the conflicting turn's current
+`true | false | null` values otherwise remain authoritative, so an old pet's
+`false` cannot turn the other animal's unknown status into a false assurance.
+Detecting this first conflict uses the normal single extraction call; later
+messages in the persisted `human_handoff` stage use the existing no-model
+path.
+
 The consumer also independently checks a successful plan's `safetyDecision`
 rather than inferring safety from `nextStage` alone: an `emergency_handoff`
 or `human_handoff` decision must correspond to a `human_handoff` next stage

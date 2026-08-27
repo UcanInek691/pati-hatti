@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-27 by Codex.
+Last verified: 2026-08-28 by Codex.
 
 ## Product
 
@@ -442,6 +442,27 @@ The secure Worker baseline is committed on `main`:
   decided. Checks at closure: typecheck clean, 1,411 passed / 2 skipped across
   33 files, `wrangler deploy --dry-run` built at 150.16 KiB. No staging or
   production migration was applied and no Worker was deployed to close it.
+- Task 037 is complete. An unbound conversation can now treat an explicit name
+  with zero exact normalized matches as a `new_candidate`, even when the owner
+  already has registered pets. A new row is still created only from the
+  existing `intake_confirmation` path after exact normalized `EVET`; matched
+  or ambiguous pets cannot be recreated.
+- A conversation already linked to a pet cannot silently switch to a different
+  animal. The linked pet, identity and clinical snapshot remain unchanged and
+  the turn enters terminal human handoff; deterministic emergency signals keep
+  precedence. The conflict snapshot retains safety-gate inputs only, with old
+  `true` values sticky and current `true | false | null` otherwise. This means
+  another animal's `false | null` can be technically attributed to the linked
+  conversation, an accepted pilot ceiling that staff must resolve from the
+  original message; normal automation does not resume after that handoff.
+- `finalize_intake_queue_job` now locks the exact tenant-scoped conversation
+  and checks its optimistic version before any optional pet insert or other
+  mutation. A stale call changes nothing and preserves the current lease for
+  retry; a post-lock zero-row advance raises and rolls back the entire call.
+  The migration and strengthened rollback fixture passed on disposable
+  `vetai-test` with zero residue; 1,435 tests, typecheck, frozen install,
+  Worker dry-run, Codex review and mandatory Claude Opus review passed. Staging
+  and production remain unchanged.
 
 Verified evidence before the context-system change:
 
@@ -474,50 +495,11 @@ Verified evidence before the context-system change:
   production database and no production Worker carries it, so in production a
   first-time owner still cannot pass `pet_identification`. Not a shipped
   feature yet.
-- **Known defect, recorded not fixed — candidate follow-on task.**
-  `finalize_intake_queue_job` inserts the new pet *before* calling
-  `advance_conversation_intake`. When that advance returns `stale_state` the
-  RPC exits through `return query select 'stale_state'`, a normal PL/pgSQL
-  return, which does **not** roll back the transaction. The pet row therefore
-  commits while `conversations.pet_id` stays null and the intake lease is left
-  in `processing` — `complete_intake_queue_job` is never reached — until the
-  lease expires. The Worker self-heals (the retry reads a context with
-  `pets.length > 0` and resolves the orphan row instead of creating a second
-  one), so there is no permanent corruption, but the window leaves an orphan
-  pet and a burned lease. The fix is most likely `raise exception` on that
-  branch so the insert rolls back with everything else, which needs its own
-  review of the Worker's RPC error path before it is written. Found by
-  inspection on 2026-08-26 while closing Task 035 criterion 4, and deliberately
-  left out of Task 035's scope.
-- **Related observation, recorded not fixed — same follow-on candidate.** On
-  2026-08-27, during the Task 036 smoke test, a new complaint about a
-  different animal landed in a two-day-old conversation and was merged into
-  it: `intake_data` was rewritten to `pet_name: "Minnoş" / species: "Kedi"`
-  while `conversations.pet_id` still pointed at the earlier pet `karamel`
-  (`köpek`). Collected intake fields and the linked pet row can therefore
-  disagree inside one active conversation. Related to the `stale_state`
-  orphan-pet defect above but distinct — no orphan row and no burned lease
-  here, only a stale link. Out of scope for Task 036, no fix attempted.
-- **Known defect, bounded not fixed — candidate follow-on task.** The intake
-  model has no case for "this owner already has a pet on file, and is now
-  writing about a *different* animal". `PetResolution`
-  (`src/intakeExtraction.ts`) offers only `matched | needs_clarification`, and
-  `isPetIdentityKnown` (`src/intakeTurn.ts`) accepts a fresh candidate name
-  only when `context.pets.length === 0`. Any owner with at least one pet who
-  names a second one therefore resolves `needs_clarification` on every turn,
-  holds at `pet_identification`, and is asked the identical question forever.
-  The Task 029 no-progress net does not catch it, because the owner re-sends
-  the name each turn and `isNoActionableFact` stays false. Found live on
-  2026-08-27 in the Task 036 smoke test, which locked a real conversation.
-  Mitigated the same day by a bounded handoff (`stalledOnPetIdentity` in
-  `src/intakeConsumer.ts`): holding at `pet_identification` after the identical
-  question has already gone out twice now hands off to a human, so no owner is
-  left without an exit. The reviewed Worker-only mitigation was deployed to
-  `vetai-staging` on 2026-08-27; production remains unchanged. That is a floor,
-  not the feature — the permanent fix is
-  a second-pet registration flow (a `PetResolution` case for a known owner with
-  a new animal, routed into `intake_confirmation`), which is its own design
-  decision and its own task.
+- Task 037 closes the three formerly recorded second-pet defects: the
+  stale-version orphan-pet window, selected-pet identity/clinical blending,
+  and the endless clarification loop for a known owner naming a distinct new
+  animal. The reviewed bounded handoff from Task 036 remains defense in depth.
+  The Task 037 migration and Worker are not yet on staging or production.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
@@ -579,6 +561,14 @@ RLS policy are deliberately not constrained (Maya's decision of 2026-08-25).
 Canary, failure injection, observability, and the controlled pilot gate remain
 deferred. Task 034 inbound/outbound evidence and the Task 036 fresh zero-pet
 journey passed on staging; neither is production evidence.
+
+Task 037 (second-pet registration and atomic pet finalization) is `COMPLETE`
+as of 2026-08-28 at the repository and disposable-database gates. Its
+migration and rollback proof passed on `vetai-test`, local verification and
+Codex review passed, and Claude Opus returned PASS. It has not been migrated or
+deployed to staging or production. The next executable gate is a separately
+approved staging migration + Worker deploy followed by one live second-pet
+WhatsApp smoke.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
@@ -704,6 +694,17 @@ occurred.
   existing hold is not released or extended by that path. It may remain until
   its fixed expiry and is then reclaimable; a started slot with a still-live
   hold follows the same bounded self-healing behavior.
+- A linked conversation may never be silently rebound to a newly named animal.
+  On a selected-pet conflict, identity and clinical facts remain those of the
+  linked pet and the turn terminates in human handoff. Safety-gate inputs are
+  retained so emergencies still win; because another animal's `false | null`
+  may remain in that conversation snapshot, staff must verify attribution from
+  the original message rather than treating the snapshot as a pet-level record.
+- AI pet creation requires an unbound conversation, an exact unmatched
+  normalized name, and exact normalized `EVET` in the existing confirmation
+  flow. The finalizer must lock and version-check the tenant-scoped
+  conversation before an optional insert; stale state cannot create a pet or
+  change state, outbox, or lease ownership.
 - Real OpenAI demos and evals use only synthetic text and a dedicated ignored
   local secret file. Their browser call counter is not a billing hard stop;
   spending must be monitored in the separate OpenAI project. Eval/model/prompt
