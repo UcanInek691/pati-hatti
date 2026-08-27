@@ -1,3 +1,199 @@
+# Current task — 037 Second-pet registration and atomic pet finalization
+
+Status: `READY`
+
+Opened by Codex on 2026-08-27 after Task 036 closed and the fresh zero-pet
+staging smoke passed. This task intentionally does **not** change the model
+prompt, safety-question language, appointment behavior, production resources,
+or the one-open-conversation-per-owner rule.
+
+## Goal
+
+Close two related defects with one minimal, reviewed change:
+
+1. An owner who already has one or more registered pets must be able to register
+   a distinctly named second pet when the current conversation has no selected
+   `pet_id`. The existing `intake_confirmation` + exact `EVET` gate remains the
+   only creation authority.
+2. A stale optimistic version must never commit a newly inserted pet while the
+   conversation advance fails. Pet insert, conversation link/stage advance,
+   reply outbox insert, and lease completion remain one atomic operation.
+
+## Verified starting evidence
+
+- `PetResolution` currently has only `matched | needs_clarification`.
+- `resolvePet()` returns `needs_clarification` both for “no matching registered
+  pet” and “more than one normalized match”; those cases cannot safely share a
+  creation decision.
+- `isPetIdentityKnown()` accepts an unmatched candidate only when
+  `context.pets.length === 0`, so an existing owner naming a second animal is
+  held in `pet_identification`. Task 036 only bounded that loop with handoff.
+- `finalize_intake_queue_job` inserts the pet before
+  `advance_conversation_intake`. A normal `stale_state` return after the insert
+  commits the pet, leaves `conversations.pet_id` unchanged, and leaves the
+  intake lease processing until expiry.
+- The active conversation model is one open conversation per owner. A
+  conversation already linked to one pet may contain old clinical context;
+  silently switching it to another animal is therefore outside this task and
+  must fail closed to the existing human-handoff path.
+
+## Product and safety decisions — binding
+
+1. Extend the closed `PetResolution` union with exactly one candidate case for
+   an explicit pet name that has **zero** normalized matches among the
+   tenant-scoped `context.pets`. Do not add fuzzy matching or accept an ID from
+   the model.
+2. An explicit name with exactly one normalized match stays `matched`; more
+   than one match stays `needs_clarification`; no explicit name keeps the
+   existing single-pet fallback.
+3. A `new_candidate` is identity-known only when `context.petId === null`.
+   Whether the owner already has other pets is irrelevant. It may progress
+   through complaint collection into the existing `intake_confirmation` flow.
+4. `planPetRegistrationAction` may return `create` only for `new_candidate`
+   after the exact confirmation grammar accepts `EVET`. A matched pet is never
+   recreated; `needs_clarification` is never treated as a new pet.
+5. If `context.petId` is non-null and the current turn explicitly names a
+   different/unmatched pet, never silently relink the active conversation and
+   never persist the new animal's identity or clinical facts as if they
+   belonged to the selected pet. Route to the existing truthful human-handoff
+   path. Preserve newly reported deterministic safety signals so an emergency
+   still receives emergency copy and the staff work item can still become
+   urgent. Do not diagnose or add new user-facing copy.
+6. The Task 036 bounded-handoff fallback remains as defense in depth, but the
+   valid unbound second-pet path must no longer reach it.
+7. Before any pet insert, the finalizer must lock the exact tenant-scoped
+   conversation row and verify `state_version = p_expected_version`. A mismatch
+   returns the existing closed `stale_state` result with zero pet/outbox/state
+   mutation and leaves the current lease available for the existing retry
+   policy.
+8. Once that row lock/version check succeeds, a later zero-row result from
+   `advance_conversation_intake` is an invariant violation and must raise so
+   the whole transaction rolls back. Do not turn database errors into success.
+9. Keep the accepted pilot ceiling: the AI duplicate-name guard remains an
+   application-level normalized-name check, not a table-wide unique index.
+   Staff pet inserts remain unchanged.
+10. No production migration, deploy, real WhatsApp/OpenAI call, commit, or push
+    is authorized for the implementing agent.
+
+## Required behavior
+
+### Pure planning
+
+- Zero registered pets + explicit “Minnoş” → `new_candidate`, identity known.
+- Existing Karamel + unbound conversation + explicit “Minnoş” →
+  `new_candidate`, progresses normally.
+- Existing Karamel + unbound conversation + explicit “Karamel” → `matched`.
+- Two normalized Karamel rows + explicit “Karamel” → `needs_clarification`.
+- No explicit name + exactly one registered pet keeps the current automatic
+  exact pet selection.
+- Selected Karamel + explicit Minnoş/new unmatched name → human handoff,
+  Karamel remains selected, Minnoş identity/complaint/symptoms are not merged
+  into Karamel's persisted snapshot, and any true/null safety information from
+  the new turn is still evaluated fail-closed.
+
+### Confirmation and persistence
+
+- An unbound owner with existing pets receives the same combined
+  name/species/complaint confirmation already used for a first pet.
+- No row is created before exact `EVET`.
+- Exact `EVET` calls the existing finalizer creation parameters once; one new
+  pet is created under the server-resolved clinic/owner, the conversation is
+  linked to it, and the stage advances to `safety_check` atomically.
+- `HAYIR`, correction, repeat, safety, human request, malformed snapshot,
+  non-AI routing, stale claim, and completed conversation cannot create a pet.
+- A normalized duplicate can never create another AI pet. The existing
+  retry/self-heal behavior may remain, but must be explicitly tested.
+- A stale expected version with creation parameters returns `stale_state` and
+  proves: zero matching pet rows, unchanged conversation link/stage/version,
+  zero reply outbox rows, and unchanged current lease token/status.
+- Retrying the same logical turn with the current version creates exactly one
+  pet and completes normally.
+
+## Database requirements
+
+- Add one forward-only migration after
+  `20260826000100_intake_confirmation_stage.sql`; do not edit an applied
+  migration.
+- Replace only the current `finalize_intake_queue_job` signature/body and keep
+  its result shape, grants, `SECURITY INVOKER`, volatility, empty search path,
+  selective-automation suppression, reply validation, tenant derivation,
+  duplicate guard, outbox behavior, and lease completion semantics unchanged
+  except for the explicit atomically safe version check above.
+- Add a rollback-only SQL proof. It must exercise the real RPC as
+  `service_role`, cover an existing owner registering a distinct second pet,
+  duplicate refusal, stale-version zero-mutation + successful retry, tenant
+  isolation, and zero fixture residue. A single-session fixture may not claim
+  to prove real concurrent blocking.
+- Sonnet must mark both migration and fixture `NOT APPLIED` / `NOT RUN`.
+  Codex will validate them on disposable `vetai-test` after review.
+
+## Allowed changes
+
+- `supabase/migrations/20260827000100_second_pet_registration_atomicity.sql`
+- `supabase/tests/037_second_pet_registration_atomicity.sql`
+- `src/intakeExtraction.ts`
+- `src/intakeTurn.ts`
+- `src/petRegistration.ts`
+- `src/intakeConsumer.ts`
+- `src/localDemo.ts` only if the closed resolution-label map requires it
+- `test/intakeExtraction.test.ts`
+- `test/intakeTurn.test.ts`
+- `test/petRegistration.test.ts`
+- `test/intakeConsumer.test.ts`
+- `test/localDemo.test.ts` only if an existing scenario changes
+- `docs/ai-behavior-and-safety.md`
+- `docs/database-schema.md`
+- `docs/inbound-queue.md`
+- `docs/kvkk-inceleme-paketi.md`
+- `CURRENT_TASK.md`, but the implementing agent may fill only this task's
+  **Observed context** and **Delivery record** sections
+
+Anything else requires Codex to amend this contract before implementation.
+Do not edit `PROJECT_CONTEXT.md`; Codex owns it after verification.
+
+## Required tests and checks
+
+- Add focused unit/integration tests for every behavior listed above, including
+  no OpenAI call on the selected-pet conflict handoff and no create parameters
+  before exact confirmation.
+- Preserve all existing safety, first-pet, appointment, routing, and outbound
+  tests.
+- Run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+- Do not run a paid model eval: no prompt/model/extraction schema changes are
+  authorized. Do not apply the migration or SQL fixture to any database.
+
+## Review and staging gates
+
+1. Sonnet implements and records evidence without commit/push/deploy.
+2. Codex reviews the entire diff/call path, runs the required checks, applies
+   the migration plus rollback fixture only to disposable `vetai-test`, and
+   makes minimum corrections.
+3. Claude Opus performs a mandatory read-only review of transaction atomicity,
+   tenant/pet isolation, selected-pet conflict handling, RLS/grants, and KVKK
+   retention semantics.
+4. Only after PASS and Maya's separate approval may Codex migrate/deploy
+   staging and run one live WhatsApp second-pet smoke. Production remains out
+   of scope.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence.
+
+## Delivery record
+
+To be filled by the implementing agent.
+
+---
+
 # Current task — 035 Pet onboarding (first-time owner pet registration)
 
 Status: `COMPLETE` (closed 2026-08-26 — see "Task 035 closure record" below,
