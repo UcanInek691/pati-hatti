@@ -439,14 +439,20 @@ sayılarını içeren içeriksiz kullanım telemetrisi üretebiliyor. Prompt
 46 çok turlu senaryo iki modelle toplam 246 sentetik çağrıda çalıştırıldı;
 sıfır sağlayıcı/şema hatası ve tüm zorunlu güvenlik/randevu kapılarında %100
 sonuç alındı. Toplam tahmini model maliyeti 0,6902256 USD oldu; Luna üretim
-modeli olarak kaldı. Veteriner onayı, hukuk/KVKK onayı ve staging smoke hâlâ
-açıktır.
+modeli olarak kaldı. Düzeltilmiş staging Worker'ında gerçek WhatsApp smoke da
+proaktif davet → doğal olumlu yanıt → veritabanı saat teklifi → kesin `EVET`
+ile randevu oluşturma zincirini geçti. Veteriner ve hukuk/KVKK insan onayları
+hâlâ açıktır.
 
-Task 039 için sınırlı takip kararı ayrıca verilecektir: yalnız düşük riskli
-intake sorularında kontrollü model-yazımı düşünülebilir ve mevcut sabit metin
-fallback olarak kalır. Acil, tıbbi, insan devri, randevu saati/onayı, gizlilik
-ve rıza metinleri model tarafından üretilemez; Task 038 bu işi önceden
-yetkilendirmez.
+Task 039 `READY`: tek görev içinde iki bağımsız açık kapatılacak. Birincisi,
+hayvan başına konuşmalar-arası tek yaklaşan aktif randevu ve tarih/saat tekrar
+gösterildikten sonra kesin `EVET | HAYIR` ile atomik iptal; ikincisi, üç
+saniyelik/en fazla dört doğrudan-AI metin mesajını tek kullanıcı turu olarak
+yorumlayıp en fazla bir model çağrısı ve yanıt üretme. Aynı görev sonunda yeni
+Türkçe veteriner senaryo/onay dosyası ile yeni KVKK veri-saklama dosyası
+oluşturulacak. Yeniden planlama, serbest tarih tercihi, hatırlatma ve harici
+takvim bu kapsamda değildir. Prompt değişeceği için yalnız seçili Luna üzerinde
+tek ücretli regresyon kapısı, ardından Opus ve staging smoke gerekir.
 
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için

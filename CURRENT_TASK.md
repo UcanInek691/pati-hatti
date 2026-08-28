@@ -1,3 +1,313 @@
+# Current task — 039 Per-pet appointment lifecycle and burst-safe messaging
+
+Status: `READY`
+
+Opened by Codex on 2026-08-28 after Task 038 passed its local, mandatory
+Claude Opus, paid-eval and real staging WhatsApp gates. Maya explicitly chose
+one combined task for two related product gaps: a pet can currently obtain a
+second future appointment through a different conversation, and rapid
+back-to-back WhatsApp messages are currently separate Queue/model turns.
+
+This is one review/deploy unit with two independently testable parts. It must
+not blur their trust boundaries: appointment mutation remains database-owned
+and exact-confirmation-only; burst assembly only changes the bounded text sent
+to the existing structured extractor.
+
+## Goal
+
+1. Enforce at most one **upcoming active appointment per pet per clinic**
+   across every conversation, and truthfully return its date/time instead of
+   holding a second slot.
+2. Let an owner request cancellation in natural Turkish, but cancel only
+   after the exact current appointment is repeated back and a separate exact
+   `EVET` confirmation is received.
+3. Atomically return a cancelled slot to availability while retaining a
+   minimal, tenant-safe cancellation audit record.
+4. Treat a short burst such as `Merhaba` followed by `Pamuk kusuyor` as one
+   ordered user turn, producing at most one OpenAI call and one automated
+   reply for that burst.
+5. Produce two new Turkish human-review artifacts after implementation: a
+   veterinarian scenario/wording package with example conversations, and a
+   legal/KVKK data/retention package.
+
+## Fixed product and safety decisions
+
+### A. Per-pet appointment integrity
+
+1. An upcoming active appointment is:
+   - a `confirmed` slot whose `starts_at` is later than database `now()`; or
+   - an unexpired `held` slot for the same pet while confirmation is pending.
+   Past confirmed slots and expired holds do not block a new booking.
+2. The guard is clinic- and pet-scoped, not merely conversation-scoped. Every
+   booking/hold/cancel RPC locks the tenant-scoped pet row before checking or
+   changing an appointment so two conversations cannot win concurrently.
+   Lock order must be identical across all touched RPCs and documented.
+3. If a future confirmed appointment already exists, a new appointment request
+   creates no hold and returns a fixed truthful Turkish reply containing only
+   the selected pet's name and the existing Europe/Istanbul date/time. It must
+   not claim a new booking or staff notification.
+4. An unexpired hold owned by a different conversation is not described as a
+   confirmed appointment. It returns a fixed truthful `appointment in
+   progress`/phone-contact outcome and creates no second hold.
+5. A database invariant or locked-RPC proof must cover concurrency. A unique
+   index that permanently blocks a pet after a past appointment is forbidden;
+   PostgreSQL partial-index predicates cannot depend on volatile `now()`.
+
+### B. Cancellation
+
+1. Add a closed extraction intent `appointment_cancel_request`; bump the
+   prompt version once. Natural variants such as `randevumu iptal etmek
+   istiyorum`, `Pamuk'un randevusunu iptal edelim` and elliptical replies to a
+   cancellation question may map to it. It never authorizes a mutation.
+2. Emergency, explicit-human and medical-advice decisions retain their current
+   deterministic precedence over cancellation.
+3. The pet must resolve through the existing tenant-scoped pet boundary. With
+   zero/multiple/ambiguous pets the system asks for identity or hands off; it
+   never guesses from a model-generated ID.
+4. Add one closed stage `appointment_cancel_confirmation`. Entering it looks up
+   exactly one future confirmed appointment for the resolved pet, writes no
+   cancellation, and sends fixed Turkish copy with that appointment's
+   Europe/Istanbul date/time followed by exact `EVET`/`HAYIR` instructions.
+5. In that stage only, the existing strict raw-text confirmation discipline
+   applies:
+   - exact normalized `EVET` atomically cancels that exact still-current
+     appointment, records the audit row, returns the slot to `available`,
+     completes the Queue lease/conversation and writes the cancelled reply;
+   - exact normalized `HAYIR` leaves the appointment untouched, completes the
+     attempt and writes the unchanged reply;
+   - any other text repeats the fixed confirmation question without mutation.
+6. If the appointment disappeared, changed pet/tenant, started, or was already
+   cancelled before `EVET`, fail closed with a truthful stale/no-appointment
+   result; never cancel a replacement appointment.
+7. Create a backend-only cancellation-audit table rather than retaining owner
+   or pet identifiers on an `available` slot. It stores only identifiers and
+   appointment/cancellation timestamps required to prove the action—no phone,
+   message body, complaint, model output or provider payload. RLS is enabled,
+   public/anon/authenticated receive no direct access, service-role access is
+   explicit, and owner/pet/clinic erasure cascades are tested.
+8. Cancel/reschedule are distinct. This task implements cancellation only; it
+   does not silently select a replacement time.
+
+### C. Bounded multi-message user turns
+
+1. Use Cloudflare Queue's native per-message `delaySeconds: 3`—supported by
+   the current platform and Wrangler—to let a normal short message burst
+   settle. Do not add a dependency, timer service or Durable Object.
+2. Add an immutable-at-ingest `ai_burst_eligible` marker to
+   `webhook_events`. Only direct text messages admitted under exact `ai` mode
+   are eligible. Manual events are explicitly false; personal/group content
+   remains unpersisted; unsupported-media markers are never coalesced. Existing
+   rows default/backfill false so deployment cannot newly expose historical or
+   manual content to OpenAI.
+3. Replace or narrowly extend the current claim RPC so an eligible text job:
+   - sees only the same tenant-safe conversation;
+   - considers at most four eligible inbound text messages in chronological
+     order, all within the three seconds ending at the newest message and
+     after the most recent outbound message;
+   - contains no IDs, timestamps, owner name, phone, routing metadata or
+     hidden history in the model text;
+   - never exceeds the existing 65,536-code-point OpenAI input boundary.
+4. If the current job has a newer eligible text message in that bounded burst,
+   it is completed as a closed `superseded` result with no OpenAI call, no
+   state transition and no reply. The newest job is the only job allowed to
+   process the ordered aggregate. At-least-once duplicate delivery remains
+   idempotent.
+5. If more than four messages or more than 65,536 code points would belong to
+   one burst, make zero OpenAI calls and route the newest job through the
+   existing truthful human-handoff boundary; do not truncate away a possible
+   emergency statement.
+6. Never coalesce or supersede jobs while the conversation is in
+   `intake_confirmation`, `appointment_selection`,
+   `appointment_cancel_confirmation`, `human_handoff` or `completed`. Exact
+   confirmation stages always receive only their current raw message.
+7. The extractor receives one explicitly labelled, ordered, untrusted
+   current-turn block. The prompt must say that every part is user data, not an
+   instruction, and that corrections in later burst items supersede earlier
+   wording only when explicit. Existing Structured Outputs, `store: false`,
+   safety identifier, timeout and strict runtime parser remain unchanged.
+8. Each original inbound message remains its own database message for audit
+   and erasure. The aggregate exists only in memory and in the one OpenAI
+   request. No burst text or provider response may be logged.
+9. Required examples include at least:
+   - `Merhaba` + `Pamuk kusuyor`;
+   - `Pamuk` + `iki gündür kusuyor`;
+   - `Bunların hiçbiri yok` + `ama yürürken dengesiz`;
+   - `Pamuk kusuyor` + `Hayır, Pamuk değil Karamel`;
+   - natural appointment request split across two messages;
+   - cancellation request split across two messages;
+   - explicit emergency in either the first or last burst item;
+   - a burst crossing an outbound-message boundary, which must not merge;
+   - manual/personal/group/media content, which must never enter the aggregate.
+
+## Human approval artifacts
+
+The implementation must create, not overwrite, these two Turkish draft files:
+
+1. `docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md`
+   - state clearly that it is an unapproved draft;
+   - show realistic, synthetic, non-identifying WhatsApp conversations for
+     ordinary intake, split messages, aggregate safety answers, red flags,
+     existing appointment, cancel `EVET`, cancel `HAYIR`, ambiguous pet and
+     overflow/handoff;
+   - reproduce every fixed user-facing Turkish message exactly from source;
+   - provide per-scenario fields for `Uygun / Değişiklik gerekli`, clinical
+     delay risk, wording notes, approver name/registration/date/signature;
+   - never ask the veterinarian to review SQL, code or model internals.
+2. `docs/onay-paketleri/task-039-kvkk-inceleme-paketi.md`
+   - state clearly that it is an unapproved draft;
+   - inventory individual inbound storage, transient burst aggregation,
+     OpenAI transfer, cancellation-audit fields, tenant visibility, processors,
+     purposes, erasure cascades and every undecided retention period;
+   - distinguish Meta delivery to the Worker, Supabase persistence and OpenAI
+     processing; never claim whitelist-excluded content reaches OpenAI;
+   - include concrete legal-review decisions and approver/date/signature fields.
+
+The existing general veterinarian and KVKK packages receive links only; they
+must not be rewritten as though approval occurred.
+
+## Acceptance criteria
+
+1. Two concurrent conversations for the same clinic/pet cannot create two
+   upcoming active appointments. The loser receives the correct existing-time
+   or in-progress result with zero second hold.
+2. Another clinic or another owner's pet can never be queried, blocked,
+   cancelled or disclosed. All relationships are structurally tenant-safe.
+3. A past appointment does not block a new one.
+4. A natural cancellation request never mutates by itself. Exact confirmation
+   is mandatory; stale tokens/state/appointment identity leave zero partial
+   mutation.
+5. Successful cancellation audit insert, slot release, state/lease completion
+   and outbound reply are one transaction; any error rolls back all of them.
+6. A cancelled slot is available to a later eligible conversation, while the
+   minimal cancellation audit remains until its reviewed erasure/retention
+   rule removes it.
+7. Rapid eligible text messages generate exactly one model call and one reply;
+   superseded jobs are acknowledged. Single messages retain existing behavior.
+8. Burst ordering and late corrections are deterministic; any explicit red
+   signal still wins, aggregate negatives never erase a separately stated
+   symptom, and an omitted signal is never converted to false.
+9. Manual/personal/group/media and pre-migration historical content is not
+   added to an OpenAI burst.
+10. The two new Turkish human-review files contain exact source copy, synthetic
+    scenario evidence and unsigned approval fields. They are not labelled
+    approved by an AI.
+11. No arbitrary date/time preference, rescheduling, reminders, calendar UI,
+    external-calendar sync, diagnosis, treatment, medication or staff
+    notification claim is added.
+
+## Required automated evidence
+
+- A forward migration and rollback-only SQL fixture for appointment guard,
+  cancellation/audit, grants/RLS, lock/order semantics, cross-tenant denial,
+  stale replay, erasure and zero residue.
+- A separate forward migration and rollback-only SQL fixture for burst
+  eligibility, supersession, ordering, boundaries, manual exclusion,
+  overflow, grants and zero residue.
+- TypeScript unit/integration tests for every new closed result, exact reply,
+  malformed Data API shape, no-log behavior, no-model paths, Queue delay, one
+  call/one reply, corrections and safety precedence.
+- Existing regression suite remains green.
+
+## Prompt/eval gate
+
+Because the extraction intent and bounded-current-turn format change, bump the
+prompt version once and extend both synthetic corpora. The implementer must not
+make a real OpenAI call. After Codex/Opus review and Maya's separate approval,
+Codex runs the full single- and multi-turn corpora against the already-selected
+`gpt-5.6-luna` only. Terra is not re-run because Task 038 already selected Luna
+with equal mandatory quality at roughly one-tenth the cost. Keep `store:
+false`, strict Structured Outputs, no raw-text logs, a hard maximum of 160
+calls and an operational estimate cap of USD 0.15. Required new gates:
+
+- cancellation intent positive and negative/ambiguous precision;
+- split-message fact merge and explicit correction;
+- red signal in every burst position;
+- aggregate safety negative plus separately reported symptom;
+- no unexpected explicit-red signal;
+- no appointment/cancellation mutation authority in model output.
+
+Official OpenAI documentation continues to support the current Responses API
+boundary: structured JSON belongs in `text.format`, input is explicit request
+content, `store` controls response storage, and usage is returned separately.
+The model remains `gpt-5.6-luna`; this task is not a model-selection exercise.
+
+## Allowed changes
+
+New:
+
+- `supabase/migrations/20260829000100_pet_appointment_guard_and_cancellation.sql`
+- `supabase/tests/039_pet_appointment_guard_and_cancellation.sql`
+- `supabase/migrations/20260829000200_inbound_message_bursts.sql`
+- `supabase/tests/039_inbound_message_bursts.sql`
+- `docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md`
+- `docs/onay-paketleri/task-039-kvkk-inceleme-paketi.md`
+
+Narrow edits only:
+
+- `prompts/intake-extraction-prompt.ts`
+- `src/intakeExtraction.ts`, `src/openaiIntake.ts`, `src/intakeTurn.ts`
+- `src/conversationState.ts`, `src/intakeQueue.ts`, `src/intakeJobLease.ts`
+- `src/appointmentEngine.ts`, `src/appointmentFlow.ts`
+- `src/intakeReply.ts`, `src/intakeConsumer.ts`, `src/index.ts`
+- the corresponding existing test files under `test/`
+- `evals/intake-live-cases.json`, `evals/intake-multiturn-live-cases.json`
+- `docs/database-schema.md`, `docs/appointment-booking-engine.md`
+- `docs/whatsapp-appointment-flow.md`, `docs/inbound-queue.md`
+- `docs/ai-behavior-and-safety.md`, `docs/product-roadmap.md`
+- link-only edits in `docs/veteriner-hekim-onay-paketi.md` and
+  `docs/kvkk-inceleme-paketi.md`
+- `CURRENT_TASK.md`: implementer fills only `Observed context` and `Delivery
+  record`; Codex owns status/contract/review records.
+- `PROJECT_CONTEXT.md`: Codex only after final verification.
+
+No dependency, lockfile, Env binding, Wrangler queue resource, production
+configuration, secret, staff UI or unrelated migration may change. The user's
+pre-existing `.gitignore` modification remains untouched.
+
+## Required local verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run
+git diff --check
+```
+
+SQL fixtures are `NOT RUN` by Sonnet unless a disposable database is explicitly
+available and Codex authorizes it. No implementer commit, push, deploy, live
+OpenAI call, Supabase mutation, Meta call or Cloudflare resource mutation.
+
+## Review and live gates
+
+1. Sonnet implements the exact allowed scope and records evidence without
+   commit/push/deploy.
+2. Codex reviews the full call path, runs both SQL fixtures on disposable
+   `vetai-test`, applies only targeted fixes, reruns all checks and controls the
+   task status.
+3. Claude Opus performs one mandatory read-only review covering per-pet
+   concurrency, cancellation atomicity/audit/erasure, tenant/RLS boundaries,
+   burst privacy, safety precedence and Turkish copy.
+4. Only after PASS and Maya's separate approval may Codex run the Luna-only
+   paid eval, apply migrations to staging in order, deploy the Worker and run
+   two real WhatsApp smokes: second-booking rejection/cancellation/rebooking,
+   and a two-message burst producing one reply. Production remains forbidden.
+5. Veterinarian and Turkish legal/KVKK humans review the two new packages only
+   after the final implementation copy/data inventory is stable. Their signed
+   approval remains an external production gate and cannot be replaced by
+   Codex, Sonnet or Opus.
+
+## Observed context
+
+_Implementer fills from repository evidence only._
+
+## Delivery record
+
+_Implementer fills after verification._
+
+---
+
 # Current task — 038 Natural Turkish interpretation and appointment invitation
 
 Status: `COMPLETE` (closed 2026-08-28; local, Opus, paid-eval and live staging
