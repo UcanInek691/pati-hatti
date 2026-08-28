@@ -1,3 +1,266 @@
+# Current task — 038 Natural Turkish interpretation and appointment invitation
+
+Status: `READY`
+
+Opened by Codex on 2026-08-28 after Task 037 closed and Maya asked that the
+product understand conversational Turkish rather than accumulate exact phrase
+rules. This task changes the extraction prompt and therefore requires fresh
+synthetic live evaluation before any staging deployment. It does **not** let
+the model diagnose, invent availability, choose a database record, or confirm
+an appointment.
+
+## Goal
+
+Make the existing AI boundary useful as an actual conversational interpreter:
+
+1. understand varied, colloquial and elliptical Turkish from meaning and the
+   immediately preceding clinic question, rather than from a growing list of
+   literal phrases;
+2. accept natural aggregate answers to the existing safety-question block
+   while preserving any separately reported symptom;
+3. after a safely confirmed intake, proactively ask whether the owner wants an
+   appointment, so replies such as “olur”, “uygun saatlere bakalım” or
+   “randevu ayarlayalım” can enter the existing appointment engine without the
+   owner first having to type the exact sentence “randevu almak istiyorum”;
+4. expose the exact OpenAI token usage of each successful production
+   extraction without logging message content or identifiers, so real average
+   model cost can be calculated from evidence.
+
+This is the first of two deliberately bounded steps. Task 038 improves
+understanding and adds the appointment invitation. A later Task 039 may add
+controlled model-written wording only for low-risk intake questions, with the
+current fixed copy as fallback. Task 039 must not generate emergency, medical,
+handoff, slot, confirmation, privacy or consent text.
+
+## Verified starting evidence
+
+- Production already sends Luna the current inbound message plus at most the
+  single immediately preceding eligible outbound question. Full history,
+  owner/pet IDs and provider IDs are not sent.
+- The Responses request already uses strict Structured Outputs and the result
+  is revalidated by `parseIntakeExtraction`; the model cannot return a reply,
+  database ID, stage, slot or action.
+- `planAppointmentAction` already offers the earliest tenant-scoped slot when
+  a safe matched-pet turn reaches `ready_for_triage | appointment_offer` with
+  `intent === "appointment_request"`.
+- After pet/intake confirmation, `planPostConfirmationReply` currently sends
+  the generic “Bilgileri aldım...” copy. It does not invite the owner into the
+  appointment flow even though the next inbound can already carry the prior
+  question as bounded context.
+- Appointment selection is a separate irreversible boundary: only exact
+  normalized raw-text `EVET | HAYIR` controls the held slot. The model cannot
+  supply the slot ID/token or confirm the mutation.
+- `callOpenAiForIntake` already validates `usage.input_tokens`,
+  `usage.output_tokens` and `usage.total_tokens` for evaluation, but the
+  production wrapper discards those values.
+- Prompt `2026-08-14.1` has live Luna/Terra evidence, but any text change makes
+  that historical baseline non-authoritative for the new revision.
+- Official OpenAI documentation recommends outcome-focused instructions,
+  representative evals and Structured Outputs for stable machine-readable
+  contracts. The implementation already uses Structured Outputs; this task
+  must improve semantic guidance and evidence rather than add a phrase parser.
+
+## Product and safety decisions — binding
+
+1. **Meaning, not a phrase table.** Do not add a runtime list/regex of Turkish
+   appointment or safety phrases. The prompt must instruct the model to
+   interpret ordinary spelling errors, colloquial wording, inflection,
+   negation and short answers from meaning. Examples may clarify classes but
+   must not be described as an exhaustive vocabulary.
+2. **One bounded context item.** Keep the current privacy boundary: current
+   message plus at most one prior clinic question. Do not send full history,
+   persisted intake data, owner/pet IDs, timestamps or provider metadata.
+3. **Facts remain explicit.** Context may disambiguate what a short current
+   answer refers to; it is never itself evidence. The model may output only
+   facts justified by the resolved current answer. Unclear values stay null.
+4. **Aggregate safety answers are supported.** When the previous question is
+   the fixed safety list:
+   - a clear aggregate negative such as “hiçbiri yok” may set every listed
+     signal false;
+   - naming only one or more listed conditions may set only those justified
+     values true and leave unaddressed values null;
+   - “bunlar yok ama yürüyüşü dengesiz” may set the listed signals false while
+     preserving “yürüyüşte dengesizlik” as complaint/symptom;
+   - ambiguity must never be converted to false and explicit true signals must
+     keep deterministic emergency precedence.
+5. **Appointment invitation.** A successful `create | confirmed` intake turn
+   that remains safety-clear sends exactly one fixed, reviewable Turkish
+   invitation ending in `?`, rather than the generic closing sentence. The
+   preferred minimal copy is:
+
+   `Bilgileri aldım. Randevu oluşturmak ister misiniz?`
+
+   This asks a question; it does not claim a booking, available time, staff
+   action or response deadline.
+6. **Contextual appointment intent.** If the prior clinic question is the
+   appointment invitation, a clear affirmative or request to see/book suitable
+   times maps to `appointment_request` even without the word “randevu”. A
+   clear negative, postponement or refusal must not map to
+   `appointment_request`. A direct appointment request continues to work
+   without prior context. Mixed symptom + appointment messages preserve both
+   the explicit symptom facts and appointment intent; safety still wins.
+7. **Database owns availability.** The model never invents a day/time and
+   never chooses a slot. `planAppointmentAction` and the existing database RPC
+   remain the only route to the earliest real tenant-scoped future slot,
+   rendered in `Europe/Istanbul`.
+8. **Final mutation stays explicit.** Keep exact normalized raw-text
+   `EVET | HAYIR` for the already shown and temporarily held slot in this
+   task. Natural conversation may reach the offer, but only the deterministic
+   confirmation grammar may confirm/release the specific hold. Changing that
+   authority requires a separate reviewed contract.
+9. **Critical copy stays deterministic.** The model still cannot write any
+   owner-facing text. Emergency, safety-question, human-handoff, privacy,
+   intake-confirmation, appointment-offer and appointment-confirmation copy
+   remains fixed. Task 039 is not pre-authorized by this record.
+10. **Usage telemetry is content-free.** A successful production extraction
+    may emit one fixed structured log containing only the model name and
+    validated non-negative input/output/total token counts. It must contain no
+    message text, previous question, owner/conversation/provider/pet ID,
+    safety identifier, API key or provider response body. Missing/malformed
+    usage remains `null` and must not turn a valid extraction into failure.
+11. **No hardcoded monetary claim in runtime.** Log exact token counts, not a
+    fixed USD/TL amount. Prices and exchange rates change; cost is calculated
+    in the eval/report using the then-current official OpenAI rates.
+12. No database migration, new dependency, production deploy, staging deploy,
+    real WhatsApp send, paid eval, commit or push is authorized for the
+    implementing agent.
+
+## Required behavior and tests
+
+### Prompt and extraction
+
+- Bump the prompt version once and align both live-eval corpus metadata files.
+- Keep the exact existing JSON schema and strict runtime parser unchanged
+  unless Codex first amends this contract. No new intent is needed.
+- Add prompt-contract tests proving the semantic/non-exhaustive rule,
+  appointment-invitation context, aggregate safety rules, explicit-facts-only
+  boundary, and unchanged diagnosis/medication/action prohibitions.
+- Extend the synthetic corpora with representative Turkish, including at
+  least:
+  - invitation replies: `olur`, `evet lütfen`, `uygun saatlere bakalım`,
+    `müsait olduğunuz zamana yazalım`, `randevu ayarlayabilir miyiz`, common
+    typo/spacing variants;
+  - negatives: `şimdilik istemiyorum`, `hayır teşekkürler`, `sonra bakarız`;
+  - direct appointment requests without prior context;
+  - mixed symptom + appointment requests;
+  - full and partial aggregate safety negatives, one/multiple listed true
+    signals, and “listed conditions absent + another symptom present”;
+  - ambiguous replies that must preserve null rather than fail open.
+- Do not use a hardcoded production phrase classifier to make these tests
+  pass. Mocked tests verify request shape and deterministic consumers; live
+  eval is the evidence for model semantics.
+
+### Appointment invitation and routing
+
+- `planPostConfirmationReply` returns the fixed appointment invitation for a
+  successful, safety-clear confirmed intake.
+- The invitation is eligible for the existing one-question context selector.
+- A natural affirmative extracted as `appointment_request` reaches the
+  existing offer RPC only when all current safety, pet-match and stage guards
+  pass.
+- A negative/ambiguous answer, an emergency, human request, malformed state,
+  unresolved pet, unavailable slot or stale hold cannot create/confirm an
+  appointment and preserves the existing fail-closed outcome.
+- Direct `randevu almak istiyorum` behavior and exact held-slot `EVET | HAYIR`
+  behavior remain covered by regression tests.
+
+### Usage evidence
+
+- The production OpenAI success result includes validated usage or null,
+  without weakening extraction validation.
+- The consumer emits at most one usage log for a successful model call and no
+  usage log when no model call occurs or the call fails.
+- Tests inspect every logged value and prove raw current/previous messages,
+  IDs, safety identifier, secrets and provider bodies are absent.
+- Evaluation reports continue to show total tokens, latency and cost. No live
+  call is made during the ordinary test suite.
+
+## Allowed changes
+
+- `prompts/intake-extraction-prompt.ts`
+- `src/openaiIntake.ts`
+- `src/intakeConsumer.ts`
+- `src/petRegistration.ts`
+- `test/intakeExtractionPrompt.test.ts`
+- `test/openaiIntake.test.ts`
+- `test/intakeConsumer.test.ts`
+- `test/petRegistration.test.ts`
+- `test/liveOpenAiEval.test.ts` only for metadata/metric assertions required
+  by the revised corpus
+- `test/liveOpenAiMultiTurnEval.test.ts` only for metadata/metric assertions
+  required by the revised corpus
+- `evals/intake-live-cases.json`
+- `evals/intake-multiturn-live-cases.json`
+- `docs/ai-behavior-and-safety.md`
+- `docs/inbound-queue.md`
+- `docs/whatsapp-appointment-flow.md`
+- `docs/veteriner-hekim-onay-paketi.md` only to add the new invitation as
+  pending human-review copy
+- `docs/product-roadmap.md` only for the Task 038 result and the bounded Task
+  039 follow-up described above
+- `CURRENT_TASK.md`, but the implementing agent may fill only this task's
+  **Observed context** and **Delivery record** sections
+
+Anything else requires Codex to amend this contract before implementation.
+Do not edit `PROJECT_CONTEXT.md`; Codex owns it after verification. Preserve
+the user's pre-existing `.gitignore` change byte-for-byte.
+
+## Required local verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run
+git diff --check
+```
+
+The normal suite must skip both opt-in paid eval gates. No database check is
+required because schema/RPC/RLS do not change.
+
+## Review, eval and staging gates
+
+1. Sonnet implements within the exact allowed list, records evidence, and
+   makes no commit/push/deploy/live call.
+2. Codex reviews the full prompt/input/call/routing/logging diff and reruns the
+   local gate. Any phrase-table workaround is rejected.
+3. Claude Opus performs a mandatory read-only safety/privacy review of
+   aggregate safety interpretation, appointment precedence, bounded context
+   and telemetry contents.
+4. Because the prompt changes, Codex presents the exact synthetic call count
+   and estimated maximum cost, then obtains Maya's separate approval before
+   running Luna/Terra live evals. Evals are required after prompt/model/schema
+   changes, not after unrelated tasks.
+5. Mandatory live gates for both models on the new prompt revision:
+   - 100% runtime-valid schema and zero provider failures;
+   - 100% explicit-red recall;
+   - 100% explicit-false accuracy for labelled safety facts;
+   - 100% unspecified safety values preserved as not-false;
+   - zero unexpected explicit-red signals;
+   - every labelled positive appointment-invitation reply maps to
+     `appointment_request`, and no labelled negative/ambiguous reply does;
+   - every labelled mixed “listed conditions absent + other symptom” case
+     preserves that other symptom/complaint.
+6. Passing evals do not automatically change the production model. Luna stays
+   selected unless a separately reviewed cost/quality decision changes it.
+7. Only after the local, Opus and live-eval gates pass and Maya separately
+   approves may Codex deploy staging and run a fresh WhatsApp smoke:
+   confirmed intake → appointment invitation → natural affirmative → real
+   earliest-slot offer. The final slot confirmation remains exact `EVET`.
+8. Production remains out of scope. Veterinarian review of the new Turkish
+   invitation and all existing external legal/KVKK gates remain open.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence.
+
+## Delivery record
+
+To be filled by the implementing agent from repository evidence.
+
+---
+
 # Current task — 037 Second-pet registration and atomic pet finalization
 
 Status: `COMPLETE` (closed 2026-08-28; Codex engineering/database gate and
