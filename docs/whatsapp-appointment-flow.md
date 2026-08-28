@@ -86,6 +86,43 @@ deterministic rules own safety-and-flow-control" boundary
 (see `PROJECT_CONTEXT.md`) — the same discipline already applied to safety
 signal handling.
 
+## Natural entry into the deterministic flow (Task 038)
+
+After a successful, safety-clear pet/intake confirmation, the system sends the
+fixed question `Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?`.
+The next
+message and that one bounded prior question may let the structured extractor
+recognize a natural affirmative or request to see suitable times as
+`appointment_request`; direct appointment requests continue to work without
+the invitation. Clear refusal, postponement or ambiguity must not enter the
+offer path, and a mixed symptom/appointment message keeps the symptom so the
+existing safety and planning rules can run first.
+
+Because persisted intake normally keeps a prior non-unknown intent, an
+`unknown` extraction is reset to neutral `routine_request` whenever the stored
+intent is the action intent `appointment_request`. This prevents a stale
+earlier request from opening an offer after the owner declines, defers, sends
+an ambiguous message or has messages batched out of the context selector; it
+does not classify the owner's wording or bypass the model for positive answers.
+Consequently `appointment_request` is intentionally non-sticky across a later
+`unknown` turn: a direct request acts on the turn where it is stated, or the
+owner can re-express it after intake (including through the fixed invitation).
+
+This changes only how the existing offer flow is reached. The model cannot
+invent a day or time, choose a slot, access a booking token or write reply
+copy. `planAppointmentAction` and the tenant-scoped database RPC still select
+the earliest real future slot. After that slot is shown and held, the grammar
+below is deliberately unchanged: only exact normalized raw-text `EVET` or
+`HAYIR` may confirm or release that specific hold. Prompt revision
+`2026-08-28.1` passed the approved 246-call Luna/Terra synthetic gate on
+2026-08-28 with every mandatory safety and appointment metric satisfied.
+
+When safety facts are still unresolved at pet/intake confirmation, the safety
+questions retain priority. Once the subsequent answer safely advances
+`safety_check → ready_for_triage`, the system sends the same appointment
+invitation. Thus both the already-clear and ordinary ask-then-clear paths reach
+the proactive question without weakening safety precedence.
+
 ## Safety precedence
 
 Safety always outranks the appointment flow, at every stage, including mid

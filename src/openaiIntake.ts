@@ -12,7 +12,9 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-export type OpenAiIntakeResult = { ok: true; extraction: IntakeExtraction } | { ok: false };
+export type OpenAiIntakeResult =
+  | { ok: true; extraction: IntakeExtraction; usage: OpenAiIntakeUsage | null }
+  | { ok: false };
 
 export type OpenAiIntakeUsage = {
   inputTokens: number;
@@ -254,9 +256,10 @@ async function callOpenAiForIntake(
 
 /**
  * Sends one untrusted WhatsApp message to the OpenAI Responses API for
- * structured intake extraction and returns only a Task 007
- * runtime-validated `IntakeExtraction`. Never logs the message, the API key,
- * or any provider response content. Always uses the production Luna model.
+ * structured intake extraction and returns a Task 007 runtime-validated
+ * `IntakeExtraction` plus validated token usage when the provider supplies
+ * it. Never logs the message, the API key, or any provider response content.
+ * Always uses the production Luna model.
  */
 export async function extractIntakeViaOpenAi(
   message: string,
@@ -272,7 +275,7 @@ export async function extractIntakeViaOpenAi(
     previousQuestion,
   );
   if (!result.ok) return { ok: false };
-  return { ok: true, extraction: result.extraction };
+  return { ok: true, extraction: result.extraction, usage: result.usage };
 }
 
 /**

@@ -249,7 +249,31 @@ describe("extractIntakeViaOpenAi — accepted responses", () => {
     globalThis.fetch = fetchMock;
 
     const result = await extractIntakeViaOpenAi("my cat won't eat", "conv-hash-abc", ENV);
-    expect(result).toEqual({ ok: true, extraction: VALID_EXTRACTION });
+    expect(result).toEqual({ ok: true, extraction: VALID_EXTRACTION, usage: null });
+  });
+
+  it("returns validated provider usage to the production caller", async () => {
+    const payload = completedResponse(JSON.stringify(VALID_EXTRACTION)) as Record<string, unknown>;
+    payload.usage = { input_tokens: 321, output_tokens: 45, total_tokens: 366 };
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await extractIntakeViaOpenAi("my cat won't eat", "conv-hash-abc", ENV);
+
+    expect(result).toEqual({
+      ok: true,
+      extraction: VALID_EXTRACTION,
+      usage: { inputTokens: 321, outputTokens: 45, totalTokens: 366 },
+    });
+  });
+
+  it("keeps a valid production extraction successful when usage is malformed", async () => {
+    const payload = completedResponse(JSON.stringify(VALID_EXTRACTION)) as Record<string, unknown>;
+    payload.usage = { input_tokens: 321, output_tokens: -1, total_tokens: 320 };
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(payload));
+
+    const result = await extractIntakeViaOpenAi("my cat won't eat", "conv-hash-abc", ENV);
+
+    expect(result).toEqual({ ok: true, extraction: VALID_EXTRACTION, usage: null });
   });
 });
 

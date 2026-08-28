@@ -426,6 +426,28 @@ artık yalnız `open` yerine bütün kapanmamış durumları kapsıyor; böylece
 `delivered/read` olduğunda otomatik kapanıyor. Personel kimlik/zaman damgası
 verileri için Türk hukuk/KVKK incelemesi hâlâ ayrı ve zorunludur.
 
+Task 038 mühendislik/eval kapısını geçti: kapalı Structured Outputs şeması korunarak
+Türkçe yazım hatası, günlük dil, olumsuzlama, kısa bağlamsal yanıt ve toplu
+güvenlik cevabı yorumlama talimatları anlam odaklı hale getirildi; üretime bir
+cümle/regex tablosu eklenmedi. Güvenli intake onayından sonra sabit
+`Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?` sorusu gönderiliyor ve
+doğal olumlu yanıt mevcut tenant-güvenli randevu motoruna girebiliyor. Slotu
+yalnız veritabanı seçiyor; gösterilmiş hold için kesin işlem hâlâ yalnız tam
+`EVET | HAYIR` ile yapılıyor. Başarılı model çağrısı yalnız model adı ve token
+sayılarını içeren içeriksiz kullanım telemetrisi üretebiliyor. Prompt
+`2026-08-28.1` için Opus güvenlik/gizlilik incelemesi geçti. 77 tek turlu ve
+46 çok turlu senaryo iki modelle toplam 246 sentetik çağrıda çalıştırıldı;
+sıfır sağlayıcı/şema hatası ve tüm zorunlu güvenlik/randevu kapılarında %100
+sonuç alındı. Toplam tahmini model maliyeti 0,6902256 USD oldu; Luna üretim
+modeli olarak kaldı. Veteriner onayı, hukuk/KVKK onayı ve staging smoke hâlâ
+açıktır.
+
+Task 039 için sınırlı takip kararı ayrıca verilecektir: yalnız düşük riskli
+intake sorularında kontrollü model-yazımı düşünülebilir ve mevcut sabit metin
+fallback olarak kalır. Acil, tıbbi, insan devri, randevu saati/onayı, gizlilik
+ve rıza metinleri model tarafından üretilemez; Task 038 bu işi önceden
+yetkilendirmez.
+
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
 zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una

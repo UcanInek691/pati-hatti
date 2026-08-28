@@ -6,6 +6,7 @@ import {
   planPetRegistrationAction,
   planPetRegistrationReply,
   planPostConfirmationReply,
+  POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
 } from "../src/petRegistration";
 import { PET_IDENTITY_TEXT } from "../src/intakeReply";
 import type { ConversationIntakeContext, IntakeMessage, IntakeStage } from "../src/conversationState";
@@ -462,24 +463,44 @@ describe("planPetRegistrationReply", () => {
 });
 
 describe("planPostConfirmationReply", () => {
-  it("delegates to the ordinary complaint reply when the confirmed summary carried no complaint", () => {
+  it("keeps the immediate worsening-case contact path in the appointment invitation", () => {
+    expect(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT).toContain("durum kötüleşirse");
+    expect(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT).toContain("en yakın açık veteriner kliniğine başvurun");
+    expect(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT).toMatch(/Randevu oluşturmak ister misiniz\?$/u);
+  });
+
+  it("invites a safely confirmed intake into appointment booking even when no complaint was collected", () => {
     const context = baseContext();
     const plan = planned({ data: { pet_name: "Pamuk", species: null, complaint: null, symptoms: [] } }) as Extract<PlanResult, { kind: "planned" }>;
     expect(planPostConfirmationReply(context, plan)).toEqual({
       kind: "send",
-      category: "complaint",
-      text: "Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?",
+      category: "intake_received",
+      text: POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
     });
   });
 
-  it("delegates to the intake_received reply when a complaint was collected", () => {
+  it("uses the same fixed invitation when a complaint was collected", () => {
     const context = baseContext();
     const plan = planned({ data: { pet_name: "Pamuk", species: null, complaint: "kontrol" } }) as Extract<PlanResult, { kind: "planned" }>;
     expect(planPostConfirmationReply(context, plan)).toEqual({
       kind: "send",
       category: "intake_received",
-      text: "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun.",
+      text: POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
     });
+  });
+
+  it("keeps deterministic safety copy ahead of the invitation", () => {
+    const context = baseContext();
+    const plan = planned({ data: { pet_name: "Pamuk", species: "kedi" } }) as Extract<PlanResult, { kind: "planned" }>;
+    plan.safetyDecision = { kind: "needs_safety_check", unknownSignals: ["breathing_difficulty"] };
+
+    const reply = planPostConfirmationReply(context, plan);
+
+    expect(reply.kind).toBe("send");
+    if (reply.kind === "send") {
+      expect(reply.category).toBe("safety_questions");
+      expect(reply.text).not.toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
+    }
   });
 
   it("never routes to human_handoff or emergency copy from a plain post-confirmation turn", () => {

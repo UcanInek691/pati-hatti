@@ -347,6 +347,34 @@ appointment stage may persist that same stage in this task, since no
 triage/appointment action executes here — later triage code must still
 consume the safety decision before acting.
 
+### Meaning-based extraction, invitation routing and usage evidence (Task 038)
+
+The model input boundary is unchanged: the exact current message plus at most
+one eligible preceding clinic question. Prompt `2026-08-28.1` interprets
+colloquial, misspelled, inflected, negated and elliptical Turkish by meaning;
+there is no runtime phrase table or regular-expression appointment shortcut.
+For the fixed safety list, clear aggregate negatives may set the listed values
+false, named present conditions set only justified values true, other reported
+symptoms remain present, and ambiguity remains `null`.
+
+A safely confirmed pet/intake turn now writes the fixed question
+`Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?`.
+Because it is the single
+eligible previous question, a natural affirmative may extract as
+`appointment_request` and then follows the existing planner and atomic
+appointment-offer RPC. The model never chooses or invents availability. Once
+a real slot is held, only the existing exact raw-text `EVET | HAYIR` grammar
+can confirm or release it. All safety, pet, stage, stale-state and unavailable
+slot outcomes remain fail-closed.
+
+After a successful OpenAI extraction, the consumer emits at most one
+content-free `openai_usage` log with model name and validated token counts.
+There is no such log on a failed/no-model path or when provider usage is
+missing/malformed. No message text, previous question, identity, provider id,
+safety identifier, secret, response body or price is logged. Queue retries may
+perform another extraction and therefore another per-attempt usage record;
+finalization remains atomic and idempotent as described above.
+
 ### Clinic personalization of `human_handoff` replies (Task 031)
 
 Immediately before calling `finalizeIntakeQueueJob` at each of the three

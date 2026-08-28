@@ -23,8 +23,31 @@ describe("intake extraction prompt", () => {
   });
 
   it("requires facts-only extraction with no inference", () => {
-    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("Extract only what the message explicitly states");
-    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("never guess, infer, translate");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("Extract only what the resolved current message explicitly states");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("never permits\nyou to guess or fill in an unstated fact");
+  });
+
+  it("requires meaning-based Turkish interpretation without an exhaustive phrase list", () => {
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("## Interpret meaning, not keywords");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("spelling mistakes");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("colloquial wording");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("not an exhaustive phrase\nlist");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("Do not require a particular keyword");
+  });
+
+  it("defines aggregate safety answers without converting ambiguity to false", () => {
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("## Safety-list answers");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("sets every listed\ncondition false");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("leave unaddressed listed\nconditions null");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("still\nextract that other complaint/symptom");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("A bare affirmative to several listed\nconditions is ambiguous");
+  });
+
+  it("uses appointment-question context semantically while rejecting refusal and ambiguity", () => {
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("## Appointment requests");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("even if the current answer\ndoes not repeat the word \"randevu\"");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("A clear refusal, postponement, or ambiguous\nanswer is not an appointment request");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("preserve the stated complaint/symptoms");
   });
 
   it("forbids diagnosis, medication, and treatment recommendations", () => {
@@ -76,8 +99,8 @@ describe("intake extraction prompt", () => {
     expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).not.toContain("new_pet");
   });
 
-  it("is version 2026-08-14.1 and both synthetic corpora declare the same prompt version", () => {
-    expect(INTAKE_EXTRACTION_PROMPT_VERSION).toBe("2026-08-14.1");
+  it("is version 2026-08-28.1 and both synthetic corpora declare the same prompt version", () => {
+    expect(INTAKE_EXTRACTION_PROMPT_VERSION).toBe("2026-08-28.1");
     for (const file of ["intake-live-cases.json", "intake-multiturn-live-cases.json"]) {
       const corpus = JSON.parse(readFileSync(path.join(__dirname, "..", "evals", file), "utf8")) as {
         prompt_version: string;

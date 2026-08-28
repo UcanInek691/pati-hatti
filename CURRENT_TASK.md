@@ -1,6 +1,7 @@
 # Current task — 038 Natural Turkish interpretation and appointment invitation
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-08-28; local, Opus, paid-eval and live staging
+WhatsApp gates passed. Production and external human approvals remain open.)
 
 Opened by Codex on 2026-08-28 after Task 037 closed and Maya asked that the
 product understand conversational Turkish rather than accumulate exact phrase
@@ -84,11 +85,12 @@ handoff, slot, confirmation, privacy or consent text.
    - ambiguity must never be converted to false and explicit true signals must
      keep deterministic emergency precedence.
 5. **Appointment invitation.** A successful `create | confirmed` intake turn
-   that remains safety-clear sends exactly one fixed, reviewable Turkish
-   invitation ending in `?`, rather than the generic closing sentence. The
-   preferred minimal copy is:
+   that is already safety-clear, or the later `safety_check →
+   ready_for_triage` turn that resolves the remaining safety questions, sends
+   exactly one fixed, reviewable Turkish invitation ending in `?`, rather than
+   the generic closing sentence. The copy is:
 
-   `Bilgileri aldım. Randevu oluşturmak ister misiniz?`
+   `Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?`
 
    This asks a question; it does not claim a booking, available time, staff
    action or response deadline.
@@ -154,6 +156,9 @@ handoff, slot, confirmation, privacy or consent text.
 
 - `planPostConfirmationReply` returns the fixed appointment invitation for a
   successful, safety-clear confirmed intake.
+- If confirmation first requires safety questions, the later safe transition
+  from `safety_check` to `ready_for_triage` returns the same fixed invitation;
+  this is the ordinary path and must not fall back to the generic closing copy.
 - The invitation is eligible for the existing one-question context selector.
 - A natural affirmative extracted as `appointment_request` reaches the
   existing offer RPC only when all current safety, pet-match and stage guards
@@ -196,6 +201,9 @@ handoff, slot, confirmation, privacy or consent text.
 - `docs/whatsapp-appointment-flow.md`
 - `docs/veteriner-hekim-onay-paketi.md` only to add the new invitation as
   pending human-review copy
+- `docs/kvkk-inceleme-paketi.md` only for Codex's post-review inventory note
+  about the bounded previous-question context and stable pseudonymous safety
+  identifier disclosed to OpenAI
 - `docs/product-roadmap.md` only for the Task 038 result and the bounded Task
   039 follow-up described above
 - `CURRENT_TASK.md`, but the implementing agent may fill only this task's
@@ -253,11 +261,245 @@ required because schema/RPC/RLS do not change.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence.
+Implementation began from `d89eb2d` (`docs: define natural Turkish
+appointment task`). The working tree contained only the user's pre-existing
+`.gitignore` addition (`tmp/`); it was not edited by this task. `rtk` is not
+installed in this shell, so native commands were used.
+
+Repository inspection confirmed the contract's starting boundaries:
+
+- `src/openaiIntake.ts` already sends the current message plus at most one
+  labelled prior clinic question, uses strict Structured Outputs, reparses via
+  `parseIntakeExtraction`, and already validates optional provider usage for
+  the evaluation entry point. The production wrapper discarded that usage.
+- `src/intakeConsumer.ts` performs one extraction before pure intake,
+  registration, safety and appointment planning. Existing media, non-AI,
+  terminal/handoff and poison paths return before the model call.
+- `src/petRegistration.ts` is the only caller-owned post-confirmation reply
+  boundary. The successful `create | confirmed` branches pass through
+  `planPostConfirmationReply`; the exact held-slot `EVET | HAYIR` parser and
+  appointment finalizers are separate and unchanged.
+- `src/appointmentFlow.ts` already admits `appointment_request` only after
+  safety/stage/pet guards and delegates real availability/holding to the
+  existing tenant-scoped database RPC. No new runtime phrase classifier or
+  slot-selection path was needed.
+- Both opt-in eval harnesses already report provider-validity, usage, latency
+  and estimated cost while ordinary `pnpm test` skips paid calls. Their corpus
+  metadata needed a prompt-version bump and Task 038 semantic cases.
+- Official OpenAI guidance was checked for outcome-focused instructions,
+  representative evals and Structured Outputs. The existing schema/parser
+  boundary was therefore retained; the prompt was revised without adding a
+  dependency or runtime phrase table.
 
 ## Delivery record
 
-To be filled by the implementing agent from repository evidence.
+Implemented Task 038 within the exact allowed-change list. The user's
+pre-existing `.gitignore` change remains byte-for-byte outside this delivery.
+
+Changed files:
+
+- `prompts/intake-extraction-prompt.ts`: bumped to `2026-08-28.1` and added
+  meaning-based Turkish, aggregate safety-list and contextual appointment
+  guidance while preserving the exact schema and all diagnosis/action bans.
+- `src/openaiIntake.ts`, `src/intakeConsumer.ts`: returned validated usage (or
+  `null`) to production and emitted one content-free structured usage log per
+  successful model call when usage exists. Codex review also added a narrow
+  system-context guard so an `unknown` reply to the exact appointment
+  invitation cannot resurrect an older persisted `appointment_request`.
+- `src/petRegistration.ts`: added the fixed post-confirmation invitation and
+  preserved deterministic safety-copy precedence.
+- `test/intakeExtractionPrompt.test.ts`, `test/openaiIntake.test.ts`,
+  `test/intakeConsumer.test.ts`, `test/petRegistration.test.ts`: covered the
+  new prompt contract, usage/null behavior, no-content telemetry, no-model
+  silence, one-question invitation routing into the existing offer RPC, exact
+  post-confirmation copy and safety precedence.
+- `evals/intake-live-cases.json`: prompt/eval version `2026-08-28.1`, 77 total
+  cases, including direct/typo/mixed symptom-and-appointment requests.
+- `evals/intake-multiturn-live-cases.json`: prompt/eval version
+  `2026-08-28.1`, 46 total cases, including six positive, three negative and
+  one ambiguous invitation reply plus aggregate-negative, partial,
+  true-signal, uncertain and other-symptom safety answers.
+- `test/liveOpenAiEval.test.ts`, `test/liveOpenAiMultiTurnEval.test.ts`:
+  aligned metadata/pricing-review date and added separate appointment and
+  mixed-symptom evidence metrics/assertions. The bounded two-model multi-turn
+  plan is 92 calls, below its hard maximum of 100.
+- `docs/ai-behavior-and-safety.md`, `docs/inbound-queue.md`,
+  `docs/whatsapp-appointment-flow.md`: documented the unchanged bounded input,
+  deterministic safety/booking authority, invitation flow and content-free
+  token telemetry.
+- `docs/veteriner-hekim-onay-paketi.md`: added the exact invitation as pending
+  veterinary-review item V-12.
+- `docs/product-roadmap.md`: recorded the Task 038 result/gates and kept Task
+  039 narrowly limited to low-risk wording with fixed fallback.
+
+Acceptance evidence:
+
+- No phrase table, regular-expression classifier, new intent, new schema
+  field, parser weakening, dependency, migration or database operation was
+  added.
+- The model still receives only current text plus at most one untrusted prior
+  question and cannot write replies, choose a pet/slot, or confirm a hold.
+- Natural invitation intent reaches only the existing guarded appointment
+  offer route; exact raw-text `EVET | HAYIR` remains the final held-slot
+  mutation authority. A refusal, postponement or ambiguous invitation reply
+  cannot inherit an older appointment intent from persisted intake state.
+- Usage values must be validated non-negative safe integers. Missing/malformed
+  usage does not fail a valid extraction and produces no usage log. Tests
+  inspect the complete log arguments and exclude message/context, ids, safety
+  identifier, key, complaint and provider-body content.
+
+Checks run:
+
+- `pnpm install --frozen-lockfile` — PASS (`Already up to date`).
+- `pnpm typecheck` — PASS, zero errors. The first sandboxed attempt hit the
+  host's known `EPERM lstat C:\\Users\\mehme`; the same command passed when
+  run with the required local permission.
+- `pnpm test` — PASS after Codex's stale-intent and Opus-review corrections:
+  33 files, 1,449 passed, 2 opt-in paid evals skipped, 0 failed (1,451 total).
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — PASS,
+  production bundle 157.37 KiB / gzip 33.53 KiB, no deploy.
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir
+  .wrangler/staging-dry-run` — PASS, staging bundle 157.37 KiB / gzip 33.53
+  KiB, no deploy.
+- `git diff --check` — PASS; only expected LF/CRLF notices.
+
+Explicitly NOT RUN: any real Meta/Supabase call, database/migration check (no
+database change), production deploy, WhatsApp send, commit and push. The first
+Task 038 staging Worker version was deployed and readiness-checked as recorded
+below, but no WhatsApp smoke was sent.
+
+Known limitations and review risks for Codex/Opus:
+
+- All corpus expectations and live results are engineering-labelled synthetic
+  evidence, not veterinary approval.
+- Aggregate safety semantics depend on model behavior and therefore require
+  the mandatory explicit-red/false/null/unexpected-red live gates; the
+  deterministic post-extraction safety gate itself is unchanged.
+- Usage telemetry exists only when OpenAI supplies all three valid counts and
+  is per successful extraction attempt, so a Queue retry may legitimately
+  produce another content-free record. It deliberately makes no runtime USD/TL
+  claim.
+- `appointment_request` is deliberately treated as a non-sticky action intent:
+  a later `unknown` extraction clears it instead of replaying it. A direct
+  request is guaranteed on the turn where it is stated; after intake the fixed
+  invitation lets the owner express the request again. This is fail-closed and
+  prevents stale slot holds.
+- The new Turkish invitation is fixed and truthful but remains pending the
+  clinical veterinarian review recorded as V-12. Existing legal/KVKK gates
+  also remain open.
+- Task 039 is not implemented or authorized here; all critical copy remains
+  deterministic and unchanged.
+
+## Codex review record — 2026-08-28
+
+Codex reviewed the complete prompt, bounded-input, parser, routing, telemetry,
+eval and documentation diff. The implementation keeps Structured Outputs and
+the strict runtime parser unchanged, sends at most one prior system question,
+adds no runtime Turkish phrase table, leaves database availability and exact
+held-slot `EVET | HAYIR` authority unchanged, and logs only validated token
+counts plus the fixed model name.
+
+One material routing defect was found and fixed during review. Persisted intake
+normally keeps a previous non-`unknown` intent, so a correctly extracted
+negative or ambiguous answer (`intent: unknown`) to the appointment invitation
+could have resurrected an older `appointment_request`. The consumer now resets
+only that exact system-owned invitation context to neutral `routine_request`
+before merging. A new end-to-end regression proves that no offer RPC runs and
+the stale intent is removed; positive replies still require model semantic
+classification and all existing guards.
+
+The full required local gate then passed: frozen install, clean typecheck,
+1,449 tests passed with the two paid eval gates skipped, production and staging
+dry-run bundles passed, and `git diff --check` passed. Scope matches the allowed
+list except for the user's pre-existing untouched `.gitignore` change.
+
+Claude Opus's first read-only pass found one batched-message hole in that
+correction: tying it to the bounded previous-question selector still allowed a
+persisted appointment action to survive when a later inbound message made the
+selector return `null`. Codex replaced that condition with the stronger action
+semantics: whenever persisted intent is `appointment_request` and the current
+validated extraction is `unknown`, the turn becomes neutral
+`routine_request`. The regression now includes the trailing second inbound
+message and proves both a two-item model input and zero appointment-offer RPC.
+
+The same review identified three cheap completeness fixes, all applied before
+live evaluation: the fixed invitation again includes the immediate
+worsening-case off-bot contact path; the partial/true/uncertain safety cases now
+use the exact production bullet-list question; and the KVKK inventory now
+records that the single previous question can contain pet/intake summary data
+and that the stable hashed safety identifier is pseudonymous/linkable. The
+stale source comment was corrected. The full local gate above was rerun after
+all changes.
+
+Claude Opus then performed the required narrow read-only re-check and returned
+`PASS`: the batched-message regression, off-bot contact copy, corrected source
+comment, production-format safety cases and KVKK inventory were all confirmed
+closed. Its process note N1 was already satisfied by Codex's explicit contract
+amendment adding the KVKK document to the allowed list and updating the binding
+invitation copy. Its non-blocking N2 is recorded above; N3 is an optional extra
+test hardening note because the two already-correct production-format cases are
+outside the four-case regression loop.
+
+The user then approved the bounded live gate. Codex ran 77 single-turn and 46
+multi-turn cases against both Luna and Terra sequentially: exactly 246
+synthetic API calls. Both models returned valid schemas for every call with
+zero provider failures and no missing usage. Mandatory gates all passed:
+single-turn explicit red 11/11, explicit false 9/9, unspecified-not-false
+596/596 and appointment intent 9/9; multi-turn explicit red 15/15, explicit
+false 42/42, explicit null 16/16, unspecified-not-false 311/311, zero
+unexpected explicit red, appointment positives 6/6, negative/ambiguous
+rejections 4/4, and aggregate-negative-plus-other-symptom preservation 1/1.
+
+Luna matched 985/1,144 single-turn expected leaves and 90/92 multi-turn leaves;
+Terra matched 968/1,144 and 91/92 respectively. Both multi-turn reports listed
+only `T029-045` as non-exact, while its mandatory symptom-preservation gate
+still passed. Token-derived estimated costs were $0.0628416 for Luna and
+$0.627384 for Terra, $0.6902256 total—within the approved $1 operational cap.
+Luna remains production-selected because every mandatory gate passed and
+Terra cost roughly ten times more without a gate-level advantage.
+
+After user approval, Codex deployed staging Worker version
+`48698e61-3203-4893-acf1-8f2d8dfa8bff`; `/health` and `/ready` both returned
+HTTP 200. Before asking the user to send the smoke message, Codex traced the
+ordinary flow and found that the invitation was emitted only when safety was
+already clear on the confirmation turn. In the common path—confirmation asks
+the safety block, then the owner clears it—the later `safety_check →
+ready_for_triage` turn still emitted the old generic closing copy.
+
+Codex amended the contract and consumer minimally: that exact safe transition
+now reuses the same fixed appointment invitation, while unresolved/emergency/
+handoff decisions retain their existing precedence. Targeted tests are 176/176,
+the full suite is again 1,449 passed plus 2 paid gates skipped, typecheck and
+staging dry-run pass. The prompt/schema/model did not change, so the completed
+246-call semantic eval remains applicable. The currently deployed staging
+version does not yet contain this post-deploy correction and must not be used
+for the smoke.
+
+Claude Opus completed the requested narrow read-only routing re-check and
+returned `PASS`. It confirmed that only the resolved `safety_check →
+ready_for_triage` ordinary path can receive the invitation; emergency,
+handoff, unresolved, malformed and terminal paths cannot. Appointment-offer
+RPC precedence, off-bot worsening guidance and the completed 246-call eval
+remain valid. Codex also added Opus's recommended isolated regression test:
+an already-`ready_for_triage` conversation with all safety signals false does
+not receive the invitation again. The targeted consumer suite is 125/125 and
+the full suite is 1,450 passed plus 2 paid gates skipped; frozen install,
+typecheck, staging dry-run and `git diff --check` pass.
+
+Codex replaced staging with Worker version
+`47b745ae-db7b-4627-886d-939117aed8e2`; `/health` and `/ready` both returned
+HTTP 200. Maya then completed the fresh real-WhatsApp smoke through the
+corrected flow: ordinary intake reached the proactive appointment invitation,
+a natural affirmative reached a real database-owned available-slot offer, and
+the exact final `EVET` produced the confirmed-appointment reply. Worker tail
+showed each inbound persisted and each Queue turn completed without an error;
+content-free OpenAI telemetry identified `gpt-5.6-luna` and token counts only.
+
+Decision: `COMPLETE`. Production, veterinarian approval, and legal/KVKK
+approval remain out of scope and open. The existing appointment engine still
+limits one active slot per conversation—not per pet—and has no cancellation or
+reschedule-after-confirmation flow; those are follow-up product tasks, not
+claims made by Task 038.
 
 ---
 

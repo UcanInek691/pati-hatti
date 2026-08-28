@@ -1,11 +1,11 @@
 {
   "$schema_note": "Engineering evaluation corpus for Task 029 bounded multi-turn interpretation. Not a database migration or runtime config.",
   "$disclaimer": "Bu korpus bir mühendislik beklentisidir; bir veteriner hekim tarafından onaylanmamıştır. Sonuçlar yalnızca kanıt niteliğindedir ve üretim modelini otomatik olarak değiştirmez.",
-  "eval_version": "2026-08-13.1",
-  "prompt_version": "2026-08-14.1",
+  "eval_version": "2026-08-28.1",
+  "prompt_version": "2026-08-28.1",
   "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
   "generated_for": "Task 029 bounded multi-turn interpretation synthetic evidence",
-  "case_count": 30,
+  "case_count": 46,
   "cases": [
     {
       "id": "T029-001",
@@ -254,6 +254,166 @@
           "possible_toxin_exposure": false,
           "possible_foreign_object": false,
           "unable_to_urinate": false
+        }
+      }
+    },
+    {
+      "id": "T029-031",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "olur",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-032",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "evet lütfen",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-033",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "uygun saatlere bakalım",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-034",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "müsait olduğunuz zamana yazalım",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-035",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "randevu ayarlayabilir miyiz",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-036",
+      "category": "appointment_invitation_positive",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "olurr musait saate yazın",
+      "expected": { "intent": "appointment_request" }
+    },
+    {
+      "id": "T029-037",
+      "category": "appointment_invitation_negative",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "şimdilik istemiyorum",
+      "expected": { "intent": "unknown" }
+    },
+    {
+      "id": "T029-038",
+      "category": "appointment_invitation_negative",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "hayır teşekkürler",
+      "expected": { "intent": "unknown" }
+    },
+    {
+      "id": "T029-039",
+      "category": "appointment_invitation_negative",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "sonra bakarız",
+      "expected": { "intent": "unknown" }
+    },
+    {
+      "id": "T029-040",
+      "category": "appointment_invitation_ambiguous",
+      "previous_question": "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?",
+      "message": "bakarız",
+      "expected": { "intent": "unknown" }
+    },
+    {
+      "id": "T029-041",
+      "category": "production_safety_block_aggregate_negative",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "bunların hiçbiri yok",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": false,
+          "loss_of_consciousness": false,
+          "active_seizure": false,
+          "heavy_bleeding": false,
+          "major_trauma": false,
+          "possible_toxin_exposure": false,
+          "possible_foreign_object": false,
+          "unable_to_urinate": false
+        }
+      }
+    },
+    {
+      "id": "T029-042",
+      "category": "production_safety_block_partial_negative",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "nefes sorunu da kanama da yok, bilinç durumundan emin değilim",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": false,
+          "loss_of_consciousness": null,
+          "heavy_bleeding": false
+        }
+      }
+    },
+    {
+      "id": "T029-043",
+      "category": "production_safety_block_one_true",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "sadece idrarını yapamıyor",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "active_seizure": null,
+          "unable_to_urinate": true
+        }
+      }
+    },
+    {
+      "id": "T029-044",
+      "category": "production_safety_block_multiple_true",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "nefes almakta zorlanıyor ve bilincini kaybetti",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": true,
+          "loss_of_consciousness": true,
+          "heavy_bleeding": null
+        }
+      }
+    },
+    {
+      "id": "T029-045",
+      "category": "production_safety_block_absent_with_other_symptom",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "bunlar yok ama yürürken dengesi bozuk",
+      "expected": {
+        "complaint": "yürürken dengesizlik",
+        "symptoms": ["yürürken dengesi bozuk"],
+        "reported_safety_signals": {
+          "breathing_difficulty": false,
+          "loss_of_consciousness": false,
+          "active_seizure": false,
+          "heavy_bleeding": false,
+          "major_trauma": false,
+          "possible_toxin_exposure": false,
+          "possible_foreign_object": false,
+          "unable_to_urinate": false
+        }
+      }
+    },
+    {
+      "id": "T029-046",
+      "category": "production_safety_block_uncertain_aggregate",
+      "previous_question": "Güvenlik için lütfen aşağıdaki soruları her biri için evet veya hayır diye yanıtlayın. Bu durumlardan biri varsa veya emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun:\n- Nefes almakta güçlük var mı?\n- Bilinç kaybı var mı?\n- Şu anda devam eden nöbet var mı?\n- Şiddetli veya durmayan kanama var mı?\n- Araç çarpması, yüksekten düşme veya başka ciddi bir travma oldu mu?\n- Zehirli olabilecek bir maddeye maruz kalmış olabilir mi?\n- Yabancı bir cisim yutmuş olabilir mi?\n- İdrar yapamıyor mu?",
+      "message": "galiba yok gibi ama emin değilim",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "heavy_bleeding": null
         }
       }
     }

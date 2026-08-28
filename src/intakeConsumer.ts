@@ -4,7 +4,7 @@ import { claimIntakeQueueJob, completeIntakeQueueJob, finalizeIntakeQueueJob } f
 import type { FinalizeIntakeQueueJobInput } from "./intakeJobLease";
 import { getConversationIntakeContext } from "./conversationState";
 import type { ConversationIntakeContext, IntakeStage } from "./conversationState";
-import { extractIntakeViaOpenAi } from "./openaiIntake";
+import { extractIntakeViaOpenAi, OPENAI_INTAKE_MODEL } from "./openaiIntake";
 import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
 import type { PersistedIntakeData, PlanResult } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
@@ -14,7 +14,11 @@ import type { IntakeReplyPlan } from "./intakeReply";
 import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
 import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
-import { planPetRegistrationAction, planPetRegistrationReply, planPostConfirmationReply } from "./petRegistration";
+import {
+  planPetRegistrationAction,
+  planPetRegistrationReply,
+  planPostConfirmationReply,
+} from "./petRegistration";
 
 export type QueueDisposition = "ack" | "retry";
 
@@ -54,6 +58,22 @@ function selectPreviousClinicQuestion(context: ConversationIntakeContext, curren
     return isEligibleClinicQuestion(item.content) ? item.content : null;
   }
   return null;
+}
+
+/**
+ * An `unknown` answer normally preserves the previous persisted intent. That
+ * is useful for incomplete intake turns, but an action intent must not be
+ * replayed on a later turn: a missing/ambiguous/refusing answer could otherwise
+ * resurrect an older `appointment_request`, including when batched inbound
+ * messages make the bounded previous-question selector return null. Clear only
+ * that persisted action intent; positive replies still have to be classified
+ * as `appointment_request` by the model and pass every existing guard.
+ */
+function clearStaleAppointmentIntent(persistedIntent: IntakeExtraction["intent"] | null, extraction: IntakeExtraction): IntakeExtraction {
+  if (persistedIntent !== "appointment_request" || extraction.intent !== "unknown") {
+    return extraction;
+  }
+  return { ...extraction, intent: "routine_request" };
 }
 
 /** True when the current turn's extraction expresses no explicit actionable fact (Task 029 no-progress fallback). */
@@ -337,7 +357,19 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     const safetyIdentifier = await deriveSafetyIdentifier(context.ownerId);
     const extractionResult = await extractIntakeViaOpenAi(claim.messageText, safetyIdentifier, env, previousQuestion);
     if (!extractionResult.ok) return "retry";
-    const extraction = extractionResult.extraction;
+    if (extractionResult.usage !== null) {
+      console.log("intake consumer: openai_usage", {
+        model: OPENAI_INTAKE_MODEL,
+        input_tokens: extractionResult.usage.inputTokens,
+        output_tokens: extractionResult.usage.outputTokens,
+        total_tokens: extractionResult.usage.totalTokens,
+      });
+    }
+    const persistedSnapshot = readCanonicalPersistedSnapshot(context.intakeData);
+    const extraction = clearStaleAppointmentIntent(
+      persistedSnapshot.ok ? persistedSnapshot.value.intent : null,
+      extractionResult.extraction,
+    );
 
     const plan = preserveHumanHandledPetBoundary(context, extraction, planIntakeTurn(context, extraction));
 
@@ -518,7 +550,14 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       return "retry";
     }
 
-    const replyPlan = await prepareOutboundReply(conversationId, context, planIntakeReply(context.intakeStage, effectivePlan), env);
+    const baseReplyPlan =
+      effectivePlan.kind === "planned" &&
+      context.intakeStage === "safety_check" &&
+      nextStage === "ready_for_triage" &&
+      effectivePlan.safetyDecision.kind === "continue_intake"
+        ? planPostConfirmationReply(context, effectivePlan)
+        : planIntakeReply(context.intakeStage, effectivePlan);
+    const replyPlan = await prepareOutboundReply(conversationId, context, baseReplyPlan, env);
 
     const finalizeInput: FinalizeIntakeQueueJobInput = {
       conversationId,

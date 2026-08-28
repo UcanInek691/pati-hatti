@@ -55,7 +55,7 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const PRICING_CHECKED_ON = "2026-08-13";
+const PRICING_CHECKED_ON = "2026-08-28";
 const PRICE_USD_PER_1M: Readonly<Record<EvaluationModel, { input: number; output: number }>> = Object.freeze({
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "gpt-5.6-terra": { input: 2, output: 12 },

@@ -1,11 +1,11 @@
 {
   "$schema_note": "Bu dosya Task 028 kapsamında oluşturulan sentetik/uydurma bir canlı-değerlendirme veri setidir. Hiçbir gerçek kişi, klinik, telefon numarası, hasta veya hayvan bilgisi içermez.",
   "$disclaimer": "expected alanları mühendislik beklentisidir (ground truth), bir veteriner tarafından onaylanmamıştır. Model gerçek sonuçları bu beklentilerden sapabilir; bu sapmalar tek başına bir güvenlik hatası anlamına gelmez, test tasarımcısı tarafından değerlendirilmelidir.",
-  "eval_version": "2026-08-14.1",
-  "prompt_version": "2026-08-14.1",
+  "eval_version": "2026-08-28.1",
+  "prompt_version": "2026-08-28.1",
   "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
   "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli; Task 030 ile yeni-hayvan kaydı vakaları eklendi",
-  "case_count": 73,
+  "case_count": 77,
   "cases": [
     {
       "id": "T028-001",
@@ -2196,6 +2196,102 @@
         "user_requested_human": false
       },
       "note": "Task 030: kayıt isteği aynı mesajdaki tıbbi tavsiye talebinin mevcut anlamını geçersiz kılmaz."
+    },
+    {
+      "id": "T028-074",
+      "category": "appointment_request",
+      "message": "Uygun bi saate bizi yazabilir misiniz?",
+      "expected": {
+        "intent": "appointment_request",
+        "pet_name": null,
+        "species": null,
+        "complaint": null,
+        "symptoms": [],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 038: randevu kelimesi olmadan uygun zamana yazılma talebi doğrudan randevu niyetidir."
+    },
+    {
+      "id": "T028-075",
+      "category": "appointment_request",
+      "message": "randvu ayarlayablrmiyiz yarna",
+      "expected": {
+        "intent": "appointment_request",
+        "pet_name": null,
+        "species": null,
+        "complaint": null,
+        "symptoms": [],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 038: yaygın yazım ve ek hataları niyeti değiştirmemelidir."
+    },
+    {
+      "id": "T028-076",
+      "category": "appointment_request",
+      "message": "Duman dün geceden beri aksıyor, bir de muayene için uygun saate yazalım.",
+      "expected": {
+        "intent": "appointment_request",
+        "pet_name": "Duman",
+        "species": null,
+        "complaint": "aksama",
+        "symptoms": ["aksıyor"],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 038: randevu niyeti aynı mesajdaki belirtiyi silmemelidir."
+    },
+    {
+      "id": "T028-077",
+      "category": "appointment_request",
+      "message": "Kedim nefes almakta zorlanıyor, hemen bir randevu ayarlayabilir miyiz?",
+      "expected": {
+        "intent": "appointment_request",
+        "pet_name": null,
+        "species": "kedi",
+        "complaint": "nefes almakta zorlanma",
+        "symptoms": ["nefes almakta zorlanıyor"],
+        "reported_safety_signals": {
+          "breathing_difficulty": true,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        },
+        "user_requested_human": false
+      },
+      "note": "Task 038: randevu niyeti açık kırmızı sinyali gizlememeli; deterministik güvenlik kapısı acili önceler."
     }
   ]
 }

@@ -68,6 +68,10 @@ const CONFIRMATION_SUFFIX = "Onaylamak için EVET, düzeltmek için HAYIR yazın
  */
 export const MAX_PET_IDENTIFICATION_ATTEMPTS = 3;
 
+/** Fixed, reviewable bridge from a safely confirmed intake into appointment booking. */
+export const POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT =
+  "Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?";
+
 function truncate(text: string, maxLength: number): string {
   return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
@@ -261,15 +265,21 @@ export function planPetRegistrationReply(action: PetRegistrationAction): IntakeR
 }
 
 /**
- * Reply for a successful `"create"`/`"confirmed"` action: reuses
- * `planIntakeReply` against a synthetic already-matched result so
- * complaint/symptom-aware copy selection (Task 031's existing `complaint` vs
- * `intake_received` branch) is not duplicated here. The synthetic
- * `petResolution.petId` is never read by `planIntakeReply` and is not
- * persisted; the synthetic `nextStage` is the stage the caller is actually
- * advancing to on this turn.
+ * Reply for a successful `"create"`/`"confirmed"` action. Non-continuation
+ * safety outcomes still reuse `planIntakeReply`; only a safety-clear
+ * continuation receives the fixed appointment invitation, which retains the
+ * existing worsening-case off-bot contact path. The synthetic
+ * `petResolution.petId` is never read by `planIntakeReply` and is not persisted;
+ * the synthetic `nextStage` is the stage the caller actually advances to.
  */
 export function planPostConfirmationReply(context: ConversationIntakeContext, plan: Extract<PlanResult, { kind: "planned" }>): IntakeReplyPlan {
+  if (plan.safetyDecision.kind === "continue_intake") {
+    return {
+      kind: "send",
+      category: "intake_received",
+      text: POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
+    };
+  }
   return planIntakeReply(context.intakeStage, {
     kind: "planned",
     nextStage: "safety_check",

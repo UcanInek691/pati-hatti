@@ -7,7 +7,11 @@ import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
 import { PET_IDENTITY_TEXT } from "../src/intakeReply";
-import { INTAKE_CORRECTION_PROMPT_TEXT, buildIntakeConfirmationText } from "../src/petRegistration";
+import {
+  INTAKE_CORRECTION_PROMPT_TEXT,
+  POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
+  buildIntakeConfirmationText,
+} from "../src/petRegistration";
 
 const CONVERSATION_ID = "11111111-1111-1111-1111-111111111111";
 const PROVIDER_MESSAGE_ID = "wamid.ID1";
@@ -111,10 +115,11 @@ function extractionJson(overrides: Record<string, unknown> = {}): Record<string,
   };
 }
 
-function openAiResponse(extraction: Record<string, unknown>): Response {
+function openAiResponse(extraction: Record<string, unknown>, usage?: Record<string, unknown>): Response {
   return jsonResponse({
     status: "completed",
     output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(extraction) }] }],
+    ...(usage === undefined ? {} : { usage }),
   });
 }
 
@@ -344,8 +349,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(finalizeBody.p_claim_token).toBe(CLAIM_TOKEN);
     expect(finalizeBody.p_expected_version).toBe(2);
     expect(finalizeBody.p_reply_category).toBe("intake_received");
-    expect(typeof finalizeBody.p_reply_text).toBe("string");
-    expect((finalizeBody.p_reply_text as string).length).toBeGreaterThan(0);
+    expect(finalizeBody.p_reply_text).toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
 
   it("emergency signal plan finalizes with human_handoff", async () => {
@@ -465,6 +469,21 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
     expect(finalizeBody.p_reply_category).toBe("safety_questions");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
+  });
+
+  it("does not repeat the appointment invitation after ready_for_triage is already reached", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),
+      extraction: extractionJson({ reported_safety_signals: ALL_FALSE_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
+    expect(finalizeBody.p_reply_text).not.toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
 
   it("ambiguous pet plan forwards the pet-identity reply", async () => {
@@ -824,6 +843,7 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(false);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
+    expect(bodyOf(fetchMock, 3).p_reply_text).toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
 });
 
@@ -1000,6 +1020,75 @@ describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)
     }
   });
 
+  it("threads the fixed post-confirmation appointment invitation as the one bounded question", async () => {
+    const currentMessage = "uygun saatlere bakalım";
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          recent_messages: [
+            { direction: "outbound", content: POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: currentMessage, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: currentMessage }),
+      extraction: extractionJson({ intent: "appointment_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+      appointmentOffer: () => offerRow("offered"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+
+    const openAiBody = bodyOf(fetchMock, 2);
+    expect(openAiBody.input).toEqual([
+      expect.objectContaining({ role: "system" }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT) }),
+      { role: "user", content: currentMessage },
+    ]);
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(true);
+  });
+
+  it("does not resurrect a persisted appointment request after an unknown invitation reply", async () => {
+    const currentMessage = "şimdilik istemiyorum";
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({
+              intent: "appointment_request",
+              pet_name: "Fluffy",
+              reported_safety_signals: ALL_FALSE_SIGNALS,
+            }),
+          },
+          recent_messages: [
+            { direction: "outbound", content: POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: currentMessage, created_at: "2026-01-01T00:00:01Z" },
+            { direction: "inbound", content: "ardından gelen ikinci mesaj", created_at: "2026-01-01T00:00:02Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: currentMessage }),
+      extraction: extractionJson({
+        intent: "unknown",
+        complaint: null,
+        reported_safety_signals: ALL_FALSE_SIGNALS,
+      }),
+      finalize: () => finalizeRow("applied"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(bodyOf(fetchMock, 2).input).toHaveLength(2);
+    expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(false);
+    expect(bodyOf(fetchMock, 3).p_intake_data).toMatchObject({ intent: "routine_request" });
+  });
+
   it("omits the context item when the nearest prior outbound message is not a question", async () => {
     const fetchMock = happyRoutes({
       context: () =>
@@ -1039,6 +1128,82 @@ describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)
     await processIntakeQueueMessage(validBody, env);
 
     expect((bodyOf(fetchMock, 2).input as unknown[])).toHaveLength(2);
+  });
+});
+
+describe("processIntakeQueueMessage: content-free OpenAI usage telemetry (Task 038)", () => {
+  it("logs one fixed structured token record after a successful model call", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = happyRoutes({
+      openai: () =>
+        openAiResponse(extractionJson(), {
+          input_tokens: 456,
+          output_tokens: 78,
+          total_tokens: 534,
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith("intake consumer: openai_usage", {
+      model: "gpt-5.6-luna",
+      input_tokens: 456,
+      output_tokens: 78,
+      total_tokens: 534,
+    });
+    const serialized = JSON.stringify(logSpy.mock.calls);
+    for (const forbidden of [
+      MESSAGE_TEXT,
+      CONVERSATION_ID,
+      PROVIDER_MESSAGE_ID,
+      CLAIM_TOKEN,
+      OWNER_ID,
+      PET_ID,
+      "test-openai-key",
+      "conv-hash",
+      "vomiting",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("does not log malformed or missing usage for an otherwise valid extraction", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = happyRoutes({
+      openai: () =>
+        openAiResponse(extractionJson(), {
+          input_tokens: 456,
+          output_tokens: -1,
+          total_tokens: 455,
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not emit usage when the model call fails", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = happyRoutes({ openai: () => new Response("provider failure", { status: 500 }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not emit usage on a no-model handoff path", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, state_version: 5 }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 6 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(logSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1523,14 +1688,12 @@ describe("processIntakeQueueMessage: selected-pet conflict handoff (Task 037)", 
 
 describe("processIntakeQueueMessage: bounded work per attempt", () => {
   it("calls claim, context, OpenAI, and finalize exactly once each on the happy path, and never completes separately", async () => {
-    const replySpy = vi.spyOn(intakeReplyModule, "planIntakeReply");
     const fetchMock = happyRoutes();
     vi.stubGlobal("fetch", fetchMock);
 
     await processIntakeQueueMessage(validBody, env);
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(replySpy).toHaveBeenCalledTimes(1);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("complete_intake_queue_job"))).toBe(false);
   });
@@ -1821,6 +1984,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     expect(body.p_create_pet_species).toBe("kedi");
     expect(body.p_pet_id).toBeNull();
     expect(body.p_reply_category).toBe("intake_received");
+    expect(body.p_reply_text).toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
 
   it("creates a distinct second pet after exact evet when the unbound owner already has another pet", async () => {

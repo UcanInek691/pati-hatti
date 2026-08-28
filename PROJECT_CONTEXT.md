@@ -729,6 +729,27 @@ occurred.
   RLS. The Turkish legal/KVKK review package must inventory this retention,
   visibility, deletion procedure, and same-number personal/business use before
   production approval.
+- Task 038's meaning-based Turkish prompt `2026-08-28.1` passed Codex and
+  mandatory Claude Opus review plus the approved 246-call synthetic Luna/Terra
+  live gate on 2026-08-28. Across 77 single-turn and 46 bounded multi-turn
+  cases per model there were zero provider/schema failures; both models met
+  100% explicit-red, explicit-false, unspecified-not-false, unexpected-red,
+  appointment-positive/rejection, and aggregate-negative-plus-other-symptom
+  gates. Total estimated cost was $0.6902256. Luna remains production-selected.
+  The fixed appointment invitation preserves the worsening-case off-bot path;
+  availability remains database-owned and held-slot mutation remains exact
+  raw-text `EVET | HAYIR`. Staging Worker version
+  `47b745ae-db7b-4627-886d-939117aed8e2` then passed a real WhatsApp smoke:
+  proactive invitation, natural affirmative, database-owned slot offer and
+  exact-`EVET` confirmation all completed without a Worker/Queue error.
+  External veterinarian/legal/KVKK approvals remain open.
+- The appointment engine currently prevents more than one held/confirmed slot
+  per conversation, not per pet across conversations. Confirmed-appointment
+  cancellation and rescheduling are not implemented. Back-to-back inbound
+  WhatsApp messages are separate Queue jobs; optimistic state versioning keeps
+  state safe, but the product does not yet coalesce a short message burst into
+  one AI turn, so duplicate replies, extra model calls or delayed retry are
+  possible under close/concurrent delivery.
 
 ## Context maintenance
 

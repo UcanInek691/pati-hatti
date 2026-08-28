@@ -59,10 +59,14 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
    veritabanında tenant sınırlarıyla saklar.
 4. Cloudflare Queue yalnız konuşma ve sağlayıcı mesaj kimliklerini taşır; ham
    mesaj metni Queue gövdesine kopyalanmaz.
-5. Güncel mesaj metni, yapılandırılmış bilgi çıkarımı için OpenAI'a gönderilir.
-   İstekte telefon, ad veya ham veritabanı kimliği yerine tek yönlü bir
-   güvenlik tanımlayıcısı kullanılır ve `store: false` ayarlanır. Bunun
-   sağlayıcının tüm yasal/operasyonel saklamasını sıfırladığı varsayılmamalı;
+5. Güncel mesaj metni ve, varsa, en fazla bir önceki uygun klinik sorusu
+   yapılandırılmış bilgi çıkarımı için OpenAI'a gönderilir. Bu önceki soru bir
+   intake-onay özeti olduğunda hayvan adı, tür ve sahibin şikâyetini içerebilir;
+   tam konuşma geçmişi gönderilmez. İstekte telefon, ad veya ham veritabanı
+   kimliği yerine owner kimliğinden tek yönlü türetilen, aynı owner için kalıcı
+   ve bu nedenle sağlayıcı tarafında bağlantı kurulmasına elverişli takma adlı
+   bir güvenlik tanımlayıcısı kullanılır. `store: false` ayarlanır; bunun
+   sağlayıcının tüm yasal/operasyonel saklamasını sıfırladığı varsayılmamalı,
    sözleşme ve hesap veri kontrolleri ayrıca incelenmelidir.
 6. Kesin güvenlik ve akış kararını yapay zekâ değil, sabit kurallar verir.
 7. Sabit WhatsApp yanıtı outbox'a yazılır ve Meta Cloud API üzerinden

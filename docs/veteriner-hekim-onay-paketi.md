@@ -144,6 +144,17 @@ Karar: [ ] Onaylı  [ ] Değişiklik gerekli  [ ] Kullanılmamalı<br>
 Karar: [ ] Onaylı  [ ] Değişiklik gerekli  [ ] Kullanılmamalı<br>
 Önerilen metin / not: ________________________________________________
 
+### V-12 — Bilgiler tamamlandıktan sonra randevu daveti (onay bekliyor)
+
+Bu soru yalnız başarılı ve güvenlik açısından açık bir intake onayından sonra
+gösterilir. Bir randevunun oluşturulduğunu, uygun saat bulunduğunu veya
+personelin bilgilendirildiğini söylemez.
+
+> Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?
+
+Karar: [ ] Onaylı  [ ] Değişiklik gerekli  [ ] Kullanılmamalı<br>
+Önerilen metin / not: ________________________________________________
+
 ## Veteriner hekim kontrol listesi
 
 - [ ] Acil yönlendirme kullanıcıyı botta bekletmiyor.
@@ -154,6 +165,8 @@ Karar: [ ] Onaylı  [ ] Değişiklik gerekli  [ ] Kullanılmamalı<br>
       ifadeleri kliniğin çalışma biçimine uygun.
 - [ ] Randevu teklifi ile kesin randevu arasındaki fark açık.
 - [ ] Randevu süreci acil güvenlik yönlendirmesinin önüne geçmiyor.
+- [ ] Randevu daveti, henüz randevu veya uygun saat oluşturulmadığını açık
+      biçimde koruyor.
 - [ ] Personel bildirimi yapılmadığı hâlde yapılmış gibi bir ifade yok.
 - [ ] Klinik adı, telefon numarası veya çalışma saati eklenmesi gerekiyorsa
       bunun hangi metinlere ve hangi kaynaktan ekleneceği belirtildi.

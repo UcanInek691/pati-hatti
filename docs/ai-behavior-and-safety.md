@@ -252,3 +252,65 @@ decides whether a clinic is open.
   `human_handoff`), and appointment-offer/decision turns make no
   operational-context request, and no OpenAI request, safety decision, stage
   transition, work-item priority, or appointment action is affected.
+
+## Meaning-based Turkish intake and appointment invitation (Task 038)
+
+Prompt version `2026-08-28.1` keeps the same closed extraction schema and
+strict parser. It asks the model to interpret ordinary Turkish spelling
+errors, colloquial wording, inflection, negation and short answers from
+meaning; examples illustrate classes and are not a production phrase table.
+Only the current message and, when eligible, the single immediately preceding
+clinic question are sent. That prior question is context for resolving the
+current answer, never evidence by itself.
+
+When the preceding question is the fixed safety list, a clear aggregate
+negative may mark the listed signals false, named present conditions may mark
+only those signals true, and separately reported complaints or symptoms stay
+in their own fields. Unaddressed or ambiguous safety facts remain `null`.
+The existing deterministic safety gate still owns emergency precedence; the
+model still cannot diagnose, recommend treatment, choose a pet or slot, mutate
+state, or write an owner-facing reply.
+
+After a successful, safety-clear pet/intake confirmation, the fixed reply is
+`Bilgileri aldım. Yeni bir belirti ortaya çıkarsa veya durum kötüleşirse kliniğimizi telefonla arayın ya da en yakın açık veteriner kliniğine başvurun. Randevu oluşturmak ister misiniz?`.
+It retains the immediate off-bot contact path while adding the appointment
+question. A natural affirmative or
+request to see suitable times may therefore extract as `appointment_request`
+using that one bounded question. The existing appointment planner and database
+remain the only availability authority, and the held slot still requires the
+exact raw-text `EVET` or `HAYIR` decision. Emergency, handoff, malformed-state,
+pet-match and stage guards are unchanged and take precedence.
+
+If pet/intake confirmation must first ask unresolved safety questions, the
+same invitation is sent on the later safe `safety_check → ready_for_triage`
+transition. This ensures the ordinary multi-turn path asks proactively instead
+of emitting the older generic closing sentence.
+
+When the persisted snapshot contains the action intent `appointment_request`
+but the new extraction is `unknown`, the new turn is normalized to neutral
+`routine_request` before snapshot merging. Action intent is therefore never
+replayed merely because a later message is missing, refusing, postponing or
+ambiguous—even if batched inbound messages make the bounded context selector
+return no prior question. This is not a user-text phrase classifier: positive
+intent still has to be recognized by the model, while all existing appointment
+and safety guards remain authoritative.
+
+For each successful production extraction, the consumer may write one fixed
+`openai_usage` structured log containing only model name and validated
+non-negative input/output/total token counts. Missing or malformed usage is
+treated as `null` without rejecting an otherwise valid extraction. The log
+contains no message, previous question, owner/pet/conversation/provider id,
+safety identifier, API key, provider body or monetary estimate.
+
+The revised synthetic corpora cover invitation replies, refusals, typos,
+mixed symptom/appointment requests and aggregate safety answers. On
+2026-08-28 the approved `2026-08-28.1` Luna/Terra gate ran 246 sequential
+synthetic calls with zero provider/schema failures. Both models achieved 100%
+explicit-red recall, explicit-false accuracy, unspecified-not-false safety,
+zero unexpected explicit-red signals, 6/6 positive appointment recognition,
+4/4 negative/ambiguous rejection, and 1/1 preservation of an additional
+symptom after an aggregate safety negative. Total estimated model cost was
+0.6902256 USD; Luna remains production-selected. A later Task 039 may consider bounded
+model-written wording only for low-risk intake questions, with fixed copy as
+fallback. It may not generate emergency, medical, handoff, appointment-slot,
+confirmation, privacy or consent text.

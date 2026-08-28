@@ -52,7 +52,7 @@ function loadCorpus(): EvalCorpus {
   return JSON.parse(readFileSync(filePath, "utf8")) as EvalCorpus;
 }
 
-const PRICING_CHECKED_ON = "2026-08-13";
+const PRICING_CHECKED_ON = "2026-08-28";
 const PRICE_USD_PER_1M: Readonly<Record<EvaluationModel, { input: number; output: number }>> = Object.freeze({
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "gpt-5.6-terra": { input: 2, output: 12 },
@@ -148,6 +148,11 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
         let tokenTotal = 0;
         let unexpectedExplicitTrueCount = 0;
         let unexpectedExplicitTrueOpportunities = 0;
+        const appointmentInvitation = {
+          positive: { matched: 0, total: 0 },
+          negativeOrAmbiguous: { matched: 0, total: 0 },
+        };
+        const absentSafetyWithOtherSymptom = { matched: 0, total: 0 };
 
         // Bounded concurrency of one: every call is awaited before the next starts.
         for (const evalCase of corpus.cases) {
@@ -177,6 +182,24 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
           );
           unexpectedExplicitTrueCount += unexpectedTrue.count;
           unexpectedExplicitTrueOpportunities += unexpectedTrue.opportunities;
+
+          if (evalCase.category === "appointment_invitation_positive") {
+            appointmentInvitation.positive.total += 1;
+            if (result.extraction.intent === "appointment_request") appointmentInvitation.positive.matched += 1;
+          }
+          if (
+            evalCase.category === "appointment_invitation_negative" ||
+            evalCase.category === "appointment_invitation_ambiguous"
+          ) {
+            appointmentInvitation.negativeOrAmbiguous.total += 1;
+            if (result.extraction.intent !== "appointment_request") appointmentInvitation.negativeOrAmbiguous.matched += 1;
+          }
+          if (evalCase.category === "production_safety_block_absent_with_other_symptom") {
+            absentSafetyWithOtherSymptom.total += 1;
+            if (result.extraction.complaint !== null && result.extraction.symptoms.length > 0) {
+              absentSafetyWithOtherSymptom.matched += 1;
+            }
+          }
 
           if (fieldScore.matched === fieldScore.total && unexpectedTrue.count === 0) {
             expectedCaseExactMatchCount += 1;
@@ -239,6 +262,18 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
             unexpectedExplicitTrueCount,
             unexpectedExplicitTrueOpportunities,
           ),
+          appointmentInvitation: {
+            ...appointmentInvitation,
+            positiveMatchRate: ratio(appointmentInvitation.positive.matched, appointmentInvitation.positive.total),
+            negativeOrAmbiguousRejectionRate: ratio(
+              appointmentInvitation.negativeOrAmbiguous.matched,
+              appointmentInvitation.negativeOrAmbiguous.total,
+            ),
+          },
+          absentSafetyWithOtherSymptom: {
+            ...absentSafetyWithOtherSymptom,
+            preservationRate: ratio(absentSafetyWithOtherSymptom.matched, absentSafetyWithOtherSymptom.total),
+          },
           missingUsageCount,
           tokenTotals: { input: tokenInputTotal, output: tokenOutputTotal, total: tokenTotal },
           pricingCheckedOn: PRICING_CHECKED_ON,
@@ -286,7 +321,7 @@ describe("live multi-turn eval opt-in gate", () => {
     ).toBe(true);
   });
 
-  it("covers every required Task 029 category at least once", () => {
+  it("covers every required Task 029 and Task 038 category at least once", () => {
     const corpus = loadCorpus();
     const categories = new Set(corpus.cases.map((c) => c.category));
     for (const signal of SAFETY_SIGNAL_KEYS) {
@@ -308,8 +343,50 @@ describe("live multi-turn eval opt-in gate", () => {
       "casing_unicode_whitespace_variant",
       "production_safety_block_ambiguous_yes",
       "production_safety_block_all_no",
+      "appointment_invitation_positive",
+      "appointment_invitation_negative",
+      "appointment_invitation_ambiguous",
+      "production_safety_block_aggregate_negative",
+      "production_safety_block_partial_negative",
+      "production_safety_block_one_true",
+      "production_safety_block_multiple_true",
+      "production_safety_block_absent_with_other_symptom",
+      "production_safety_block_uncertain_aggregate",
     ]) {
       expect(categories.has(required)).toBe(true);
+    }
+  });
+
+  it("contains the bounded Task 038 appointment and aggregate-safety evidence set", () => {
+    const corpus = loadCorpus();
+    const byCategory = (category: string) => corpus.cases.filter((evalCase) => evalCase.category === category);
+
+    expect(byCategory("appointment_invitation_positive")).toHaveLength(6);
+    expect(byCategory("appointment_invitation_negative")).toHaveLength(3);
+    expect(byCategory("appointment_invitation_ambiguous")).toHaveLength(1);
+    expect(byCategory("appointment_invitation_positive").every(({ expected }) => expected.intent === "appointment_request")).toBe(true);
+    expect(
+      [...byCategory("appointment_invitation_negative"), ...byCategory("appointment_invitation_ambiguous")].every(
+        ({ expected }) => expected.intent !== "appointment_request",
+      ),
+    ).toBe(true);
+
+    const mixed = byCategory("production_safety_block_absent_with_other_symptom");
+    expect(mixed).toHaveLength(1);
+    expect(mixed[0]!.expected).toMatchObject({
+      complaint: expect.any(String),
+      symptoms: expect.arrayContaining([expect.any(String)]),
+    });
+
+    for (const category of [
+      "production_safety_block_partial_negative",
+      "production_safety_block_one_true",
+      "production_safety_block_multiple_true",
+      "production_safety_block_uncertain_aggregate",
+    ]) {
+      expect(byCategory(category)).toHaveLength(1);
+      expect(byCategory(category)[0]!.previous_question).toContain("\n- Nefes almakta güçlük var mı?");
+      expect(byCategory(category)[0]!.previous_question).toContain("\n- İdrar yapamıyor mu?");
     }
   });
 
