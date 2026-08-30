@@ -454,6 +454,29 @@ oluşturulacak. Yeniden planlama, serbest tarih tercihi, hatırlatma ve harici
 takvim bu kapsamda değildir. Prompt değişeceği için yalnız seçili Luna üzerinde
 tek ücretli regresyon kapısı, ardından Opus ve staging smoke gerekir.
 
+Task 039 uygulandı ve Codex/Opus incelemesini bekliyor: hayvan başına aktif
+randevu koruması artık `hold_appointment_slot`'ta iki yeni kilitli sonuçla
+(`existing_confirmed`, `in_progress`) sağlanıyor — benzersiz indeks yerine
+konuşma→hayvan→slot sabit kilit sırası kullanılıyor, böylece aynı hayvan için
+iki eşzamanlı konuşma birbirini kilitlemez. Sahip başlatan iptal için yeni
+kapalı `appointment_cancel_confirmation` aşaması, yalnız `service_role`
+erişimli yeni `appointment_cancellations` denetim tablosu ve randevu tarihini
+tekrar göstererek kesin `EVET | HAYIR` bekleyen iki yeni RPC eklendi; iptal
+denetim kaydı, slot serbest bırakma ve outbox yazımı tek atomik işlemde
+yapılıyor. Toplu mesajlaşma için `webhook_events.ai_burst_eligible` sütunu ve
+`claim_intake_queue_job`'un iki yeni sonucu (`superseded`, `overflow`) üç
+saniyelik art arda pencerede en fazla dört/65.536 karakterlik metni tek model
+çağrısına indiriyor; `intake_confirmation`, `appointment_selection`,
+`appointment_cancel_confirmation`, `human_handoff` ve `completed`
+aşamalarında toplama hiç uygulanmıyor. Yerel inceleme sırasında SQL'in
+döndürdüğü `existing_confirmed`/`in_progress` sonuçlarının TS istemci ve
+kuyruk tüketicisine hiç bağlanmadığı, dolayısıyla işlemi tamamlanmış bir
+randevunun `retry` olarak geri düşeceği bulundu ve düzeltildi. Migration/fixture
+dosyaları hiçbir veritabanına uygulanmadı (`NOT RUN`); prompt sürümü
+`2026-08-28.2` için ücretli eval kapısı ve staging smoke henüz çalıştırılmadı.
+Klinik veterineri ve KVKK onayları için yeni taslak dosyalar hazırlanıyor;
+hiçbiri henüz onaylanmadı.
+
 Buna paralel iki insan kapısı vardır: klinik veterineri onayı ve Türk
 hukuk/KVKK onayı. Yeni bulgular ancak pilot güvenliği veya doğruluğu için
 zorunluysa bu yedi göreve eklenir; nice-to-have talepler Aşama 6 backlog'una

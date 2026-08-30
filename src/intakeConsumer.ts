@@ -13,7 +13,14 @@ import { applyClinicHandoffContext, planIntakeReply, planUnsupportedMediaReply }
 import type { IntakeReplyPlan } from "./intakeReply";
 import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
-import { planAppointmentAction, finalizeAppointmentOfferQueueJob, finalizeAppointmentDecisionQueueJob } from "./appointmentFlow";
+import {
+  parseAppointmentCancelDecision,
+  planAppointmentAction,
+  finalizeAppointmentOfferQueueJob,
+  finalizeAppointmentDecisionQueueJob,
+  finalizeAppointmentCancelOfferQueueJob,
+  finalizeAppointmentCancelDecisionQueueJob,
+} from "./appointmentFlow";
 import {
   planPetRegistrationAction,
   planPetRegistrationReply,
@@ -39,6 +46,25 @@ function isEligibleClinicQuestion(text: string): boolean {
 }
 
 /**
+ * The burst claim RPC labels even a one-message eligible turn as
+ * `Mesaj 1: ...`. Match that bounded representation back to the newest raw
+ * inbound row without parsing or trusting any earlier labelled item. Exact
+ * raw text remains supported for confirmation/media/non-AI paths.
+ */
+function claimedTurnEndsWithRawMessage(claimedText: string, rawMessage: string): boolean {
+  if (claimedText === rawMessage) return true;
+  if (!claimedText.startsWith("Mesaj 1: ")) return false;
+
+  for (let ordinal = 1; ordinal <= 4; ordinal++) {
+    const suffix = `Mesaj ${ordinal}: ${rawMessage}`;
+    if (!claimedText.endsWith(suffix)) continue;
+    const start = claimedText.length - suffix.length;
+    if (start === 0 || claimedText[start - 1] === "\n") return true;
+  }
+  return false;
+}
+
+/**
  * Selects at most one previous clinic question to give the extractor bounded
  * turn context (Task 029). Returns null unless the most recent recorded
  * message is exactly the current claimed message and the message
@@ -50,7 +76,7 @@ function selectPreviousClinicQuestion(context: ConversationIntakeContext, curren
 
   const messages = context.recentMessages;
   const last = messages[messages.length - 1];
-  if (last === undefined || last.direction !== "inbound" || last.content !== currentMessage) return null;
+  if (last === undefined || last.direction !== "inbound" || !claimedTurnEndsWithRawMessage(currentMessage, last.content)) return null;
 
   for (let i = messages.length - 2; i >= 0; i--) {
     const item = messages[i]!;
@@ -101,7 +127,7 @@ function isNoActionableFact(extraction: IntakeExtraction): boolean {
 function hasRepeatedNoProgressQuestion(context: ConversationIntakeContext, currentMessage: string): boolean {
   const messages = context.recentMessages;
   const last = messages[messages.length - 1];
-  if (last === undefined || last.direction !== "inbound" || last.content !== currentMessage) return false;
+  if (last === undefined || last.direction !== "inbound" || !claimedTurnEndsWithRawMessage(currentMessage, last.content)) return false;
 
   const recentOutbound: string[] = [];
   for (let i = messages.length - 2; i >= 0 && recentOutbound.length < 2; i--) {
@@ -246,6 +272,7 @@ function poisonFallback(currentStage: IntakeStage, extraction: IntakeExtraction)
       reported_safety_signals: { ...extraction.reported_safety_signals },
       missing_information: [...extraction.missing_information],
       user_requested_human: extraction.user_requested_human,
+      pending_cancel_slot_id: null,
     },
   };
 }
@@ -263,8 +290,36 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     const { conversationId, providerMessageId } = parsed.message;
 
     const claim = await claimIntakeQueueJob(conversationId, providerMessageId, env);
-    if (claim.kind === "completed" || claim.kind === "not_found") return "ack";
+    if (claim.kind === "completed" || claim.kind === "not_found" || claim.kind === "superseded") return "ack";
     if (claim.kind === "busy" || claim.kind === "failed") return "retry";
+
+    if (claim.kind === "overflow") {
+      // Task 039 Part C: more than 4 eligible messages, or too much text, to
+      // ever reach the model. Never truncate away a possible emergency --
+      // route straight through the existing no-model human-handoff boundary.
+      const contextResult = await getConversationIntakeContext(conversationId, env);
+      if (!contextResult.ok) return "retry";
+      const context = contextResult.context;
+
+      const snapshot = readCanonicalPersistedSnapshot(context.intakeData);
+      if (!snapshot.ok) return "retry";
+
+      const handoffPlan = buildHandoffPlan(context.petId, snapshot.value);
+      const reply = await prepareOutboundReply(conversationId, context, planIntakeReply(context.intakeStage, handoffPlan), env);
+      return finalizeAndDecide(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          nextStage: handoffPlan.nextStage,
+          petId: handoffPlan.petId,
+          intakeData: handoffPlan.intakeData as unknown as Record<string, unknown>,
+          reply,
+        },
+        env,
+      );
+    }
 
     if (claim.automationMode !== "ai") {
       // The route changed between ingest and claim (Task 033 race window a):
@@ -320,6 +375,42 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         return "ack";
       }
       return "retry";
+    }
+
+    // Exact cancellation EVET/HAYIR is a deterministic mutation grammar,
+    // not an extraction task. Handle it before the general no-model ceiling
+    // and before OpenAI, while leaving every other reply on the normal path
+    // so a newly stated emergency can still win through the safety gate.
+    if (context.intakeStage === "appointment_cancel_confirmation") {
+      const cancellationDecision = parseAppointmentCancelDecision(claim.messageText);
+      if (cancellationDecision !== "repeat") {
+        const snapshot = readCanonicalPersistedSnapshot(context.intakeData);
+        if (!snapshot.ok || context.petId === null) return "retry";
+
+        const result = await finalizeAppointmentCancelDecisionQueueJob(
+          {
+            conversationId,
+            providerMessageId,
+            claimToken: claim.claimToken,
+            expectedVersion: context.stateVersion,
+            decision: cancellationDecision,
+            petId: context.petId,
+            intakeData: snapshot.value as unknown as Record<string, unknown>,
+          },
+          env,
+        );
+        if (
+          result.kind === "cancelled" ||
+          result.kind === "kept" ||
+          result.kind === "stale_appointment" ||
+          result.kind === "suppressed" ||
+          result.kind === "already_completed" ||
+          result.kind === "stale_claim"
+        ) {
+          return "ack";
+        }
+        return "retry";
+      }
     }
 
     if (
@@ -512,6 +603,8 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       if (
         offerResult.kind === "offered" ||
         offerResult.kind === "unavailable" ||
+        offerResult.kind === "existing_confirmed" ||
+        offerResult.kind === "in_progress" ||
         offerResult.kind === "suppressed" ||
         offerResult.kind === "already_completed" ||
         offerResult.kind === "stale_claim"
@@ -544,6 +637,61 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
         decisionResult.kind === "suppressed" ||
         decisionResult.kind === "already_completed" ||
         decisionResult.kind === "stale_claim"
+      ) {
+        return "ack";
+      }
+      return "retry";
+    }
+
+    if (appointmentAction.kind === "cancel_offer") {
+      if (petId === null || nextStage !== "appointment_cancel_confirmation") return "retry";
+
+      const cancelOfferResult = await finalizeAppointmentCancelOfferQueueJob(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          petId,
+          intakeData: intakeData as unknown as Record<string, unknown>,
+        },
+        env,
+      );
+      if (
+        cancelOfferResult.kind === "offered" ||
+        cancelOfferResult.kind === "no_appointment" ||
+        cancelOfferResult.kind === "suppressed" ||
+        cancelOfferResult.kind === "already_completed" ||
+        cancelOfferResult.kind === "stale_claim"
+      ) {
+        return "ack";
+      }
+      return "retry";
+    }
+
+    if (appointmentAction.kind === "cancel_decision") {
+      if (petId === null) return "retry";
+
+      const cancelDecisionResult = await finalizeAppointmentCancelDecisionQueueJob(
+        {
+          conversationId,
+          providerMessageId,
+          claimToken: claim.claimToken,
+          expectedVersion: context.stateVersion,
+          decision: appointmentAction.decision,
+          petId,
+          intakeData: intakeData as unknown as Record<string, unknown>,
+        },
+        env,
+      );
+      if (
+        cancelDecisionResult.kind === "cancelled" ||
+        cancelDecisionResult.kind === "kept" ||
+        cancelDecisionResult.kind === "repeated" ||
+        cancelDecisionResult.kind === "stale_appointment" ||
+        cancelDecisionResult.kind === "suppressed" ||
+        cancelDecisionResult.kind === "already_completed" ||
+        cancelDecisionResult.kind === "stale_claim"
       ) {
         return "ack";
       }

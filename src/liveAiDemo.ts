@@ -9,10 +9,9 @@
  * Supabase/Meta credential — only an OpenAI API key.
  */
 import type { ConversationIntakeContext, IntakePet, IntakeStage } from "./conversationState";
-import { planIntakeTurn } from "./intakeTurn";
+import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
 import { planIntakeReply } from "./intakeReply";
 import { planAppointmentAction } from "./appointmentFlow";
-import { parseIntakeExtraction } from "./intakeExtraction";
 import { extractIntakeViaOpenAiForEvaluation, EVALUATION_MODELS } from "./openaiIntake";
 import type { EvaluationModel } from "./openaiIntake";
 
@@ -81,13 +80,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseIntakeData(value: unknown): Record<string, unknown> | null {
-  if (!isPlainObject(value)) return null;
-  if (Reflect.ownKeys(value).length === 0) return {};
-  if (value.schema_version !== 1) return null;
-
-  const { schema_version: _schemaVersion, ...extraction } = value;
-  const parsed = parseIntakeExtraction(extraction);
-  return parsed.ok ? { schema_version: 1, ...parsed.value } : null;
+  const parsed = readCanonicalPersistedSnapshot(value);
+  return parsed.ok ? (parsed.value as unknown as Record<string, unknown>) : null;
 }
 
 const STATE_KEYS = ["intakeStage", "intakeData", "petId", "callCount"] as const;

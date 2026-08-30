@@ -14,6 +14,11 @@ Bu bir tıbbi protokol değildir. Bot teşhis koymaz, hastalık olasılığı sa
 ilaç/doz veya tedavi önermez. Bu belgeyi hazırlayan yazılım ekibinin ya da bir
 yapay zekânın değerlendirmesi veteriner hekim onayının yerine geçmez.
 
+Task 039 (hayvan başına ikinci randevu koruması, sahip kaynaklı randevu
+iptali, art arda gelen mesajların birleştirilmesi) ile eklenen metin ve
+senaryolar bu belgede değil, ayrı ve henüz onaylanmamış bir taslakta yer
+alır: [`docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md`](onay-paketleri/task-039-veteriner-onay-senaryolari.md).
+
 ## Kısa sözlük
 
 - **İnsan desteği kaydı (`human_handoff`)**: Bot konuşmayı kendi başına

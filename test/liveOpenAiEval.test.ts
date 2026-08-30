@@ -55,7 +55,13 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const PRICING_CHECKED_ON = "2026-08-28";
+function selectEvaluationModels(value: string | undefined = process.env.LIVE_OPENAI_EVAL_MODEL): EvaluationModel[] {
+  if (value === undefined || value.trim() === "") return [...EVALUATION_MODELS].sort() as EvaluationModel[];
+  if (value === "gpt-5.6-luna" || value === "gpt-5.6-terra") return [value];
+  throw new Error("LIVE_OPENAI_EVAL_MODEL must be gpt-5.6-luna or gpt-5.6-terra");
+}
+
+const PRICING_CHECKED_ON = "2026-08-29";
 const PRICE_USD_PER_1M: Readonly<Record<EvaluationModel, { input: number; output: number }>> = Object.freeze({
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "gpt-5.6-terra": { input: 2, output: 12 },
@@ -109,7 +115,7 @@ describe.skipIf(!LIVE_EVAL_ENABLED)("live OpenAI intake evaluation (opt-in, real
     "runs the synthetic corpus against Luna and Terra with bounded concurrency and reports only aggregate metrics",
     async () => {
       const corpus = loadCorpus();
-      const models = [...EVALUATION_MODELS].sort() as EvaluationModel[];
+      const models = selectEvaluationModels();
       const repeatCount = parsePositiveInt(process.env.LIVE_OPENAI_EVAL_REPEAT, 1);
 
       const totalPlannedCalls = corpus.cases.length * models.length * repeatCount;
@@ -247,6 +253,11 @@ describe.skipIf(!LIVE_EVAL_ENABLED)("live OpenAI intake evaluation (opt-in, real
 });
 
 describe("live eval opt-in gate", () => {
+  it("can restrict an approved live run to Luna and rejects unknown models before any call", () => {
+    expect(selectEvaluationModels("gpt-5.6-luna")).toEqual(["gpt-5.6-luna"]);
+    expect(() => selectEvaluationModels("gpt-unknown")).toThrow(/LIVE_OPENAI_EVAL_MODEL/);
+  });
+
   it("is skipped unless LIVE_OPENAI_EVAL=1 and a real OPENAI_API_KEY are both present", () => {
     expect(LIVE_EVAL_ENABLED).toBe(process.env.LIVE_OPENAI_EVAL === "1" && HAS_KEY);
     if (process.env.LIVE_OPENAI_EVAL !== "1" || !HAS_KEY) {

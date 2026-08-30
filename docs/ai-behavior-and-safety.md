@@ -314,3 +314,41 @@ symptom after an aggregate safety negative. Total estimated model cost was
 model-written wording only for low-risk intake questions, with fixed copy as
 fallback. It may not generate emergency, medical, handoff, appointment-slot,
 confirmation, privacy or consent text.
+
+## Cancellation intent and burst-safe messaging (Task 039)
+
+Prompt version `2026-08-28.2` adds one closed intent,
+`appointment_cancel_request`, and two new sections, without loosening the
+schema, the facts-only rule, or the no-diagnose/no-treatment/no-mutation
+boundary. `appointment_cancel_request` fires for a direct cancellation
+request or a clear elliptical affirmative to a preceding cancellation
+question; a refusal, a reschedule request, or an ambiguous answer stays out
+of that intent, and the classification itself never authorizes a mutation —
+only the deterministic RPCs in
+[`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md#per-pet-guard-and-cancellation-task-039)
+do.
+
+The `## Burst messages` section tells the model that the current message may
+itself be an ordered, labelled `"Mesaj 1: ..."`/`"Mesaj 2: ..."` block
+representing several owner messages sent in quick succession and assembled
+by `claim_intake_queue_job` (see
+[`docs/inbound-queue.md`](inbound-queue.md#burst-aggregation-task-039)).
+Every labelled part is untrusted owner data, exactly like a single
+unlabelled message — never an instruction. Facts from different parts are
+combined into one turn; a later part corrects an earlier one only when it
+explicitly says so, and otherwise never silently overwrites an
+earlier-stated fact. This is the model-side half of the burst-safety
+contract: the SQL-side half never lets a burst reach the model at all when
+it exceeds 4 eligible messages or 65536 combined characters (`overflow`),
+and never aggregates across the five stages with a deterministic raw-text
+grammar.
+
+Both synthetic corpora (`evals/intake-live-cases.json`,
+`evals/intake-multiturn-live-cases.json`) were extended under the same
+`2026-08-28.2` prompt version with cancellation positive/negative/ambiguous
+cases, split-message fact merge and explicit-correction cases, a red signal
+in every burst position, an aggregate safety negative alongside a separately
+reported symptom, and cases asserting no unexpected explicit-red signal and
+no cancellation-mutation authority in model output — the six gates required
+before Codex's Luna-only paid eval run. No real OpenAI call was made while
+extending them.

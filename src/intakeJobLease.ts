@@ -8,6 +8,8 @@ export type ClaimIntakeQueueJobResult =
   | { kind: "completed" }
   | { kind: "busy" }
   | { kind: "not_found" }
+  | { kind: "superseded" }
+  | { kind: "overflow"; claimToken: string }
   | { kind: "failed" };
 
 export type CompleteIntakeQueueJobResult = { kind: "completed" } | { kind: "stale" } | { kind: "failed" };
@@ -57,6 +59,7 @@ const INTAKE_STAGES = new Set<IntakeStage>([
   "appointment_offer",
   "appointment_selection",
   "appointment_confirmation",
+  "appointment_cancel_confirmation",
   "human_handoff",
   "completed",
 ]);
@@ -148,8 +151,14 @@ export async function claimIntakeQueueJob(conversationId: string, providerMessag
 
     const { result, claim_token: claimToken, message_text: messageText, automation_mode: automationMode } = row;
 
-    if (result === "completed" || result === "busy" || result === "not_found") {
+    if (result === "completed" || result === "busy" || result === "not_found" || result === "superseded") {
       return claimToken === null && messageText === null && automationMode === null ? { kind: result } : FAILED_CLAIM;
+    }
+
+    if (result === "overflow") {
+      return typeof claimToken === "string" && UUID_PATTERN.test(claimToken) && messageText === null && automationMode === null
+        ? { kind: "overflow", claimToken }
+        : FAILED_CLAIM;
     }
 
     if (result !== "claimed") return FAILED_CLAIM;

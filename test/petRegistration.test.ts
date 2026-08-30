@@ -39,6 +39,7 @@ function intakeData(overrides: Partial<PersistedIntakeData> = {}): PersistedInta
     reported_safety_signals: { ...ALL_SIGNALS_FALSE },
     missing_information: [],
     user_requested_human: false,
+    pending_cancel_slot_id: null,
     ...overrides,
   };
 }

@@ -780,3 +780,82 @@ state. See [`docs/selective-automation.md`](selective-automation.md) for the
 full routing/privacy contract and
 [`docs/inbound-queue.md`](inbound-queue.md) for the consumer-side race
 closure this enables.
+
+## Per-pet appointment guard, cancellation, and inbound bursts (Task 039)
+
+`supabase/migrations/20260829000100_pet_appointment_guard_and_cancellation.sql`
+(Part A + Part B) and
+`supabase/migrations/20260829000200_inbound_message_bursts.sql` (Part C).
+Rollback-only fixtures: `supabase/tests/039_pet_appointment_guard_and_cancellation.sql`,
+`supabase/tests/039_inbound_message_bursts.sql`. **Not applied to any
+database by the implementer; SQL fixtures are `NOT RUN`.**
+
+**Part A — per-pet appointment guard.** A non-unique lookup index
+(`appointment_slots_active_pet_idx` on `pet_id` where `status in ('held',
+'confirmed')`) backs a guard enforced entirely by locked-RPC logic, never a
+unique index, because "no future confirmed slot and no unexpired hold for
+this pet" cannot be expressed as a `now()`-independent partial unique
+constraint. `hold_appointment_slot` is replaced (same signature) to return
+two new result kinds ahead of `held`: `existing_confirmed` (the pet already
+has a future confirmed appointment; no hold is created) and `in_progress`
+(a different conversation already holds an unexpired slot for the same pet;
+no second hold is created and its time is never disclosed).
+`finalize_appointment_offer_queue_job` handles both by advancing to
+`completed`/`human_handoff` respectively with a fixed `appointment_unavailable`
+reply — the `existing_confirmed` reply is the only one of the two that names
+the pet and its existing date/time. Lock order is identical across every RPC
+this migration touches: conversation row, then the tenant-scoped `pets` row,
+then `appointment_slots` row(s); two conversations for the same pet always
+lock their own distinct conversation row first, so they only ever contend on
+the shared pet lock and never deadlock.
+
+**Part B — owner-initiated cancellation.** One new closed intake stage,
+`appointment_cancel_confirmation`, and a new backend-only table,
+`public.appointment_cancellations (clinic_id, appointment_slot_id, owner_id,
+pet_id, conversation_id, appointment_starts_at, appointment_ends_at,
+cancelled_at)` — RLS enabled, no `authenticated` privileges, `service_role`
+only; there is no staff-facing read path yet. Two new RPCs mirror the
+existing appointment offer/decision RPCs' claim-validation, suppression-check,
+and lock-order template exactly: `finalize_appointment_cancel_offer_queue_job`
+looks up exactly one future confirmed appointment for the resolved pet
+without writing a cancellation, and pins the exact slot id into
+`intake_data.pending_cancel_slot_id` so the decision RPC re-validates that
+same appointment rather than any replacement that might exist by the time
+`EVET`/`HAYIR` arrives; `finalize_appointment_cancel_decision_queue_job`
+re-checks that pinned slot is still `confirmed` and in the future before any
+mutation. A successful cancellation inserts the audit row, releases the slot
+(`status = 'available'`, all holder columns nulled), and advances the
+conversation to `completed` in one transaction — insert, release, lease
+completion, and outbox write share one commit; any error rolls back all of
+them. A stale/mismatched slot returns `stale_appointment`/`stale_hold`
+truthfully with zero mutation. The freed slot becomes available to any later
+eligible conversation immediately; the audit row has no automatic erasure —
+its retention rule is an open legal decision (see
+`docs/onay-paketleri/task-039-kvkk-inceleme-paketi.md`).
+
+**Part C — inbound message bursts.** `public.webhook_events` gains
+`ai_burst_eligible boolean not null default false`, written exactly once at
+ingest by `ingest_whatsapp_text_message` (same signature) — true only for a
+text message that actually reaches the `ai` route; manual/personal/group/
+media and any pre-migration historical row stay `false` forever and are
+never aggregated. `claim_intake_queue_job` is replaced (same signature) to
+add two new closed result kinds ahead of `claimed`: `superseded` (a newer
+eligible message already exists for this conversation; this job is
+acknowledged with zero model call) and `overflow` (more than 4 eligible
+messages, or more than 65536 combined characters, are pending in one fixed,
+non-overlapping window anchored at its first incomplete message and spanning
+at most 3 seconds — see `src/intakeQueue.ts`'s `delaySeconds: 3` on every
+intake enqueue — so the burst is deliberately never truncated into the
+model; it routes straight through the existing no-model `human_handoff`
+boundary instead). Only the earliest incomplete window may claim; a later
+window returns `busy` and stays pending for the bounded Queue retry. The
+newest representative atomically completes its older siblings, so reversed
+Queue execution cannot discard or duplicate their content. Exact-confirmation stages
+(`intake_confirmation`, `appointment_selection`,
+`appointment_cancel_confirmation`, `human_handoff`, `completed`) are never
+aggregated: they always claim and see only their own current raw message,
+so a deterministic `EVET`/`HAYIR` grammar never reads a burst-assembled
+string. See [`docs/inbound-queue.md`](inbound-queue.md) for the consumer-side
+handling of both new result kinds and
+[`docs/ai-behavior-and-safety.md`](ai-behavior-and-safety.md) for the
+burst-safety extraction contract.

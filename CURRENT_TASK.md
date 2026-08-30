@@ -1,6 +1,8 @@
 # Current task — 039 Per-pet appointment lifecycle and burst-safe messaging
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-08-30 after local, disposable-database,
+mandatory Claude Opus, paid Luna-eval, and real staging WhatsApp gates passed;
+production remains untouched)
 
 Opened by Codex on 2026-08-28 after Task 038 passed its local, mandatory
 Claude Opus, paid-eval and real staging WhatsApp gates. Maya explicitly chose
@@ -249,6 +251,9 @@ Narrow edits only:
 - `src/conversationState.ts`, `src/intakeQueue.ts`, `src/intakeJobLease.ts`
 - `src/appointmentEngine.ts`, `src/appointmentFlow.ts`
 - `src/intakeReply.ts`, `src/intakeConsumer.ts`, `src/index.ts`
+- `src/liveAiDemo.ts` only to keep its persisted-snapshot parser aligned with
+  the new closed `pending_cancel_slot_id` field; this Codex scope amendment
+  fixes the Task-039-caused demo regression without duplicating the parser
 - the corresponding existing test files under `test/`
 - `evals/intake-live-cases.json`, `evals/intake-multiturn-live-cases.json`
 - `docs/database-schema.md`, `docs/appointment-booking-engine.md`
@@ -300,11 +305,404 @@ OpenAI call, Supabase mutation, Meta call or Cloudflare resource mutation.
 
 ## Observed context
 
-_Implementer fills from repository evidence only._
+- Repository was clean at task start on top of commit
+  `8ccf976 docs: define appointment lifecycle and burst task` (the commit
+  that defines this task's contract); the only other pending change
+  (`M .gitignore`) predates this task and was left untouched throughout.
+- `supabase/migrations/` ended at `20260827000100_second_pet_registration_atomicity.sql`
+  (Task 037) and `supabase/tests/` ended at `037_second_pet_registration_atomicity.sql`;
+  there is no Task 038 migration or fixture — Task 038 ("post-confirmation
+  appointment invitation") only added `POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT`
+  in `src/petRegistration.ts` plus prompt/eval/doc changes, confirmed by
+  directory listing before writing the new Task 039 files.
+- Pre-Task-039, `hold_appointment_slot` (in `20260810000200_whatsapp_appointment_flow.sql`)
+  handled collisions only at the slot-row level; it had no concept of "this
+  pet already has a future confirmed appointment" or "this pet's slot is
+  being held by a different conversation right now" — confirmed by reading
+  that migration before writing the Part A guard.
+- Pre-Task-039, `claim_intake_queue_job` claimed exactly one unclaimed
+  message per invocation with no aggregation window and no message-count or
+  length ceiling; `webhook_events` had no `ai_burst_eligible` column —
+  confirmed by reading the prior ingest/claim migration before writing Part C.
+- All pre-existing fixed Turkish appointment-offer/confirm/decline copy lives
+  as SQL string concatenation inside `20260810000200_whatsapp_appointment_flow.sql`,
+  not as TS constants; this precedent was followed for every new Part A/B
+  string rather than adding new `src/intakeReply.ts` constants.
+- Mid-task defect found and fixed (not a pre-existing production bug — the
+  SQL branches it affects are new in this same task): `existing_confirmed`
+  and `in_progress`, `hold_appointment_slot`'s two new Part A result kinds,
+  were wired into the SQL migration's `return query select 'existing_confirmed'::text, ...`
+  / `'in_progress'::text, ...` branches but never into
+  `src/appointmentFlow.ts`'s `FinalizeAppointmentOfferResult` union/parsing
+  or `src/intakeConsumer.ts`'s disposition check — grepping `src/` and
+  `test/` for both identifiers returned zero matches before the fix. A
+  message reaching either branch would have completed its SQL transaction
+  (lease completed, outbox reply written, stage advanced) while the consumer
+  still classified it as `{ kind: "failed" }` and retried indefinitely.
+- Mid-task gap found and fixed in the eval corpus (self-introduced earlier in
+  this same task, not pre-existing): 9 cases in `evals/intake-live-cases.json`
+  (`T028-078`…`T028-086`) were missing the `expected.reported_safety_signals`
+  object required by `test/liveOpenAiEval.test.ts`.
 
 ## Delivery record
 
-_Implementer fills after verification._
+### Changed files
+
+- New, **NOT RUN against any database**:
+  `supabase/migrations/20260829000100_pet_appointment_guard_and_cancellation.sql`
+  (Part A guard + Part B cancellation table/RPCs),
+  `supabase/migrations/20260829000200_inbound_message_bursts.sql` (Part C),
+  `supabase/tests/039_pet_appointment_guard_and_cancellation.sql`,
+  `supabase/tests/039_inbound_message_bursts.sql` (both rollback-only
+  fixtures).
+- New human-approval drafts (both explicitly marked unapproved), plus
+  link-only additions in the two existing general packages pointing to them
+  (no rewrite, no implied approval):
+  `docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md`,
+  `docs/onay-paketleri/task-039-kvkk-inceleme-paketi.md`,
+  `docs/veteriner-hekim-onay-paketi.md` (+5 lines),
+  `docs/kvkk-inceleme-paketi.md` (+5 lines).
+- TS narrow edits: `src/appointmentFlow.ts` (+183/-lines — new
+  `existing_confirmed`/`in_progress` result kinds plus the pre-existing
+  cancel-offer/cancel-decision parsing), `src/intakeConsumer.ts` (+96 —
+  disposition wiring for both new offer kinds, cancel dispatch, overflow
+  handling), `src/intakeExtraction.ts`, `src/intakeTurn.ts`,
+  `src/conversationState.ts`, `src/intakeQueue.ts` (`delaySeconds: 3` burst
+  window), `src/intakeJobLease.ts`, `src/openaiIntake.ts`, and the
+  corresponding test files (`test/appointmentFlow.test.ts`,
+  `test/intakeConsumer.test.ts`, `test/intakeExtractionPrompt.test.ts`,
+  `test/intakeJobLease.test.ts`, `test/intakeQueue.test.ts`,
+  `test/intakeTurn.test.ts`, `test/intakeReply.test.ts`,
+  `test/openaiIntake.test.ts`, `test/petRegistration.test.ts`,
+  `test/index.test.ts`). At implementer delivery, `src/appointmentEngine.ts`,
+  `src/intakeReply.ts` and `src/index.ts` needed no changes. Codex later made
+  the allowed narrow `src/intakeReply.ts` terminal-safety correction described
+  in its review record below; the other two remain unmodified.
+- `prompts/intake-extraction-prompt.ts` bumped to version `2026-08-28.2`
+  (new `## Appointment cancellations` / `## Burst messages` sections);
+  `evals/intake-live-cases.json` and `evals/intake-multiturn-live-cases.json`
+  extended with cancellation/burst/existing-appointment cases, plus the
+  9-case `reported_safety_signals` gap fix described above. No paid eval run.
+- Docs (narrow additions/insertions, not rewrites): `docs/database-schema.md`,
+  `docs/appointment-booking-engine.md`, `docs/whatsapp-appointment-flow.md`,
+  `docs/inbound-queue.md`, `docs/ai-behavior-and-safety.md`,
+  `docs/product-roadmap.md` — each cross-linked, each explicitly noting the
+  SQL fixtures are `NOT RUN`.
+- At implementer delivery, `PROJECT_CONTEXT.md`, the user's pre-existing
+  `.gitignore` change, `src/localDemo.ts` and `src/liveAiDemo.ts` were
+  untouched. Codex later amended scope narrowly for `src/liveAiDemo.ts` as
+  recorded below; the other three remain untouched.
+
+### Verification run this session
+
+- `pnpm install --frozen-lockfile` → `Already up to date`.
+- `pnpm typecheck` → clean, no errors.
+- Implementer-time `pnpm test` → **1466 passed, 1 failed, 2 skipped** (1469
+  total). The one failure appeared in
+  `test/liveAiDemo.test.ts` ("second turn: carries the returned state
+  forward and increments callCount to 2", expected 400 to be 200) in
+  `src/liveAiDemo.ts`. Codex established that Task 039's new closed snapshot
+  field caused it, amended scope, fixed it by reusing the canonical parser,
+  and reran the fully green gate below.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+  succeeded; bindings unchanged (`env.INTAKE_QUEUE` Queue,
+  `env.APP_TIMEZONE`, `env.WHATSAPP_GRAPH_API_VERSION`).
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/staging-dry-run` →
+  succeeded, same shape.
+- `git diff --check` → exit 0, no whitespace errors (only benign
+  LF→CRLF autocrlf notices on Windows).
+- No real Supabase, Cloudflare, Meta or OpenAI call was made. No commit, push
+  or deploy was performed. Both new SQL fixtures remain `NOT RUN`.
+
+### Codex review record — 2026-08-29
+
+Codex reviewed the complete Task 039 diff and the appointment, cancellation,
+claim/burst, extraction and reply call paths. The task remains `IN_REVIEW`
+pending its mandatory Claude Opus gate; no paid eval, staging migration,
+staging deploy, Meta call, commit or push has been performed.
+
+Targeted corrections made during review:
+
+- serialized all per-pet hold/confirm/cancel decisions behind the same
+  tenant-scoped pet lock, added a legacy-data guard, and ensured the public
+  cancellation decision wrapper locks event → owner → conversation → pet
+  before entering its private mutation body;
+- made stale cancellation `HAYIR` truthful, preserved emergency/human
+  precedence from completed conversations, and added only the two narrow
+  database stage edges needed by those reviewed outcomes;
+- replaced the transitive sliding burst with disjoint first-message-anchored
+  windows, chronological claim ordering and an outbound boundary; a later
+  window cannot overtake an earlier one, and only its representative completes
+  eligible siblings;
+- kept exact cancellation `EVET | HAYIR` on a zero-model deterministic path
+  while routing every non-exact answer through extraction so a newly stated
+  emergency can still win;
+- wired the SQL-terminal `existing_confirmed` and `in_progress` results into
+  the TypeScript client/consumer instead of retrying already-completed work;
+- fixed the demo parser by reusing `readCanonicalPersistedSnapshot`; the
+  delivery-time demo failure was introduced by Task 039's new closed snapshot
+  key, not a pre-existing failure, so `src/liveAiDemo.ts` was added above as a
+  narrow Codex-owned scope amendment;
+- fixed the real PostgreSQL fixtures where tied timestamps, stale conversation
+  selection, missing strict-AI routes and an impossible manual-claim setup had
+  made the written proof diverge from runtime behavior;
+- fixed a final integration defect found after the SQL gate: burst claims label
+  even one eligible message as `Mesaj 1: ...`, so previous-question context and
+  repeated-no-progress detection now match the aggregate only when it ends in
+  the newest raw inbound. Tests cover labelled one-message and multi-message
+  turns plus stale/mismatched history.
+
+Disposable database evidence:
+
+- Both source fixtures were executed successfully against disposable
+  `vetai-test` (`cyjpiapxvalqltcsywam`) on the schema containing the reviewed
+  Task 039 migrations. The temporary remote harness changed only fixture
+  runner-role restoration (`RESET ROLE` → `SET LOCAL ROLE postgres`) because
+  the Supabase CLI session restores to restricted `cli_login_postgres`; source
+  fixtures remain rollback-only and unchanged in that respect.
+- `039_pet_appointment_guard_and_cancellation.sql` → PASS with rollback and no
+  fixture residue.
+- `039_inbound_message_bursts.sql` → PASS with rollback and no fixture residue.
+- A second full remote reset was not used after the disposable schema's first
+  reset; the current `advance_conversation_intake` replacement was applied as
+  a narrow temporary verification patch on that disposable project only.
+  Staging and production were not mutated.
+
+Final local gate after all corrections:
+
+- `pnpm install --frozen-lockfile` → PASS (`Already up to date`).
+- TypeScript no-emit check → PASS, zero errors.
+- `pnpm exec vitest run` → PASS: **33 files, 1,522 passed, 2 opt-in
+  paid-eval tests skipped, 0 failed**.
+- production Wrangler dry-run → PASS, 170.45 KiB / gzip 35.82 KiB; bindings
+  unchanged.
+- staging Wrangler dry-run → PASS, same bundle shape with
+  `vetai-intake-staging`; no deployment.
+- `git diff --check` → PASS; only Windows LF/CRLF notices.
+
+Review focus carried to Opus: identical per-pet lock ordering and
+cancel/audit erasure, the two narrow terminal stage edges, fixed-window burst
+privacy/order/idempotency, the labelled-aggregate context matcher, emergency
+precedence, and the exact Turkish appointment/cancellation copy. The paid
+Luna eval and both real staging WhatsApp smokes remain separately approval
+gated after Opus PASS.
+
+### Claude Opus mandatory read-only review — 2026-08-29
+
+Claude Opus reviewed the complete Task 039 architecture/RLS/KVKK/clinical
+safety surface and returned **PASS** with no blocking or change-required
+finding. It independently confirmed the pet-scoped lock order, cancellation
+atomicity and stale/replay behavior, audit-table RLS/erasure, narrow stage
+edges, emergency precedence, burst ordering/privacy/overflow behavior,
+labelled aggregate matching, zero-model exact cancellation path, terminal
+offer results and the two unapproved human-review packages.
+
+Three non-blocking observations were recorded: real two-session lock
+contention remains logically rather than empirically proven; cancellation
+audit rows intentionally cascade when their slot is erased; and the aggregate
+suffix matcher was examined for forged `Mesaj N:` text without finding an
+escape. The second point is already explicit in the KVKK package's data table,
+so no duplicate prose was added.
+
+After Opus PASS, Codex found one operational mismatch in the eval gate itself:
+the contract authorizes Luna-only evidence while both existing harnesses
+always ran Luna and Terra together. Codex added a closed, test-only
+`LIVE_OPENAI_EVAL_MODEL` selector to both harnesses. It accepts only
+`gpt-5.6-luna | gpt-5.6-terra`, rejects any other value before a network call,
+and leaves the default historical two-model comparison unchanged. Targeted
+tests PASS: 2 files, 13 passed, 2 paid gates skipped; typecheck remains clean.
+Production code and model selection are untouched.
+
+The active corpora contain 88 single-turn plus 47 multi-turn cases, therefore
+the separately approval-gated Luna run is exactly **135 OpenAI calls**. The
+official GPT-5.6 Luna price rechecked on 2026-08-29 is $0.20 per million input
+tokens and $1.20 per million output tokens. Historical per-case evidence puts
+the likely run near **$0.06–$0.07**. A deliberately conservative ceiling using
+one token per source character and the full 1,200-output-token request cap is
+below **$0.50**; actual usage is reported from provider token counts.
+
+### Paid Luna eval evidence — 2026-08-29
+
+Maya explicitly approved 135 corpus calls plus three synthetic output samples,
+bounded by $0.50. Codex ran Luna only; Terra was not called. No real owner,
+patient, WhatsApp or provider data was used.
+
+- Single-turn corpus: **88/88** runtime-valid schemas, zero provider failures,
+  1,081/1,249 expected leaf fields (86.55%), 13/13 explicit-red recall, 9/9
+  explicit-false accuracy, 682/682 unspecified signals preserved as not-false,
+  5/5 human intent, 5/5 medical-advice intent and 9/9 appointment intent.
+  Tokens: 171,922 input + 13,369 output; measured cost **$0.0504272**.
+- Multi-turn corpus: **47/47** runtime-valid schemas, zero provider failures,
+  98/102 expected leaf fields (96.08%), 15/15 explicit-red recall, 50/50
+  explicit-false accuracy, 311/311 unspecified signals preserved as not-false,
+  zero unexpected explicit-red signals, 6/6 positive appointment invitations,
+  4/4 negative/ambiguous appointment rejections, and the original mixed
+  safety-negative/other-symptom case preserved. Tokens: 94,484 input + 6,736
+  output; measured cost **$0.02698**.
+- Exact whole-case differences remained in `T029-027`, `T029-045` and
+  `T029-047`; the binding clinical/product metrics above all passed. The
+  report initially counted only the non-burst mixed-symptom category. Codex
+  expanded the test-only metric to both labelled mixed categories and added a
+  closed single-case selector.
+- Maya separately approved one diagnostic rerun of only `T029-047`. It
+  produced 1/1 valid schema, 8/8 explicit false safety facts, zero unexpected
+  red signals and 1/1 preservation of the other symptom/complaint. Its 2,137
+  input + 151 output tokens cost **$0.0006086**. The remaining exact-field
+  difference is wording normalization, not fact loss or a safety failure.
+- Three separately approved synthetic demonstration calls also behaved as
+  intended: named-pet cancellation mapped to `appointment_cancel_request`;
+  `Merhaba` + `Pamuk kusuyor` preserved pet and vomiting; hours question +
+  `kedim nefes alamıyor` produced `breathing_difficulty: true`. Their local
+  demo response was displayed without secrets or provider bodies.
+
+Measured corpus and diagnostic cost was **$0.0780158**; the three samples kept
+the overall run far below the approved $0.50 ceiling. These are engineering
+evals, not veterinarian approval. The prompt/model eval gate is PASS; staging
+migration/deploy and WhatsApp smokes still require Maya's separate approval.
+
+Final post-eval local rerun: frozen install PASS; typecheck PASS; **33 test
+files, 1,525 passed, 2 opt-in live gates skipped, 0 failed**; production and
+staging Wrangler dry-runs PASS at 170.45 KiB / gzip 35.82 KiB with unchanged
+bindings; `git diff --check` PASS with only Windows line-ending notices.
+
+Staging rollout record (2026-08-29): Maya explicitly authorized changes only
+to `vetai-staging`; production remained untouched. The first migration push
+failed atomically on the new legacy-data guard because one synthetic staging
+pet had two future confirmed slots (10:00 and 10:30 Europe/Istanbul on
+2026-08-31); neither Task 039 migration was recorded. After a read-only audit
+and Maya's explicit approval, Codex returned only the later 10:30 test slot to
+`available`, clearing its booking links/token while preserving the 10:00
+appointment and all conversation/owner/pet rows. The retry then applied
+`20260829000100` and `20260829000200`; `supabase migration list` showed local
+and remote history aligned through both versions. The first Cloudflare deploy
+request timed out before creating a version. A deployment-history check proved
+that no new version existed, so Codex retried the same approved staging-only
+deploy. Worker version `b25c1b9b-d55d-4621-988e-cb8c693c5e62` is now active at
+`https://vetai-staging.mehmetsait7072.workers.dev`; `/ready` returned HTTP 200
+with `{\"status\":\"ready\"}`. The two real WhatsApp smoke journeys remain in
+progress; no production deploy or mutation occurred.
+
+The first real WhatsApp lifecycle smoke proved the per-pet guard: after the
+normal safety/intake confirmations, a second booking request for Pamuk returned
+the existing `31.08.2026 10:00` confirmed appointment instead of holding a new
+slot. The subsequent natural cancellation smoke exposed one integration bug,
+not an OpenAI-credit failure: live logs showed three successful Luna calls
+(the observed attempt used 1,960 input + 142 output tokens), followed each time
+by `finalize_intake_queue_job: invalid next_stage`. An unbound conversation
+whose extracted pet name did not exactly match one of two registered pets was
+still allowed to plan `appointment_cancel_confirmation`; because its
+`PetResolution` was not `matched`, the special cancellation finalizer was not
+called and the generic finalizer correctly rejected that stage. The message
+then exhausted its bounded retries and entered the existing DLQ handoff path;
+no appointment was cancelled.
+
+Codex fixed the fail-closed routing in `src/intakeTurn.ts`: an unbound,
+unmatched cancellation request is now reduced to `needs_clarification` and
+held at `pet_identification`; only an exact tenant-scoped pet match can enter
+the cancellation stage. Two live-shape regression tests cover the pure planner
+and full consumer disposition. Targeted tests passed 221/221; typecheck passed;
+the full suite passed **1,527 with 2 opt-in paid evals skipped**; staging
+dry-run passed at 170.69 KiB / gzip 35.85 KiB; `git diff --check` passed with
+only line-ending notices. The narrow Worker-only correction was deployed to
+staging as version `4a4fc5f4-922c-4221-a16f-fd60b4e4a8aa`, and `/ready`
+returned HTTP 200. The exhausted synthetic conversation is now intentionally
+in `human_handoff`; a fresh cancellation smoke requires Maya's explicit
+approval to close only that staging conversation operationally. Production
+remains untouched.
+
+Maya approved closing only that failed staging conversation. Codex advanced
+conversation `522627a5-74f3-4a0e-8cae-92dbf848586e` from
+`handoff/human_handoff` version 2 to `completed/completed` version 3 without
+deleting its owner, messages, pets, or the confirmed 10:00 appointment. A
+second root cause was then found before asking for another live message:
+first-message cancellation correctly produces unknown clinical safety fields,
+but `planAppointmentAction` rejected every non-`continue_intake` plan after
+`planIntakeTurn` had already selected `appointment_cancel_confirmation`. The
+consumer therefore fell through to the generic finalizer and would reproduce
+the same invalid-stage retry. The router now treats cancellation as an
+administrative exception for `needs_safety_check` only; explicit emergency and
+human-handoff decisions still win, while ordinary appointment booking remains
+safety-gated. Exact cancellation `EVET/HAYIR` is likewise deterministic with
+unknown safety fields. An ambiguous multi-pet cancellation now asks which pet
+before clinical safety questions; an exact named match or the only existing pet
+reaches the cancel lookup. Targeted appointment/reply/planner/consumer tests
+and typecheck passed; full local verification and the replacement staging
+deploy followed: frozen install PASS, typecheck PASS, **1,536 tests passed / 2
+opt-in paid evals skipped**, production and staging dry-runs PASS at 170.95 KiB
+/ gzip 35.87 KiB, and `git diff --check` PASS with line-ending notices only.
+The fix was deployed only to staging as Worker version
+`9b0f6db9-57ae-45de-8703-bcbcf5b3b679`; `/ready` returned HTTP 200 with
+`{"status":"ready"}`. Production remained untouched. The next gate is a fresh
+real WhatsApp cancellation smoke from the first message.
+
+That fresh live smoke passed end to end. Maya sent a natural direct
+cancellation request, received the exact pinned-appointment confirmation for
+Pamuk at `31.08.2026 10:00`, replied `evet`, and received the fixed cancelled
+copy. A read-only staging query then proved the same slot
+`a4aaa5ba-95c5-4114-9677-7eec28fb2dbe` was `available` with booking links
+cleared, and a durable `appointment_cancellations` audit row
+`3652cced-8993-453c-8cf8-3785be1c3715` existed for Pamuk and the exact
+31.08.2026 10:00 slot. The next live gate is rebooking that now-available slot,
+followed by a fresh two-message burst.
+
+Before that next live gate, Maya requested the external approval material.
+Codex corrected the Task 039 veterinarian/KVKK draft headers to reflect the
+completed disposable-DB and staging-only validation (production remains
+untouched), added the direct-first-message cancellation boundary, and produced
+four Turkish reviewer PDFs under `output/pdf`: the two general packages and
+their two Task 039 supplements. Maya then asked for the veterinarian supplement
+to show complete example conversations rather than isolated copy fragments.
+Codex expanded that supplement to 13 synthetic, start-to-finish WhatsApp
+scenarios covering ordinary intake, aggregate safety answers, split-message
+bursts, emergency precedence, second-booking guards, cancellation variants,
+correction, no-slot and overflow handoff. Each scenario now includes the bot's
+user-visible replies and a veterinarian decision/risk field. Maya then asked
+for the supplement to stand alone without requiring the older general package.
+Codex added the system boundaries, 25 individually reviewable user-facing
+texts, the 10-minute hold and Europe/Istanbul rules, staff-notification and
+configured-hours limitations, the full clinical checklist, and the expanded
+signature/storage record. The regenerated comprehensive veterinarian package
+is 14 pages. Codex also rebuilt the Task 039 KVKK supplement as a standalone,
+18-page Turkish legal-review workbook. It now contains an executive decision
+list, plain-language data flows, controller/processor and data-subject roles, a
+complete technical inventory, legal-basis and cross-border-transfer decision
+tables, notice/consent separation, retention/destruction, data-subject request
+handling, AI/human-intervention boundaries, minors/third-party health data,
+groups/commercial messages, incident response, provider/clinic contracts and a
+production go/no-go checklist. Its official-source section was refreshed on
+2026-08-30. All 50 rendered pages across the four PDFs were visually inspected;
+`pypdf` reopened every PDF, extracted the expected Turkish headings/status
+text, confirmed all 25 copy headings, 13 scenario headings and 17 KVKK sections,
+and found no raw Markdown emphasis markers or stale deployment claim. The documents remain explicitly
+**unapproved drafts** until the
+named external reviewers complete and sign them.
+
+### Task 039 closure record — 2026-08-30
+
+Maya completed the final combined staging journey from the dedicated pilot
+number. She sent `Merhaba` and then `Pamuk kusuyor` within the configured burst
+window and received exactly one automated reply: the existing safety-question
+block. `Bunların hiçbiri yok.` then produced one correct pet/complaint summary
+for Pamuk and vomiting. Exact `EVET` preserved that intake, produced the
+truthful appointment invitation, and a second exact `EVET` held the previously
+cancelled `31.08.2026 10:00` slot. The hold copy correctly said that the slot
+was only temporary; the final exact `EVET` returned the fixed confirmed reply.
+This closes both remaining live gates: one reply for the two-message burst and
+successful rebooking of the slot released by the earlier cancellation smoke.
+
+Codex reran the final repository gate after review corrections and before
+commit: frozen install PASS; TypeScript typecheck PASS; **33 test files, 1,536
+tests passed, 2 opt-in paid evals skipped, 0 failed**; production and staging
+Wrangler dry-runs PASS at 170.95 KiB / gzip 35.87 KiB with unchanged bindings;
+and `git diff --check` PASS with only benign Windows LF/CRLF notices. The two
+Task 039 rollback fixtures had already passed with zero residue on disposable
+`vetai-test`; both migrations are applied only to `vetai-staging`. No production
+migration, production Worker deploy, push, or secret change occurred.
+
+The veterinarian and Turkish legal/KVKK packages were regenerated and visually
+verified, but remain expressly unsigned drafts. Their named human approvals,
+production retention decisions, production credentials/resources, and a
+production go/no-go remain outside this completed engineering task.
 
 ---
 

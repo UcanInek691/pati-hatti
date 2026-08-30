@@ -16,6 +16,11 @@ Teknik ekip ve yapay zekâ, “KVKK'ya uygundur” onayı veremez. Üretime geç
 tamamlanmalı; gerekli aydınlatma, sözleşme ve politika metinleri ayrıca
 hazırlanmalıdır.
 
+Task 039 (hayvan başına ikinci randevu koruması, sahip kaynaklı randevu
+iptali, art arda gelen mesajların birleştirilmesi) ile eklenen veri işleme
+farkları bu belgede değil, ayrı ve henüz onaylanmamış bir taslakta yer alır:
+[`docs/onay-paketleri/task-039-kvkk-inceleme-paketi.md`](onay-paketleri/task-039-kvkk-inceleme-paketi.md).
+
 ## Teknik terimler için kısa sözlük
 
 - **Tenant / klinik sınırı**: Her kliniğin kayıtlarının diğer kliniklerden

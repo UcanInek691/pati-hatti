@@ -199,7 +199,8 @@ re-extracts, and re-plans from whatever is currently persisted.
 | Step        | Outcome                              | Disposition |
 |-------------|---------------------------------------|-------------|
 | parse       | invalid body                          | `ack`       |
-| claim       | `completed` / `not_found`             | `ack`       |
+| claim       | `completed` / `not_found` / `superseded` | `ack`    |
+| claim       | `overflow` -> no-model `human_handoff` finalize | `ack` (or `retry` on that finalize's own `retry` outcomes) |
 | claim       | `busy` / `failed`                     | `retry`     |
 | claim       | non-`ai` mode -> immediate `completeIntakeQueueJob` | `ack` |
 | context     | `not_found` / `failed`                | `retry`     |
@@ -498,6 +499,50 @@ makes a network call and never returns or logs which field failed.
 > `20260810000300_intake_dead_letter_handoff.sql` only to `vetai-test`; the
 > strengthened rollback fixture returned `PASS` with all six residue counts
 > at zero. This is not a production migration-history entry.
+
+## Burst aggregation (Task 039)
+
+`enqueueIntakeJob` (`src/intakeQueue.ts`) sends every intake job with
+`delaySeconds: 3`, allowing rapid follow-up messages to land before the first
+job is claimable. `claim_intake_queue_job` partitions incomplete eligible
+messages into non-overlapping windows anchored at each window's first message
+and spanning at most 3 seconds (see
+[`docs/database-schema.md`](database-schema.md#per-pet-appointment-guard-cancellation-and-inbound-bursts-task-039))
+to add two closed result kinds ahead of `claimed`:
+
+- `superseded` — a newer eligible message already exists in the same fixed
+  window by the time this job is claimed. The event is completed and
+  acknowledged with zero model call and zero reply, but its text remains
+  visible to the current-turn representative until that representative's
+  outbound boundary; only the newest representative reaches extraction.
+- `overflow` — more than 4 eligible messages, or more than 65536 combined
+  characters, are pending. Never truncated into the model: the claim itself
+  returns a valid claim token with null message/mode, and
+  `processIntakeQueueMessage` routes it straight through the existing
+  no-model `human_handoff` boundary (same `buildHandoffPlan` +
+  `prepareOutboundReply` path the safety-parser-failure case uses), so an
+  oversized burst can never silently drop a possible emergency.
+
+Fixed windows are processed in receipt order. If a later window's Queue job
+runs first, claim returns `busy`, restores that event to `pending`, and relies
+on the existing bounded 120-second Queue retry. Once the earlier
+representative finishes, a still-incomplete later window remains independently
+claimable even if its receipt predates that representative's outbound;
+unprocessed content is not discarded by the outbound boundary.
+
+Only a message whose `webhook_events.ai_burst_eligible` is `true` — stamped
+once at ingest, forever, for a text message that actually reached the `ai`
+route — is ever aggregated or counted; manual/personal/group/media messages
+and any row from before this migration are excluded structurally, not by a
+runtime check. The five stages with a deterministic raw-text grammar
+(`intake_confirmation`, `appointment_selection`,
+`appointment_cancel_confirmation`, `human_handoff`, `completed`) always claim
+and see only their own current message, never an assembled burst.
+`prompts/intake-extraction-prompt.ts`'s `## Burst messages` section (prompt
+version `2026-08-28.2`) treats a labelled `"Mesaj 1: ..."` block as ordered,
+untrusted owner data spanning one turn: later parts add to earlier ones, and
+only an explicit correction (e.g. "hayır, Pamuk değil Karamel") overwrites a
+fact already stated earlier in the same block.
 
 ## Not implemented in this step
 

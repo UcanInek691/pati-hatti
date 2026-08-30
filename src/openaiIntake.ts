@@ -76,6 +76,7 @@ const INTAKE_EXTRACTION_JSON_SCHEMA = {
         "report_symptom",
         "routine_request",
         "appointment_request",
+        "appointment_cancel_request",
         "human_handoff",
         "medical_advice_request",
         "unknown",

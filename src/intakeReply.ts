@@ -83,7 +83,11 @@ export function planUnsupportedMediaReply(): IntakeReplyPlan {
  * See `docs/intake-replies.md` for the exact precedence and copy.
  */
 export function planIntakeReply(currentStage: IntakeStage, result: PlanResult): IntakeReplyPlan {
-  if (currentStage === "completed") return { kind: "none" };
+  // A completed conversation normally stays silent. Task 039's one narrow
+  // exception is a new cancellation request carrying a safety/human signal:
+  // the planner moves that turn to human_handoff, so the existing safety copy
+  // must win instead of being hidden by the old terminal-stage shortcut.
+  if (currentStage === "completed" && (result.kind === "failed" || result.nextStage !== "human_handoff")) return { kind: "none" };
 
   if (result.kind === "failed") return sendReply("human_handoff", HUMAN_HANDOFF_TEXT);
 
@@ -92,6 +96,13 @@ export function planIntakeReply(currentStage: IntakeStage, result: PlanResult): 
   if (safetyDecision.kind === "emergency_handoff") return sendReply("emergency_handoff", EMERGENCY_HANDOFF_TEXT);
   if (safetyDecision.kind === "human_handoff") return sendReply("human_handoff", HUMAN_HANDOFF_TEXT);
   if (nextStage === "human_handoff") return sendReply("human_handoff", HUMAN_HANDOFF_TEXT);
+
+  // Cancellation is an administrative request: if the owner has multiple
+  // pets, identify the target before asking clinical safety questions. An
+  // explicit emergency or human-handoff decision has already won above.
+  if (intakeData.intent === "appointment_cancel_request" && nextStage === "pet_identification") {
+    return sendReply("pet_identity", PET_IDENTITY_TEXT);
+  }
 
   if (safetyDecision.kind === "needs_safety_check") return planSafetyQuestionsReply(safetyDecision.unknownSignals);
 

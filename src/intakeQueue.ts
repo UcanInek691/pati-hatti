@@ -69,7 +69,7 @@ export async function enqueueIntakeJob(
   }
 
   try {
-    await queue.send({ version: 1, conversationId, providerMessageId }, { contentType: "json" });
+    await queue.send({ version: 1, conversationId, providerMessageId }, { contentType: "json", delaySeconds: 3 });
   } catch {
     return false;
   }

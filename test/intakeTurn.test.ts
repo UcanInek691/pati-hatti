@@ -68,6 +68,7 @@ function validSnapshot(overrides: Partial<PersistedIntakeData> = {}): Record<str
     reported_safety_signals: safetySignals(),
     missing_information: [],
     user_requested_human: false,
+    pending_cancel_slot_id: null,
     ...overrides,
   };
 }
@@ -75,11 +76,13 @@ function validSnapshot(overrides: Partial<PersistedIntakeData> = {}): Record<str
 const ALL_STAGES: IntakeStage[] = [
   "pet_identification",
   "complaint_collection",
+  "intake_confirmation",
   "safety_check",
   "ready_for_triage",
   "appointment_offer",
   "appointment_selection",
   "appointment_confirmation",
+  "appointment_cancel_confirmation",
   "human_handoff",
   "completed",
 ];
@@ -488,6 +491,43 @@ describe("planIntakeTurn — safety precedence and stage progression", () => {
     expect(result.nextStage).toBe("completed");
   });
 
+  it("routes a safe matched-pet cancellation request into its confirmation stage", () => {
+    const result = planIntakeTurn(
+      context({ intakeStage: "ready_for_triage", petId: "p1", pets: [pet("p1", "Waffles")] }),
+      extraction({ intent: "appointment_cancel_request" }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.nextStage).toBe("appointment_cancel_confirmation");
+  });
+
+  it("keeps an unbound unmatched cancellation at pet clarification instead of entering an invalid cancel stage", () => {
+    const result = planIntakeTurn(
+      context({
+        intakeStage: "pet_identification",
+        petId: null,
+        pets: [pet("p1", "Minnoş"), pet("p2", "Pamuk")],
+      }),
+      extraction({ intent: "appointment_cancel_request", pet_name: "Pamuk’un" }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.nextStage).toBe("pet_identification");
+    expect(result.petId).toBeNull();
+    expect(result.petResolution).toEqual({ kind: "needs_clarification" });
+  });
+
+  it("keeps safety precedence when a completed-stage cancellation request also reports an emergency", () => {
+    const result = planIntakeTurn(
+      context({ intakeStage: "completed", petId: "p1", pets: [pet("p1", "Waffles")] }),
+      extraction({
+        intent: "appointment_cancel_request",
+        reported_safety_signals: safetySignals({ heavy_bleeding: true }),
+      }),
+    );
+    if (result.kind !== "planned") throw new Error("expected planned");
+    expect(result.safetyDecision.kind).toBe("emergency_handoff");
+    expect(result.nextStage).toBe("human_handoff");
+  });
+
   it("keeps a human_handoff conversation in human_handoff once safety clears", () => {
     const result = planIntakeTurn(context({ intakeStage: "human_handoff" }), extraction());
     if (result.kind !== "planned") throw new Error("expected planned");
@@ -562,6 +602,7 @@ describe("planIntakeTurn — closed output", () => {
         "reported_safety_signals",
         "missing_information",
         "user_requested_human",
+        "pending_cancel_slot_id",
       ].sort(),
     );
   });

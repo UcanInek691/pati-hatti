@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   finalizeAppointmentDecisionQueueJob,
+  finalizeAppointmentCancelDecisionQueueJob,
+  finalizeAppointmentCancelOfferQueueJob,
   finalizeAppointmentOfferQueueJob,
+  parseAppointmentCancelDecision,
   parseAppointmentDecision,
   planAppointmentAction,
 } from "../src/appointmentFlow";
-import type { FinalizeAppointmentDecisionInput, FinalizeAppointmentOfferInput } from "../src/appointmentFlow";
+import type {
+  FinalizeAppointmentCancelDecisionInput,
+  FinalizeAppointmentCancelOfferInput,
+  FinalizeAppointmentDecisionInput,
+  FinalizeAppointmentOfferInput,
+} from "../src/appointmentFlow";
 import type { ConversationIntakeContext, IntakeStage } from "../src/conversationState";
 import type { PersistedIntakeData, PlanResult } from "../src/intakeTurn";
 import type { PetResolution } from "../src/intakeExtraction";
@@ -79,6 +87,18 @@ describe("parseAppointmentDecision", () => {
   });
 });
 
+describe("parseAppointmentCancelDecision", () => {
+  it.each(["evet", "EVET", "  Evet  "])("accepts exact %j as cancellation confirmation", (text) => {
+    expect(parseAppointmentCancelDecision(text)).toBe("cancel");
+  });
+  it.each(["hayır", "HAYIR", "hayir"])("accepts exact %j as keep", (text) => {
+    expect(parseAppointmentCancelDecision(text)).toBe("keep");
+  });
+  it.each(["evet lütfen", "iptal et", "tamam", "belki", "", "09:30"])("fails closed to repeat for %j", (text) => {
+    expect(parseAppointmentCancelDecision(text)).toBe("repeat");
+  });
+});
+
 const ALL_SIGNALS_FALSE = {
   breathing_difficulty: false,
   loss_of_consciousness: false,
@@ -101,6 +121,7 @@ function intakeData(overrides: Partial<PersistedIntakeData> = {}): PersistedInta
     reported_safety_signals: { ...ALL_SIGNALS_FALSE },
     missing_information: [],
     user_requested_human: false,
+    pending_cancel_slot_id: null,
     ...overrides,
   };
 }
@@ -165,7 +186,7 @@ describe("planAppointmentAction", () => {
   });
 
   it.each(["appointment_selection", "ready_for_triage"] as const)(
-    "unknown safety signals bypass appointment routing at %s",
+    "unknown safety signals still bypass ordinary appointment routing at %s",
     (stage) => {
       const context = baseContext({ intakeStage: stage });
       const plan = planned({
@@ -182,6 +203,52 @@ describe("planAppointmentAction", () => {
     expect(planAppointmentAction(context, plan, "evet")).toEqual({ kind: "decision", decision: "confirm" });
     expect(planAppointmentAction(context, plan, "hayır")).toEqual({ kind: "decision", decision: "decline" });
     expect(planAppointmentAction(context, plan, "tamam")).toEqual({ kind: "decision", decision: "repeat" });
+  });
+
+  it("appointment_cancel_confirmation parses only the deterministic cancellation decision", () => {
+    const context = baseContext({ intakeStage: "appointment_cancel_confirmation" });
+    const plan = planned({ nextStage: "appointment_cancel_confirmation", data: { intent: "appointment_cancel_request" } });
+    expect(planAppointmentAction(context, plan, "EVET")).toEqual({ kind: "cancel_decision", decision: "cancel" });
+    expect(planAppointmentAction(context, plan, "HAYIR")).toEqual({ kind: "cancel_decision", decision: "keep" });
+    expect(planAppointmentAction(context, plan, "belki")).toEqual({ kind: "cancel_decision", decision: "repeat" });
+  });
+
+  it("appointment_cancel_confirmation remains deterministic when safety answers are still unknown", () => {
+    const context = baseContext({ intakeStage: "appointment_cancel_confirmation" });
+    const plan = planned({
+      nextStage: "appointment_cancel_confirmation",
+      data: { intent: "appointment_cancel_request" },
+      safetyDecision: { kind: "needs_safety_check", unknownSignals: ["heavy_bleeding"] },
+    });
+    expect(planAppointmentAction(context, plan, "EVET")).toEqual({ kind: "cancel_decision", decision: "cancel" });
+    expect(planAppointmentAction(context, plan, "belki")).toEqual({ kind: "cancel_decision", decision: "repeat" });
+  });
+
+  it("routes only a safe matched-pet cancellation request to the cancellation offer", () => {
+    const context = baseContext({ intakeStage: "ready_for_triage" });
+    const plan = planned({ nextStage: "appointment_cancel_confirmation", data: { intent: "appointment_cancel_request" } });
+    expect(planAppointmentAction(context, plan, "randevumu iptal et")).toEqual({ kind: "cancel_offer" });
+    expect(planAppointmentAction(context, planned({ nextStage: "appointment_cancel_confirmation", data: { intent: "appointment_cancel_request" }, petResolution: NEEDS_CLARIFICATION }), "x")).toEqual({ kind: "none" });
+    expect(planAppointmentAction(context, planned({ nextStage: "human_handoff", data: { intent: "appointment_cancel_request" }, safetyDecision: { kind: "emergency_handoff", positiveSignals: ["heavy_bleeding"] } }), "x")).toEqual({ kind: "none" });
+  });
+
+  it("allows a matched-pet administrative cancellation while safety answers are unknown", () => {
+    const context = baseContext({ intakeStage: "pet_identification" });
+    const plan = planned({
+      nextStage: "appointment_cancel_confirmation",
+      data: { intent: "appointment_cancel_request" },
+      safetyDecision: { kind: "needs_safety_check", unknownSignals: ["breathing_difficulty", "heavy_bleeding"] },
+    });
+    expect(planAppointmentAction(context, plan, "Pamuk'un randevusunu iptal etmek istiyorum")).toEqual({ kind: "cancel_offer" });
+  });
+
+  it.each<SafetyDecision>([
+    { kind: "emergency_handoff", positiveSignals: ["heavy_bleeding"] },
+    { kind: "human_handoff", reason: "user_requested_human" },
+  ])("explicit safety/handoff decisions still override cancellation", (safetyDecision) => {
+    const context = baseContext({ intakeStage: "appointment_cancel_confirmation" });
+    const plan = planned({ nextStage: "human_handoff", data: { intent: "appointment_cancel_request" }, safetyDecision });
+    expect(planAppointmentAction(context, plan, "EVET")).toEqual({ kind: "none" });
   });
 
   it.each<IntakeStage>(["ready_for_triage", "appointment_offer"])(
@@ -336,6 +403,8 @@ describe("finalizeAppointmentOfferQueueJob", () => {
   it.each([
     ["offered", "appointment_selection"],
     ["unavailable", "human_handoff"],
+    ["existing_confirmed", "completed"],
+    ["in_progress", "human_handoff"],
   ] as const)("parses a %s result with its exact intake stage", async (result, intakeStage) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: intakeStage, state_version: 3 }])));
     expect(await finalizeAppointmentOfferQueueJob(baseInput, env)).toEqual({ kind: result, intakeStage, stateVersion: 3 });
@@ -427,6 +496,8 @@ describe("finalizeAppointmentOfferQueueJob", () => {
     ["a success row with a non-integer state_version", [{ result: "offered", intake_stage: "appointment_selection", state_version: 1.5 }]],
     ["an offered row with the wrong valid stage", [{ result: "offered", intake_stage: "human_handoff", state_version: 2 }]],
     ["an unavailable row with the wrong valid stage", [{ result: "unavailable", intake_stage: "appointment_selection", state_version: 2 }]],
+    ["an existing_confirmed row with the wrong valid stage", [{ result: "existing_confirmed", intake_stage: "human_handoff", state_version: 2 }]],
+    ["an in_progress row with the wrong valid stage", [{ result: "in_progress", intake_stage: "completed", state_version: 2 }]],
     ["an already_completed row with a non-null intake_stage", [{ result: "already_completed", intake_stage: "appointment_selection", state_version: null }]],
     ["an already_completed row with a non-null state_version", [{ result: "already_completed", intake_stage: null, state_version: 2 }]],
     ["a suppressed row with a non-null intake_stage", [{ result: "suppressed", intake_stage: "appointment_selection", state_version: null }]],
@@ -652,5 +723,113 @@ describe("finalizeAppointmentDecisionQueueJob", () => {
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+describe("Task 039 cancellation RPC clients", () => {
+  const cancelOfferInput: FinalizeAppointmentCancelOfferInput = {
+    conversationId,
+    providerMessageId,
+    claimToken,
+    expectedVersion: 4,
+    petId,
+    intakeData: { intent: "appointment_cancel_request" },
+  };
+  const cancelDecisionInput: FinalizeAppointmentCancelDecisionInput = {
+    ...cancelOfferInput,
+    decision: "cancel",
+  };
+
+  it("calls the cancellation-offer RPC with the exact closed request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "offered", intake_stage: "appointment_cancel_confirmation", state_version: 5 }]));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env)).resolves.toEqual({
+      kind: "offered",
+      intakeStage: "appointment_cancel_confirmation",
+      stateVersion: 5,
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/finalize_appointment_cancel_offer_queue_job");
+    expect(JSON.parse(init.body as string)).toEqual({
+      p_conversation_id: conversationId,
+      p_provider_message_id: providerMessageId,
+      p_claim_token: claimToken,
+      p_expected_version: 4,
+      p_pet_id: petId,
+      p_intake_data: { intent: "appointment_cancel_request" },
+    });
+  });
+
+  it.each([
+    ["offered", "appointment_cancel_confirmation"],
+    ["no_appointment", "completed"],
+  ] as const)("parses cancellation-offer result %s", async (result, intakeStage) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: intakeStage, state_version: 5 }])));
+    await expect(finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env)).resolves.toEqual({ kind: result, intakeStage, stateVersion: 5 });
+  });
+
+  it.each(["suppressed", "already_completed", "stale_claim", "stale_state"] as const)(
+    "parses terminal cancellation-offer result %s",
+    async (result) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
+      await expect(finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env)).resolves.toEqual({ kind: result });
+    },
+  );
+
+  it("calls the cancellation-decision RPC with the exact raw decision", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([{ result: "cancelled", intake_stage: "completed", state_version: 6 }]));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(finalizeAppointmentCancelDecisionQueueJob(cancelDecisionInput, env)).resolves.toEqual({
+      kind: "cancelled",
+      intakeStage: "completed",
+      stateVersion: 6,
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe("https://example.supabase.co/rest/v1/rpc/finalize_appointment_cancel_decision_queue_job");
+    expect(JSON.parse(init.body as string).p_decision).toBe("cancel");
+  });
+
+  it.each([
+    ["cancelled", "completed"],
+    ["kept", "completed"],
+    ["stale_appointment", "completed"],
+    ["repeated", "appointment_cancel_confirmation"],
+  ] as const)("parses cancellation-decision result %s", async (result, intakeStage) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: intakeStage, state_version: 6 }])));
+    await expect(finalizeAppointmentCancelDecisionQueueJob(cancelDecisionInput, env)).resolves.toEqual({ kind: result, intakeStage, stateVersion: 6 });
+  });
+
+  it.each(["suppressed", "already_completed", "stale_claim", "stale_state"] as const)(
+    "parses terminal cancellation-decision result %s",
+    async (result) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result, intake_stage: null, state_version: null }])));
+      await expect(finalizeAppointmentCancelDecisionQueueJob(cancelDecisionInput, env)).resolves.toEqual({ kind: result });
+    },
+  );
+
+  it("fails closed on invalid input and malformed or inconsistent rows", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(finalizeAppointmentCancelOfferQueueJob({ ...cancelOfferInput, petId: "bad" }, env)).resolves.toEqual({ kind: "failed" });
+    await expect(finalizeAppointmentCancelDecisionQueueJob({ ...cancelDecisionInput, decision: "bad" as never }, env)).resolves.toEqual({ kind: "failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "offered", intake_stage: "completed", state_version: 5 }])));
+    await expect(finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env)).resolves.toEqual({ kind: "failed" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "repeated", intake_stage: "completed", state_version: 6, extra: true }])));
+    await expect(finalizeAppointmentCancelDecisionQueueJob(cancelDecisionInput, env)).resolves.toEqual({ kind: "failed" });
+  });
+
+  it("never logs provider bodies and returns fresh objects", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([{ result: "no_appointment", intake_stage: "completed", state_version: 5 }])));
+    const first = await finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env);
+    const second = await finalizeAppointmentCancelOfferQueueJob(cancelOfferInput, env);
+    expect(first).not.toBe(second);
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

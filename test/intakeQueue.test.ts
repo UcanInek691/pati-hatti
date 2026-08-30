@@ -17,7 +17,7 @@ describe("enqueueIntakeJob", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(
       { version: 1, conversationId: CONVERSATION_ID, providerMessageId: PROVIDER_MESSAGE_ID },
-      { contentType: "json" },
+      { contentType: "json", delaySeconds: 3 },
     );
   });
 

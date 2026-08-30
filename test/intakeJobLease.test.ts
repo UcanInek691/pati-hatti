@@ -56,12 +56,20 @@ describe("claimIntakeQueueJob", () => {
     expect(JSON.parse(init.body as string)).toEqual({ p_conversation_id: conversationId, p_provider_message_id: providerMessageId });
   });
 
-  it.each(["completed", "busy", "not_found"] as const)("parses a %s result with a null token and text", async (result) => {
+  it.each(["completed", "busy", "not_found", "superseded"] as const)("parses a %s result with a null token and text", async (result) => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(jsonResponse([{ result, claim_token: null, message_text: null, automation_mode: null }])),
     );
     expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: result });
+  });
+
+  it("parses an overflow result with a claim token and null text/mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse([{ result: "overflow", claim_token: claimToken, message_text: null, automation_mode: null }])),
+    );
+    expect(await claimIntakeQueueJob(conversationId, providerMessageId, env)).toEqual({ kind: "overflow", claimToken });
   });
 
   it.each(["manual", "personal"] as const)("parses a claimed result with automation mode %s and null text", async (automationMode) => {
@@ -154,6 +162,11 @@ describe("claimIntakeQueueJob", () => {
     ["a busy row with a non-null token", [{ result: "busy", claim_token: claimToken, message_text: null, automation_mode: null }]],
     ["a not_found row with non-null text", [{ result: "not_found", claim_token: null, message_text: "leaked", automation_mode: null }]],
     ["a busy row with a non-null automation mode", [{ result: "busy", claim_token: null, message_text: null, automation_mode: "ai" }]],
+    ["a superseded row with a non-null token", [{ result: "superseded", claim_token: claimToken, message_text: null, automation_mode: null }]],
+    ["an overflow row with a null token", [{ result: "overflow", claim_token: null, message_text: null, automation_mode: null }]],
+    ["an overflow row with a malformed token", [{ result: "overflow", claim_token: "not-a-uuid", message_text: null, automation_mode: null }]],
+    ["an overflow row with non-null text", [{ result: "overflow", claim_token: claimToken, message_text: "leaked", automation_mode: null }]],
+    ["an overflow row with a non-null automation mode", [{ result: "overflow", claim_token: claimToken, message_text: null, automation_mode: "ai" }]],
     ["a claimed row with an unknown automation mode", [{ result: "claimed", claim_token: claimToken, message_text: "Hello", automation_mode: "invented" }]],
     ["a claimed ai row with null text", [{ result: "claimed", claim_token: claimToken, message_text: null, automation_mode: "ai" }]],
     [

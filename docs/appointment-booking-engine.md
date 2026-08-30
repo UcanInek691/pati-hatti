@@ -189,6 +189,28 @@ intake Queue consumer's `EVET`/`HAYIR` flow. This file's three RPCs, this
 migration, and `src/appointmentEngine.ts` itself are unmodified by that task;
 `src/appointmentEngine.ts` remains unwired into any runtime path.
 
+## Per-pet guard and cancellation (Task 039)
+
+`hold_appointment_slot` is replaced (same signature, still in
+`supabase/migrations/20260810000100_appointment_booking_engine.sql`'s lineage
+via the Task 039 migration) to check a pet-scoped guard before ever holding a
+slot: it returns `existing_confirmed` when the pet already has a future
+confirmed appointment, and `in_progress` when a different conversation holds
+an unexpired slot for the same pet, in both cases without creating a hold.
+`list_available_slots` is unchanged; `confirm_appointment_slot` now follows
+the same conversation → tenant-scoped pet → slot lock order as the hold path,
+and the public decision finalizer establishes that prefix before entering its
+reviewed private locked body. A
+sibling pair of RPCs, `finalize_appointment_cancel_offer_queue_job` and
+`finalize_appointment_cancel_decision_queue_job`, mirror this file's
+offer/decision RPCs' claim-validation and lock-order template to add
+owner-initiated cancellation; see
+[`docs/database-schema.md`](database-schema.md#per-pet-appointment-guard-cancellation-and-inbound-bursts-task-039)
+for the full contract and
+[`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md) for the
+conversational flow. `src/appointmentEngine.ts` is unmodified and remains
+unwired into any runtime path.
+
 ## Verification
 
 Proof lives in `supabase/tests/022_appointment_booking_engine.sql`, a single

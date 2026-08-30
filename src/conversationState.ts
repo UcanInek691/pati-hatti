@@ -51,6 +51,7 @@ export type IntakeStage =
   | "appointment_offer"
   | "appointment_selection"
   | "appointment_confirmation"
+  | "appointment_cancel_confirmation"
   | "human_handoff"
   | "completed";
 
@@ -63,6 +64,7 @@ const INTAKE_STAGES = new Set<IntakeStage>([
   "appointment_offer",
   "appointment_selection",
   "appointment_confirmation",
+  "appointment_cancel_confirmation",
   "human_handoff",
   "completed",
 ]);

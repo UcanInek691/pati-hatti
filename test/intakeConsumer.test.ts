@@ -65,7 +65,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function claimRow(
-  result: "claimed" | "completed" | "busy" | "not_found",
+  result: "claimed" | "completed" | "busy" | "not_found" | "superseded" | "overflow",
   extra: { claim_token?: string; message_text?: string | null; automation_mode?: "ai" | "manual" | "personal" } = {},
 ): Response {
   return jsonResponse([
@@ -134,11 +134,12 @@ function finalizeRow(
 }
 
 function offerRow(
-  result: "offered" | "unavailable" | "already_completed" | "stale_claim" | "stale_state",
+  result: "offered" | "unavailable" | "existing_confirmed" | "in_progress" | "already_completed" | "stale_claim" | "stale_state",
   extra: { intake_stage?: string; state_version?: number } = {},
 ): Response {
-  if (result === "offered" || result === "unavailable") {
-    const intakeStage = result === "offered" ? "appointment_selection" : "human_handoff";
+  if (result === "offered" || result === "unavailable" || result === "existing_confirmed" || result === "in_progress") {
+    const intakeStage =
+      result === "offered" ? "appointment_selection" : result === "existing_confirmed" ? "completed" : "human_handoff";
     return jsonResponse([{ result, intake_stage: extra.intake_stage ?? intakeStage, state_version: extra.state_version ?? 2 }]);
   }
   return jsonResponse([{ result, intake_stage: null, state_version: null }]);
@@ -156,6 +157,24 @@ function decisionRow(
   return jsonResponse([{ result, intake_stage: null, state_version: null }]);
 }
 
+function cancelOfferRow(
+  result: "offered" | "no_appointment" | "already_completed" | "stale_claim" | "stale_state",
+): Response {
+  if (result === "offered") return jsonResponse([{ result, intake_stage: "appointment_cancel_confirmation", state_version: 3 }]);
+  if (result === "no_appointment") return jsonResponse([{ result, intake_stage: "completed", state_version: 3 }]);
+  return jsonResponse([{ result, intake_stage: null, state_version: null }]);
+}
+
+function cancelDecisionRow(
+  result: "cancelled" | "kept" | "repeated" | "stale_appointment" | "already_completed" | "stale_claim" | "stale_state",
+): Response {
+  if (result === "repeated") return jsonResponse([{ result, intake_stage: "appointment_cancel_confirmation", state_version: 4 }]);
+  if (result === "cancelled" || result === "kept" || result === "stale_appointment") {
+    return jsonResponse([{ result, intake_stage: "completed", state_version: 4 }]);
+  }
+  return jsonResponse([{ result, intake_stage: null, state_version: null }]);
+}
+
 type Routes = {
   claim?: () => Response;
   complete?: () => Response;
@@ -164,6 +183,8 @@ type Routes = {
   finalize?: () => Response;
   appointmentOffer?: () => Response;
   appointmentDecision?: () => Response;
+  appointmentCancelOffer?: () => Response;
+  appointmentCancelDecision?: () => Response;
   clinic?: () => Response;
 };
 
@@ -179,6 +200,12 @@ function routedFetch(routes: Routes) {
     }
     if (url.includes("/rpc/finalize_appointment_decision_queue_job")) {
       return routes.appointmentDecision ? routes.appointmentDecision() : new Response("", { status: 500 });
+    }
+    if (url.includes("/rpc/finalize_appointment_cancel_offer_queue_job")) {
+      return routes.appointmentCancelOffer ? routes.appointmentCancelOffer() : new Response("", { status: 500 });
+    }
+    if (url.includes("/rpc/finalize_appointment_cancel_decision_queue_job")) {
+      return routes.appointmentCancelDecision ? routes.appointmentCancelDecision() : new Response("", { status: 500 });
     }
     if (url.includes("/rpc/finalize_intake_queue_job")) return routes.finalize ? routes.finalize() : new Response("", { status: 500 });
     if (url.includes("/rpc/get_conversation_clinic_operational_context")) {
@@ -196,6 +223,8 @@ function happyRoutes(overrides: Partial<Routes> & { extraction?: Record<string, 
     finalize: overrides.finalize ?? (() => finalizeRow("applied")),
     appointmentOffer: overrides.appointmentOffer,
     appointmentDecision: overrides.appointmentDecision,
+    appointmentCancelOffer: overrides.appointmentCancelOffer,
+    appointmentCancelDecision: overrides.appointmentCancelDecision,
     clinic: overrides.clinic,
   });
 }
@@ -238,6 +267,7 @@ describe("processIntakeQueueMessage: parse and claim", () => {
     { label: "completed", response: claimRow("completed"), expected: "ack" as QueueDisposition },
     { label: "not_found", response: claimRow("not_found"), expected: "ack" as QueueDisposition },
     { label: "busy", response: claimRow("busy"), expected: "retry" as QueueDisposition },
+    { label: "superseded", response: claimRow("superseded"), expected: "ack" as QueueDisposition },
     { label: "failed (RPC error)", response: new Response("", { status: 500 }), expected: "retry" as QueueDisposition },
   ])("claim $label -> $expected without any further call", async ({ response, expected }) => {
     const fetchMock = vi.fn().mockResolvedValueOnce(response);
@@ -247,6 +277,24 @@ describe("processIntakeQueueMessage: parse and claim", () => {
 
     expect(result).toBe(expected);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("claim overflow (Task 039 Part C) -> routes to human_handoff with zero OpenAI calls", async () => {
+    const fetchMock = happyRoutes({
+      claim: () => claimRow("overflow", { claim_token: CLAIM_TOKEN }),
+      context: () => contextRow({ intake_stage: "complaint_collection", pet_id: PET_ID, intake_data: {} }),
+      finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 2 }),
+      clinic: () => clinicRow({ is_open: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock.mock.calls.some(([input]) => input.toString().includes("api.openai.com"))).toBe(false);
+    const finalizeBody = bodyOf(fetchMock, 3);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
   });
 });
 
@@ -794,6 +842,8 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
   it.each([
     { label: "offered", response: offerRow("offered"), expected: "ack" as QueueDisposition },
     { label: "unavailable", response: offerRow("unavailable"), expected: "ack" as QueueDisposition },
+    { label: "existing_confirmed", response: offerRow("existing_confirmed"), expected: "ack" as QueueDisposition },
+    { label: "in_progress", response: offerRow("in_progress"), expected: "ack" as QueueDisposition },
     { label: "already_completed", response: offerRow("already_completed"), expected: "ack" as QueueDisposition },
     { label: "stale_claim", response: offerRow("stale_claim"), expected: "ack" as QueueDisposition },
     { label: "stale_state", response: offerRow("stale_state"), expected: "retry" as QueueDisposition },
@@ -953,6 +1003,211 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
   });
 });
 
+describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
+  const cancellationSnapshot = {
+    schema_version: 1,
+    ...extractionJson({ intent: "appointment_cancel_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+    pending_cancel_slot_id: "77777777-7777-7777-7777-777777777777",
+  };
+
+  it("a safe matched-pet cancellation request calls only the cancellation-offer finalizer", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "appointment_cancel_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+      appointmentCancelOffer: () => cancelOfferRow("offered"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(true);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
+    const body = bodyOf(fetchMock, 3);
+    expect(body.p_pet_id).toBe(PET_ID);
+    expect(body.p_expected_version).toBe(2);
+    expect(body.p_intake_data).toMatchObject({ intent: "appointment_cancel_request" });
+  });
+
+  it.each([
+    {
+      label: "names an existing pet",
+      pets: [
+        { id: "77777777-7777-7777-7777-777777777777", name: "Minnoş", species: "cat" },
+        { id: PET_ID, name: "Pamuk", species: "cat" },
+      ],
+      petName: "Pamuk",
+    },
+    {
+      label: "has exactly one existing pet and omits its name",
+      pets: [{ id: PET_ID, name: "Pamuk", species: "cat" }],
+      petName: null,
+    },
+  ])("a first-message cancellation that $label reaches the cancellation offer despite unknown safety answers", async ({ pets, petName }) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "pet_identification", state_version: 1, pet_id: null, pets }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Randevumu iptal etmek istiyorum" }),
+      extraction: extractionJson({
+        intent: "appointment_cancel_request",
+        pet_name: petName,
+        reported_safety_signals: ALL_NULL_SIGNALS,
+      }),
+      appointmentCancelOffer: () => cancelOfferRow("offered"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(true);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
+    expect(bodyOf(fetchMock, 3)).toMatchObject({ p_pet_id: PET_ID, p_expected_version: 1 });
+  });
+
+  it("a first-message cancellation without a pet name asks which pet when multiple pets exist", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          state_version: 1,
+          pet_id: null,
+          pets: [
+            { id: "77777777-7777-7777-7777-777777777777", name: "Minnoş", species: "cat" },
+            { id: PET_ID, name: "Pamuk", species: "cat" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "Randevumu iptal etmek istiyorum" }),
+      extraction: extractionJson({
+        intent: "appointment_cancel_request",
+        pet_name: null,
+        reported_safety_signals: ALL_NULL_SIGNALS,
+      }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(false);
+    expect(bodyOf(fetchMock, 3)).toMatchObject({
+      p_next_stage: "pet_identification",
+      p_pet_id: null,
+      p_reply_category: "pet_identity",
+    });
+  });
+
+  it("acks an unbound unmatched cancellation with pet clarification instead of retrying an invalid cancel stage", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          state_version: 1,
+          pet_id: null,
+          pets: [
+            { id: "77777777-7777-7777-7777-777777777777", name: "Minnoş", species: "cat" },
+            { id: PET_ID, name: "Pamuk", species: "cat" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "appointment_cancel_request",
+        pet_name: "Pamuk’un",
+        reported_safety_signals: ALL_FALSE_SIGNALS,
+      }),
+      finalize: () => finalizeRow("applied", { intake_stage: "pet_identification", state_version: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(false);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
+    expect(bodyOf(fetchMock, 3)).toMatchObject({
+      p_next_stage: "pet_identification",
+      p_pet_id: null,
+      p_reply_category: "pet_identity",
+    });
+  });
+
+  it.each([
+    ["offered", "ack"],
+    ["no_appointment", "ack"],
+    ["already_completed", "ack"],
+    ["stale_claim", "ack"],
+    ["stale_state", "retry"],
+  ] as const)("maps cancellation-offer result %s to %s", async (rpcResult, disposition) => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "appointment_cancel_request", reported_safety_signals: ALL_FALSE_SIGNALS }),
+      appointmentCancelOffer: () => cancelOfferRow(rpcResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe(disposition);
+  });
+
+  it.each([
+    ["EVET", "cancel", "cancelled", "ack"],
+    ["HAYIR", "keep", "kept", "ack"],
+    ["EVET", "cancel", "stale_appointment", "ack"],
+    ["EVET", "cancel", "stale_state", "retry"],
+  ] as const)("handles exact raw %s as deterministic %s/%s -> %s with zero OpenAI calls", async (message, decision, rpcResult, disposition) => {
+    const fetchMock = happyRoutes({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: message }),
+      context: () => contextRow({
+        intake_stage: "appointment_cancel_confirmation",
+        state_version: 99,
+        pet_id: PET_ID,
+        intake_data: cancellationSnapshot,
+      }),
+      appointmentCancelDecision: () => cancelDecisionRow(rpcResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe(disposition);
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel_decision_queue_job"))).toBe(true);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(false);
+    expect(bodyOf(fetchMock, 2)).toMatchObject({ p_decision: decision, p_expected_version: 99 });
+  });
+
+  it("sends a non-exact cancellation answer through extraction, then repeats without mutation", async () => {
+    const fetchMock = happyRoutes({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: "belki" }),
+      context: () => contextRow({
+        intake_stage: "appointment_cancel_confirmation",
+        pet_id: PET_ID,
+        intake_data: cancellationSnapshot,
+      }),
+      extraction: extractionJson({ intent: "unknown", reported_safety_signals: ALL_NULL_SIGNALS }),
+      appointmentCancelDecision: () => cancelDecisionRow("repeated"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("api.openai.com"))).toBe(true);
+    expect(bodyOf(fetchMock, 3).p_decision).toBe("repeat");
+  });
+
+  it("keeps deterministic emergency precedence over a cancellation request", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),
+      extraction: extractionJson({
+        intent: "appointment_cancel_request",
+        reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: true },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => input.toString());
+    expect(urls.some((url) => url.includes("finalize_appointment_cancel"))).toBe(false);
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
+    expect(bodyOf(fetchMock, 3)).toMatchObject({
+      p_next_stage: "human_handoff",
+      p_reply_category: "emergency_handoff",
+    });
+  });
+});
+
 describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)", () => {
   it.each(["evet", "hayır", "hiçbiri", "ilkine evet, diğerlerine hayır"])(
     "threads exactly one labelled question before the exact current answer %s",
@@ -982,6 +1237,78 @@ describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)
     expect(input[2]).toEqual({ role: "user", content: currentMessage });
     },
   );
+
+  it("threads the prior question when the burst claim labels a single eligible message", async () => {
+    const rawMessage = "evet";
+    const claimedTurn = `Mesaj 1: ${rawMessage}`;
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          recent_messages: [
+            { direction: "outbound", content: "Nefes almakta güçlük var mı?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: rawMessage, created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: claimedTurn }),
+      extraction: extractionJson({ reported_safety_signals: { ...ALL_FALSE_SIGNALS, breathing_difficulty: true } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(bodyOf(fetchMock, 2).input).toEqual([
+      expect.objectContaining({ role: "system" }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("Nefes almakta güçlük var mı?") }),
+      { role: "user", content: claimedTurn },
+    ]);
+  });
+
+  it("threads the prior question when the newest raw inbound is the final item in a labelled burst", async () => {
+    const newestRawMessage = "ama yürürken dengesiz";
+    const claimedTurn = `Mesaj 1: Bunların hiçbiri yok\nMesaj 2: ${newestRawMessage}`;
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          recent_messages: [
+            { direction: "outbound", content: "Bu belirtilerden biri var mı?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "Bunların hiçbiri yok", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "inbound", content: newestRawMessage, created_at: "2026-01-01T00:00:02Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: claimedTurn }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect(bodyOf(fetchMock, 2).input).toEqual([
+      expect.objectContaining({ role: "system" }),
+      expect.objectContaining({ role: "user", content: expect.stringContaining("Bu belirtilerden biri var mı?") }),
+      { role: "user", content: claimedTurn },
+    ]);
+  });
+
+  it("does not thread stale context when a labelled burst does not end with the newest recorded inbound", async () => {
+    const claimedTurn = "Mesaj 1: evet\nMesaj 2: başka bir yanıt";
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          recent_messages: [
+            { direction: "outbound", content: "Nefes almakta güçlük var mı?", created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "evet", created_at: "2026-01-01T00:00:01Z" },
+          ],
+        }),
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: claimedTurn }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processIntakeQueueMessage(validBody, env);
+
+    expect((bodyOf(fetchMock, 2).input as unknown[])).toHaveLength(2);
+  });
 
   it("sends only the nearest prior outbound question and excludes history, identifiers, timestamps, and persisted data", async () => {
     const fetchMock = happyRoutes({
@@ -1346,6 +1673,40 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  it("recognizes the same no-progress turn when the burst claim labels its single message", async () => {
+    const rawMessage = "anlamadım";
+    const fetchMock = happyRoutes({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: `Mesaj 1: ${rawMessage}` }),
+      context: () =>
+        contextRow({
+          intake_stage: "pet_identification",
+          pet_id: null,
+          recent_messages: [
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:00Z" },
+            { direction: "inbound", content: "bilmiyorum", created_at: "2026-01-01T00:00:01Z" },
+            { direction: "outbound", content: REPEATED_QUESTION, created_at: "2026-01-01T00:00:02Z" },
+            { direction: "inbound", content: rawMessage, created_at: "2026-01-01T00:00:03Z" },
+          ],
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        pet_name: null,
+        species: null,
+        complaint: null,
+        symptoms: [],
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(bodyOf(fetchMock, 4)).toMatchObject({
+      p_next_stage: "human_handoff",
+      p_reply_category: "human_handoff",
+    });
   });
 
   it("only one prior eligible question does not trigger the fallback", async () => {
@@ -1738,7 +2099,7 @@ describe("processIntakeQueueMessage: Task 030 unsupported-media marker", () => {
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
     expect(finalizeBody.p_pet_id).toBe(PET_ID);
     expect(finalizeBody.p_expected_version).toBe(3);
-    expect(finalizeBody.p_intake_data).toEqual(snapshot);
+    expect(finalizeBody.p_intake_data).toEqual({ ...snapshot, pending_cancel_slot_id: null });
     expect(finalizeBody.p_reply_category).toBe("intake_received");
     expect(finalizeBody.p_reply_text).toBe(MEDIA_REPLY_TEXT);
   });

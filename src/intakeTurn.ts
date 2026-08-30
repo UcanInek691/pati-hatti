@@ -14,6 +14,14 @@ export interface PersistedIntakeData {
   reported_safety_signals: ReportedSafetySignals;
   missing_information: MissingInformationItem[];
   user_requested_human: boolean;
+  /**
+   * Task 039 Part B: set only by `finalize_appointment_cancel_offer_queue_job`,
+   * which pins the exact appointment slot being offered for cancellation so
+   * `finalize_appointment_cancel_decision_queue_job` re-validates that same
+   * appointment rather than any replacement. Opaque to this module — never
+   * produced by extraction, never merged, only passed through unchanged.
+   */
+  pending_cancel_slot_id: string | null;
 }
 
 export type PlanResult =
@@ -37,9 +45,17 @@ const PERSISTED_DATA_KEYS = [
   "reported_safety_signals",
   "missing_information",
   "user_requested_human",
+  "pending_cancel_slot_id",
 ] as const;
 
 const MAX_SYMPTOMS = 20;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Pre-Task-039 persisted rows have no `pending_cancel_slot_id` key at all.
+// Accepted as an equally-valid legacy shape (defaulting to null) so an
+// in-flight conversation from before this migration is never treated as
+// invalid by the fail-closed exact-key boundary below.
+const LEGACY_PERSISTED_DATA_KEYS = PERSISTED_DATA_KEYS.filter((key) => key !== "pending_cancel_slot_id");
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -67,6 +83,7 @@ function emptySnapshot(): PersistedIntakeData {
     },
     missing_information: [],
     user_requested_human: false,
+    pending_cancel_slot_id: null,
   };
 }
 
@@ -79,14 +96,22 @@ function parsePersistedSnapshot(value: unknown): SnapshotResult {
 
     const keys = Reflect.ownKeys(value);
     if (keys.length === 0) return { kind: "empty" };
+
+    const hasPendingCancelKey = keys.includes("pending_cancel_slot_id");
+    const expectedKeys: readonly string[] = hasPendingCancelKey ? PERSISTED_DATA_KEYS : LEGACY_PERSISTED_DATA_KEYS;
     if (
-      keys.length !== PERSISTED_DATA_KEYS.length ||
+      keys.length !== expectedKeys.length ||
       keys.some((key) => typeof key !== "string") ||
-      !PERSISTED_DATA_KEYS.every((key) => keys.includes(key))
+      !expectedKeys.every((key) => keys.includes(key))
     ) {
       return { kind: "invalid" };
     }
     if (value.schema_version !== 1) return { kind: "invalid" };
+
+    const pendingCancelSlotId = hasPendingCancelKey ? value.pending_cancel_slot_id : null;
+    if (pendingCancelSlotId !== null && !(typeof pendingCancelSlotId === "string" && UUID_PATTERN.test(pendingCancelSlotId))) {
+      return { kind: "invalid" };
+    }
 
     const parsed = parseIntakeExtraction({
       intent: value.intent,
@@ -100,7 +125,10 @@ function parsePersistedSnapshot(value: unknown): SnapshotResult {
     });
     if (!parsed.ok) return { kind: "invalid" };
 
-    return { kind: "snapshot", value: { schema_version: 1, ...parsed.value } };
+    return {
+      kind: "snapshot",
+      value: { schema_version: 1, ...parsed.value, pending_cancel_slot_id: pendingCancelSlotId },
+    };
   } catch {
     return { kind: "invalid" };
   }
@@ -157,6 +185,7 @@ function mergeSnapshot(stored: PersistedIntakeData, extraction: IntakeExtraction
     reported_safety_signals: mergeSafetySignals(stored.reported_safety_signals, extraction.reported_safety_signals),
     missing_information: [...extraction.missing_information],
     user_requested_human: stored.user_requested_human || extraction.user_requested_human,
+    pending_cancel_slot_id: stored.pending_cancel_slot_id,
   };
 }
 
@@ -240,9 +269,17 @@ function mergeSnapshotPreservingIdentity(stored: PersistedIntakeData, extraction
     reported_safety_signals: mergeConflictSafetySignals(stored.reported_safety_signals, extraction.reported_safety_signals),
     missing_information: stored.missing_information,
     user_requested_human: stored.user_requested_human || extraction.user_requested_human,
+    pending_cancel_slot_id: stored.pending_cancel_slot_id,
   };
 }
 
+/**
+ * Task 039 decision: an `appointment_cancel_request` is the only thing that
+ * can move a conversation out of the otherwise-terminal `completed` stage,
+ * and it can do so from any non-`human_handoff` stage. Safety/handoff
+ * precedence is unchanged: a `completed` conversation with no cancel intent
+ * stays `completed` even under an emergency signal, exactly as before.
+ */
 function decideNextStage(
   currentStage: IntakeStage,
   safetyDecision: SafetyDecision,
@@ -250,9 +287,25 @@ function decideNextStage(
   merged: PersistedIntakeData,
   petConflict: boolean,
 ): IntakeStage {
-  if (currentStage === "completed") return "completed";
+  const wantsCancel = identityKnown && merged.intent === "appointment_cancel_request";
+
+  if (currentStage === "completed") {
+    if (!wantsCancel) return "completed";
+    if (petConflict || safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") {
+      return "human_handoff";
+    }
+    return "appointment_cancel_confirmation";
+  }
   if (petConflict || safetyDecision.kind === "emergency_handoff" || safetyDecision.kind === "human_handoff") return "human_handoff";
   if (currentStage === "human_handoff") return "human_handoff";
+
+  if (currentStage === "appointment_cancel_confirmation") {
+    // Held deliberately, mirroring `appointment_selection`: only the
+    // deterministic EVET/HAYIR RPC path (via `planAppointmentAction`'s
+    // `cancel_decision`) advances out of this stage.
+    return "appointment_cancel_confirmation";
+  }
+  if (wantsCancel) return "appointment_cancel_confirmation";
 
   if (currentStage === "pet_identification") {
     return identityKnown ? "complaint_collection" : "pet_identification";
@@ -289,8 +342,19 @@ export function planIntakeTurn(context: ConversationIntakeContext, extraction: I
     const petConflict = detectSelectedPetConflict(context, extraction);
     const merged = petConflict ? mergeSnapshotPreservingIdentity(stored, extraction) : mergeSnapshot(stored, extraction);
 
-    const petOutcome = resolvePetForContext(context, extraction, merged);
-    if (petOutcome === null) return { kind: "failed" };
+    const resolvedPetOutcome = resolvePetForContext(context, extraction, merged);
+    if (resolvedPetOutcome === null) return { kind: "failed" };
+
+    // A cancellation can target only an existing, tenant-scoped pet. When an
+    // unbound conversation names something that does not match exactly, keep
+    // the turn at pet clarification instead of treating the name as a new-pet
+    // candidate and entering a cancellation stage with no cancellable pet.
+    const petOutcome =
+      context.petId === null &&
+      merged.intent === "appointment_cancel_request" &&
+      resolvedPetOutcome.resolution.kind !== "matched"
+        ? { petId: null, resolution: { kind: "needs_clarification" as const } }
+        : resolvedPetOutcome;
 
     const safetyDecision = evaluateSafetyDecision(merged);
     const nextStage = decideNextStage(

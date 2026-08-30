@@ -434,7 +434,7 @@ describe("worker whatsapp persistence", () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
     expect(queueSend).toHaveBeenCalledWith(
       { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
-      { contentType: "json" },
+      { contentType: "json", delaySeconds: 3 },
     );
   });
 
@@ -482,7 +482,7 @@ describe("worker whatsapp persistence", () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
     expect(queueSend).toHaveBeenCalledWith(
       { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
-      { contentType: "json" },
+      { contentType: "json", delaySeconds: 3 },
     );
   });
 
@@ -535,7 +535,7 @@ describe("worker whatsapp persistence", () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
     expect(queueSend).toHaveBeenCalledWith(
       { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
-      { contentType: "json" },
+      { contentType: "json", delaySeconds: 3 },
     );
   });
 
@@ -582,7 +582,7 @@ describe("worker whatsapp persistence", () => {
     }
     expect(queueSend).toHaveBeenCalledWith(
       { version: 1, conversationId: CONVERSATION_ID, providerMessageId: "wamid.ID1" },
-      { contentType: "json" },
+      { contentType: "json", delaySeconds: 3 },
     );
   });
 

@@ -310,14 +310,61 @@ disposition table below extends the existing one in
 
 | Step               | Outcome                                                              | Disposition |
 |--------------------|-----------------------------------------------------------------------|-------------|
-| appointment offer   | `offered` / `unavailable` / `already_completed` / `stale_claim`      | `ack`       |
+| appointment offer   | `offered` / `unavailable` / `existing_confirmed` / `in_progress` / `already_completed` / `stale_claim` | `ack` |
 | appointment offer   | `stale_state` / `failed`                                             | `retry`     |
 | appointment decision| `confirmed` / `declined` / `repeated` / `stale_hold` / `already_completed` / `stale_claim` | `ack` |
 | appointment decision| `stale_state` / `failed`                                             | `retry`     |
+| cancel offer        | `offered` / `no_appointment` / `already_completed` / `stale_claim`   | `ack`       |
+| cancel offer        | `stale_state` / `failed`                                             | `retry`     |
+| cancel decision      | `cancelled` / `kept` / `repeated` / `stale_appointment` / `already_completed` / `stale_claim` | `ack` |
+| cancel decision      | `stale_state` / `failed`                                             | `retry`     |
 
 Neither new RPC client is ever wired into any path outside this consumer;
 `src/appointmentEngine.ts`'s three lower-level RPCs remain unwired everywhere
 else, exactly as before this task.
+
+## Per-pet guard and cancellation (Task 039)
+
+**Second-booking guard.** `hold_appointment_slot`'s two new result kinds,
+`existing_confirmed` and `in_progress` (see
+[`docs/database-schema.md`](database-schema.md#per-pet-appointment-guard-cancellation-and-inbound-bursts-task-039)),
+surface through `finalize_appointment_offer_queue_job` as two closed
+`FinalizeAppointmentOfferResult` kinds in `src/appointmentFlow.ts`, each
+validated against its exact advanced stage (`completed` for
+`existing_confirmed`, `human_handoff` for `in_progress`) before being
+accepted; any other shape still collapses to `{ kind: "failed" }`. Both are
+acked by the consumer, exactly like `unavailable`, because the SQL side has
+already completed the lease and written the outbox reply by the time the RPC
+returns.
+
+**Cancellation.** A direct or elliptical `appointment_cancel_request` intent
+(extraction prompt, see below) that resolves to a matched pet enters the new
+`appointment_cancel_confirmation` stage via `finalizeAppointmentCancelOfferQueueJob`,
+which looks up the pet's one future confirmed appointment and asks for exact
+`EVET`/`HAYIR` confirmation naming the exact date/time — never a bare
+"are you sure?". `parseAppointmentCancelDecision` in `src/appointmentFlow.ts`
+uses the identical `EVET`/`HAYIR` grammar as `parseAppointmentDecision`, over
+`cancel` / `keep` / `repeat`. `finalizeAppointmentCancelDecisionQueueJob`
+is called before any OpenAI extraction for exact normalized `EVET` or
+`HAYIR`, including on an old high-version conversation; any other text keeps
+the existing extraction/safety path before it can merely repeat the question.
+Because cancellation is administrative, a first-message cancellation may
+reach this lookup while the clinical safety fields are still unknown; unknown
+fields alone do not trigger the symptom questionnaire. A stated emergency or
+human request still wins before cancellation. If exactly one existing pet can
+be resolved it is used; if several exist and no exact pet is identified, the
+fixed pet-name clarification is sent and no appointment is changed.
+The SQL finalizer
+re-validates the pinned slot is still confirmed and in the future before
+mutating anything; a stale/vanished appointment returns `stale_appointment`
+truthfully instead of confirming a cancellation that already happened. Every
+reply here (no-appointment, offer, cancelled, kept, stale) is fixed Turkish
+copy generated entirely in SQL — there is no LLM involvement in an exact
+confirmation mutation, only in classifying the initial intent or checking a
+non-exact follow-up for newly stated safety facts.
+See
+`docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md` for the exact
+reproduced copy in conversational context.
 
 ## Verification
 

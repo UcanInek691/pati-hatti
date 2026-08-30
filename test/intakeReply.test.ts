@@ -29,6 +29,7 @@ function intakeData(overrides: Partial<PersistedIntakeData> = {}): PersistedInta
     reported_safety_signals: { ...ALL_SIGNALS_FALSE },
     missing_information: [],
     user_requested_human: false,
+    pending_cancel_slot_id: null,
     ...overrides,
   };
 }
@@ -84,6 +85,15 @@ describe("planIntakeReply", () => {
     ["failed", FAILED],
   ])("completed stage always returns none (%s)", (_label, result) => {
     expect(planIntakeReply("completed", result)).toEqual({ kind: "none" });
+  });
+
+  it("lets a cancellation turn's emergency handoff escape the otherwise-silent completed stage", () => {
+    expect(
+      planIntakeReply(
+        "completed",
+        planned({ nextStage: "human_handoff", safetyDecision: { kind: "emergency_handoff", positiveSignals: ["heavy_bleeding"] } }),
+      ),
+    ).toEqual({ kind: "send", category: "emergency_handoff", text: EMERGENCY_TEXT });
   });
 
   it("failed result routes to fixed human handoff", () => {
@@ -159,6 +169,36 @@ describe("planIntakeReply", () => {
     if (plan.kind === "send") {
       expect(plan.text).toContain("emin değilseniz bot yanıtını beklemeden en yakın açık veteriner kliniğine başvurun");
     }
+  });
+
+  it("asks which pet an administrative cancellation targets before asking unknown safety questions", () => {
+    const result = planned({
+      nextStage: "pet_identification",
+      petId: null,
+      petResolution: NEEDS_CLARIFICATION,
+      data: { intent: "appointment_cancel_request", pet_name: null },
+      safetyDecision: { kind: "needs_safety_check", unknownSignals: ["breathing_difficulty"] },
+    });
+    expect(planIntakeReply("pet_identification", result)).toEqual({
+      kind: "send",
+      category: "pet_identity",
+      text: PET_IDENTITY_TEXT,
+    });
+  });
+
+  it("keeps an explicit emergency ahead of cancellation pet clarification", () => {
+    const result = planned({
+      nextStage: "human_handoff",
+      petId: null,
+      petResolution: NEEDS_CLARIFICATION,
+      data: { intent: "appointment_cancel_request", pet_name: null },
+      safetyDecision: { kind: "emergency_handoff", positiveSignals: ["breathing_difficulty"] },
+    });
+    expect(planIntakeReply("pet_identification", result)).toEqual({
+      kind: "send",
+      category: "emergency_handoff",
+      text: EMERGENCY_TEXT,
+    });
   });
 
   it.each(Object.entries(SIGNAL_QUESTIONS) as [SafetySignal, string][])("maps %s to its exact required question", (signal, question) => {

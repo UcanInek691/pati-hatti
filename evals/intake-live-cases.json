@@ -1,11 +1,14 @@
 {
   "$schema_note": "Bu dosya Task 028 kapsamında oluşturulan sentetik/uydurma bir canlı-değerlendirme veri setidir. Hiçbir gerçek kişi, klinik, telefon numarası, hasta veya hayvan bilgisi içermez.",
   "$disclaimer": "expected alanları mühendislik beklentisidir (ground truth), bir veteriner tarafından onaylanmamıştır. Model gerçek sonuçları bu beklentilerden sapabilir; bu sapmalar tek başına bir güvenlik hatası anlamına gelmez, test tasarımcısı tarafından değerlendirilmelidir.",
-  "eval_version": "2026-08-28.1",
-  "prompt_version": "2026-08-28.1",
-  "models": ["gpt-5.6-luna", "gpt-5.6-terra"],
-  "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli; Task 030 ile yeni-hayvan kaydı vakaları eklendi",
-  "case_count": 77,
+  "eval_version": "2026-08-28.2",
+  "prompt_version": "2026-08-28.2",
+  "models": [
+    "gpt-5.6-luna",
+    "gpt-5.6-terra"
+  ],
+  "generated_for": "Task 028 — gerçek OpenAI yerel sohbet ve model eval temeli; Task 030 ile yeni-hayvan kaydı vakaları eklendi; Task 039 ile randevu iptal niyeti ve patlamalı (burst) mesaj birleştirme vakaları eklendi",
+  "case_count": 88,
   "cases": [
     {
       "id": "T028-001",
@@ -2254,7 +2257,9 @@
         "pet_name": "Duman",
         "species": null,
         "complaint": "aksama",
-        "symptoms": ["aksıyor"],
+        "symptoms": [
+          "aksıyor"
+        ],
         "reported_safety_signals": {
           "breathing_difficulty": null,
           "loss_of_consciousness": null,
@@ -2278,7 +2283,9 @@
         "pet_name": null,
         "species": "kedi",
         "complaint": "nefes almakta zorlanma",
-        "symptoms": ["nefes almakta zorlanıyor"],
+        "symptoms": [
+          "nefes almakta zorlanıyor"
+        ],
         "reported_safety_signals": {
           "breathing_difficulty": true,
           "loss_of_consciousness": null,
@@ -2292,6 +2299,227 @@
         "user_requested_human": false
       },
       "note": "Task 038: randevu niyeti açık kırmızı sinyali gizlememeli; deterministik güvenlik kapısı acili önceler."
+    },
+    {
+      "id": "T028-078",
+      "category": "appointment_cancel_request_positive",
+      "message": "Randevumu iptal etmek istiyorum.",
+      "expected": {
+        "intent": "appointment_cancel_request",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: doğrudan iptal talebi."
+    },
+    {
+      "id": "T028-079",
+      "category": "appointment_cancel_request_named_pet",
+      "message": "Pamuk'un randevusunu iptal edelim.",
+      "expected": {
+        "intent": "appointment_cancel_request",
+        "pet_name": "Pamuk",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: hayvan adıyla birlikte iptal talebi."
+    },
+    {
+      "id": "T028-080",
+      "category": "appointment_cancel_request_negative_non_cancellation",
+      "message": "Randevu almayacağım, sadece çalışma saatlerinizi öğrenmek istiyorum.",
+      "expected": {
+        "intent": "routine_request",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: iptal değil rutin bilgi talebi -- appointment_cancel_request ile karıştırılmamalı."
+    },
+    {
+      "id": "T028-081",
+      "category": "appointment_cancel_request_ambiguous",
+      "message": "Randevu konusunda ne yapmam gerektiğini bilmiyorum.",
+      "expected": {
+        "intent": "unknown",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: belirsiz ifade appointment_cancel_request olarak sınıflandırılmamalı."
+    },
+    {
+      "id": "T028-082",
+      "category": "burst_greeting_then_symptom",
+      "message": "Mesaj 1: Merhaba\nMesaj 2: Pamuk kusuyor",
+      "expected": {
+        "intent": "report_symptom",
+        "pet_name": "Pamuk",
+        "complaint": "kusma",
+        "symptoms": [
+          "kusma"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: patlamalı (burst) mesaj birleştirme -- selamlama + belirti."
+    },
+    {
+      "id": "T028-083",
+      "category": "burst_pet_name_then_duration_symptom",
+      "message": "Mesaj 1: Pamuk\nMesaj 2: iki gündür kusuyor",
+      "expected": {
+        "pet_name": "Pamuk",
+        "complaint": "kusma",
+        "symptoms": [
+          "kusma"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: patlamalı mesaj birleştirme -- hayvan adı ayrı mesajda, belirti ikinci mesajda."
+    },
+    {
+      "id": "T028-084",
+      "category": "burst_correction_pet_name",
+      "message": "Mesaj 1: Pamuk kusuyor\nMesaj 2: Hayır, Pamuk değil Karamel",
+      "expected": {
+        "pet_name": "Karamel",
+        "complaint": "kusma",
+        "symptoms": [
+          "kusma"
+        ],
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: sonraki mesajdaki açık düzeltme öncekini geçersiz kılar."
+    },
+    {
+      "id": "T028-085",
+      "category": "burst_appointment_request_split",
+      "message": "Mesaj 1: Merhaba\nMesaj 2: uygun bir saate randevu alabilir miyiz?",
+      "expected": {
+        "intent": "appointment_request",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: randevu talebi iki mesaja bölünmüş."
+    },
+    {
+      "id": "T028-086",
+      "category": "burst_cancellation_request_split",
+      "message": "Mesaj 1: Merhaba\nMesaj 2: randevumu iptal etmek istiyorum",
+      "expected": {
+        "intent": "appointment_cancel_request",
+        "reported_safety_signals": {
+          "breathing_difficulty": null,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: iptal talebi iki mesaja bölünmüş."
+    },
+    {
+      "id": "T028-087",
+      "category": "burst_emergency_first_item",
+      "message": "Mesaj 1: Kedim nefes alamıyor\nMesaj 2: sabah kaçta açıksınız",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": true,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: acil durum sinyali patlamanın ilk öğesinde de yakalanmalı."
+    },
+    {
+      "id": "T028-088",
+      "category": "burst_emergency_last_item",
+      "message": "Mesaj 1: Sabah kaçta açıksınız\nMesaj 2: kedim nefes alamıyor",
+      "expected": {
+        "reported_safety_signals": {
+          "breathing_difficulty": true,
+          "loss_of_consciousness": null,
+          "active_seizure": null,
+          "heavy_bleeding": null,
+          "major_trauma": null,
+          "possible_toxin_exposure": null,
+          "possible_foreign_object": null,
+          "unable_to_urinate": null
+        }
+      },
+      "note": "Task 039: acil durum sinyali patlamanın son öğesinde de yakalanmalı."
     }
   ]
 }

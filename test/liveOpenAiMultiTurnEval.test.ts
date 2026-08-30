@@ -52,7 +52,20 @@ function loadCorpus(): EvalCorpus {
   return JSON.parse(readFileSync(filePath, "utf8")) as EvalCorpus;
 }
 
-const PRICING_CHECKED_ON = "2026-08-28";
+function selectEvaluationModels(value: string | undefined = process.env.LIVE_OPENAI_EVAL_MODEL): EvaluationModel[] {
+  if (value === undefined || value.trim() === "") return [...EVALUATION_MODELS].sort() as EvaluationModel[];
+  if (value === "gpt-5.6-luna" || value === "gpt-5.6-terra") return [value];
+  throw new Error("LIVE_OPENAI_EVAL_MODEL must be gpt-5.6-luna or gpt-5.6-terra");
+}
+
+function selectEvaluationCases(cases: EvalCase[], value: string | undefined = process.env.LIVE_OPENAI_EVAL_CASE_ID): EvalCase[] {
+  if (value === undefined || value.trim() === "") return cases;
+  const selected = cases.filter(({ id }) => id === value);
+  if (selected.length !== 1) throw new Error("LIVE_OPENAI_EVAL_CASE_ID must identify exactly one corpus case");
+  return selected;
+}
+
+const PRICING_CHECKED_ON = "2026-08-29";
 const PRICE_USD_PER_1M: Readonly<Record<EvaluationModel, { input: number; output: number }>> = Object.freeze({
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
   "gpt-5.6-terra": { input: 2, output: 12 },
@@ -120,9 +133,10 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
     "runs the synthetic multi-turn corpus against Luna and Terra with bounded concurrency and reports only aggregate metrics",
     async () => {
       const corpus = loadCorpus();
-      const models = [...EVALUATION_MODELS].sort() as EvaluationModel[];
+      const models = selectEvaluationModels();
+      const cases = selectEvaluationCases(corpus.cases);
 
-      const totalPlannedCalls = corpus.cases.length * models.length;
+      const totalPlannedCalls = cases.length * models.length;
       expect(totalPlannedCalls).toBeLessThanOrEqual(HARD_MAX_CALLS_PER_RUN);
 
       const credentials = { OPENAI_API_KEY: process.env.OPENAI_API_KEY };
@@ -155,7 +169,7 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
         const absentSafetyWithOtherSymptom = { matched: 0, total: 0 };
 
         // Bounded concurrency of one: every call is awaited before the next starts.
-        for (const evalCase of corpus.cases) {
+        for (const evalCase of cases) {
           const result = await extractIntakeViaOpenAiForEvaluation(
             evalCase.message,
             SAFETY_IDENTIFIER,
@@ -194,7 +208,10 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
             appointmentInvitation.negativeOrAmbiguous.total += 1;
             if (result.extraction.intent !== "appointment_request") appointmentInvitation.negativeOrAmbiguous.matched += 1;
           }
-          if (evalCase.category === "production_safety_block_absent_with_other_symptom") {
+          if (
+            evalCase.category === "production_safety_block_absent_with_other_symptom" ||
+            evalCase.category === "burst_aggregate_negative_plus_symptom"
+          ) {
             absentSafetyWithOtherSymptom.total += 1;
             if (result.extraction.complaint !== null && result.extraction.symptoms.length > 0) {
               absentSafetyWithOtherSymptom.matched += 1;
@@ -290,6 +307,17 @@ describe.skipIf(!LIVE_MULTITURN_EVAL_ENABLED)("live OpenAI multi-turn intake eva
 });
 
 describe("live multi-turn eval opt-in gate", () => {
+  it("can restrict an approved live run to Luna and rejects unknown models before any call", () => {
+    expect(selectEvaluationModels("gpt-5.6-luna")).toEqual(["gpt-5.6-luna"]);
+    expect(() => selectEvaluationModels("gpt-unknown")).toThrow(/LIVE_OPENAI_EVAL_MODEL/);
+  });
+
+  it("can restrict a separately approved diagnostic run to one known corpus case", () => {
+    const cases = loadCorpus().cases;
+    expect(selectEvaluationCases(cases, "T029-047").map(({ id }) => id)).toEqual(["T029-047"]);
+    expect(() => selectEvaluationCases(cases, "T029-999")).toThrow(/LIVE_OPENAI_EVAL_CASE_ID/);
+  });
+
   it("is skipped unless LIVE_OPENAI_MULTITURN_EVAL=1 and a real OPENAI_API_KEY are both present", () => {
     expect(LIVE_MULTITURN_EVAL_ENABLED).toBe(process.env.LIVE_OPENAI_MULTITURN_EVAL === "1" && HAS_KEY);
     if (process.env.LIVE_OPENAI_MULTITURN_EVAL !== "1" || !HAS_KEY) {
@@ -371,12 +399,17 @@ describe("live multi-turn eval opt-in gate", () => {
       ),
     ).toBe(true);
 
-    const mixed = byCategory("production_safety_block_absent_with_other_symptom");
-    expect(mixed).toHaveLength(1);
-    expect(mixed[0]!.expected).toMatchObject({
-      complaint: expect.any(String),
-      symptoms: expect.arrayContaining([expect.any(String)]),
-    });
+    const mixed = [
+      ...byCategory("production_safety_block_absent_with_other_symptom"),
+      ...byCategory("burst_aggregate_negative_plus_symptom"),
+    ];
+    expect(mixed).toHaveLength(2);
+    for (const evalCase of mixed) {
+      expect(evalCase.expected).toMatchObject({
+        complaint: expect.any(String),
+        symptoms: expect.arrayContaining([expect.any(String)]),
+      });
+    }
 
     for (const category of [
       "production_safety_block_partial_negative",

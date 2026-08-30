@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-28 by Codex.
+Last verified: 2026-08-30 by Codex.
 
 ## Product
 
@@ -743,13 +743,36 @@ occurred.
   proactive invitation, natural affirmative, database-owned slot offer and
   exact-`EVET` confirmation all completed without a Worker/Queue error.
   External veterinarian/legal/KVKK approvals remain open.
-- The appointment engine currently prevents more than one held/confirmed slot
-  per conversation, not per pet across conversations. Confirmed-appointment
-  cancellation and rescheduling are not implemented. Back-to-back inbound
-  WhatsApp messages are separate Queue jobs; optimistic state versioning keeps
-  state safe, but the product does not yet coalesce a short message burst into
-  one AI turn, so duplicate replies, extra model calls or delayed retry are
-  possible under close/concurrent delivery.
+- Task 039 enforces at most one future active appointment per clinic/pet across
+  conversations by serializing hold, confirmation, and cancellation behind the
+  same tenant-scoped pet lock. A natural cancellation request only opens a
+  pinned confirmation; exact raw-text `EVET` atomically releases that exact
+  still-current slot, records the backend-only cancellation audit, completes
+  state/lease work, and writes the fixed reply. Exact `HAYIR`, stale identity,
+  cross-tenant input, and replay paths remain fail-closed. The two rollback
+  fixtures passed on disposable `vetai-test`, and mandatory Claude Opus review
+  passed with no blocker.
+- Eligible direct-AI text jobs now use a three-second Queue delay and bounded,
+  first-message-anchored burst windows: at most four same-conversation messages
+  and 65,536 code points are assembled in order, earlier jobs are completed as
+  `superseded`, and only the representative may call OpenAI and reply. Manual,
+  personal, group, media, historical, confirmation-stage, handoff, and completed
+  content cannot enter the aggregate; overflow routes to truthful no-model
+  human handoff rather than truncating a possible emergency statement.
+- Task 039 prompt `2026-08-28.2` passed the approved Luna-only synthetic gate:
+  88/88 single-turn and 47/47 multi-turn schemas were valid with all mandatory
+  safety, appointment, and cancellation metrics passing. Measured corpus plus
+  one diagnostic cost was USD 0.0780158; three synthetic demonstrations kept
+  total spend below the approved USD 0.50 ceiling. Luna remains selected.
+- The staging lifecycle smoke passed end to end: an existing appointment blocked
+  a second booking, a natural first-message cancellation required exact `EVET`,
+  the slot became available with an audit row, and the same slot was later held
+  and confirmed again only after explicit confirmation. A separate live burst
+  of `Merhaba` followed immediately by `Pamuk kusuyor` produced one safety reply,
+  preserved the pet/complaint through confirmation, and continued into that
+  successful rebooking. Task 039 migrations and Worker are on `vetai-staging`
+  only; production remains untouched. The comprehensive veterinarian and
+  Turkish legal/KVKK packages are still unsigned external approval gates.
 
 ## Context maintenance
 
