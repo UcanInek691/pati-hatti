@@ -98,12 +98,21 @@ every box in this section is checked.
       `wrangler.toml` (primary `vetai-intake` and the new `vetai-intake-dlq`
       consumer added in this task), and the `INTAKE_QUEUE` producer binding.
 - [ ] Set every real secret (`WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`,
-      `WHATSAPP_ACCESS_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
+      `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`, `SUPABASE_SERVICE_ROLE_KEY`,
       `SUPABASE_ANON_KEY`, `OPENAI_API_KEY`) via `wrangler secret put`
       (encrypted secret bindings), never as a `[vars]` entry. **Never paste a
       real secret value into this document, a commit, an issue, or shell
       history** — use the interactive prompt or a piped value from a local,
       untracked file.
+- [ ] Task 040 credential-isolation rollout uses this exact expand-first
+      order: apply `claim_outbound_message_v2`, upload the complete encrypted
+      registry, verify generic `/ready` on an unpublished/canary version,
+      deploy the new Worker, then run one synthetic outbound/status smoke per
+      configured account. Keep the legacy global token only for a named,
+      bounded rollback window. Rollback is Worker-first to Task 039, using the
+      preserved V1 RPC and legacy secret; V2 stays in place. Delete or rotate
+      the legacy token only after every account smoke passes and the rollback
+      window closes.
 - [ ] Configure the Cron trigger (see `[triggers]` in `wrangler.toml`) and the
       Meta webhook subscription URL/verify token to point at the deployed
       Worker.

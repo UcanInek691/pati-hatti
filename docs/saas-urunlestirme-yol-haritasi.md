@@ -248,7 +248,7 @@ olarak uygulanırlar.
 İlk ücretli pilot için Faz 1–6 gerekir. Faz 7'nin otomasyonu ve Faz 8 ilk satış
 için zorunlu değildir.
 
-## 10. Sıradaki görev: Task 040
+## 10. Task 040 (uygulandı)
 
 Task 040 yalnız Faz 1'i uygular:
 

@@ -32,7 +32,7 @@ const env: Env = {
   SUPABASE_ANON_KEY: "test-anon-key",
   OPENAI_API_KEY: "test-openai-key",
   INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
-  WHATSAPP_ACCESS_TOKEN: "test-whatsapp-access-token",
+  WHATSAPP_ACCOUNT_CREDENTIALS_JSON: JSON.stringify([{ whatsapp_account_id: "33333333-3333-3333-3333-333333333333", phone_number_id: "918000001", access_token: "test-access-token" }]),
   WHATSAPP_GRAPH_API_VERSION: "v25.0",
 };
 

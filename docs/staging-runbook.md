@@ -98,11 +98,30 @@ SQL Editor'de bir kez çalıştırıldı. Tüm dosyalar `rollback;` ile bitti,
       şifreli dashboard alanıyla kaydedildi;
       hiçbir zaman izlenen bir dosyadan pipe etme veya bu belgeye/commit'e
       değer yazma:
-      `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`,
+      `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`,
+      `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`,
       `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`,
       `OPENAI_API_KEY`.
       Meta erişim token'ı geçicidir; kalıcı staging/pilot için süreli
       sistem-kullanıcısı token'ı ayrı bir üretim öncesi gereksinimdir.
+
+      **Not (Task 040 sonrası):** Worker artık `WHATSAPP_ACCESS_TOKEN`'ı
+      okumuyor; kod tek bir `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` registry
+      secret'ı bekliyor (`whatsapp_account_id`, `phone_number_id`,
+      `access_token` alanlı, klinik/hesap başına bir JSON kaydı — bkz.
+      [`docs/outbound-delivery.md`](outbound-delivery.md)). Task 040'ın
+      Worker'ını staging'e deploy etmeden önce bu secret'ın
+      `wrangler secret put WHATSAPP_ACCOUNT_CREDENTIALS_JSON --config
+      wrangler.staging.toml` ile ayrıca girilmesi gerekir; tek bir hesabın
+      token'ını yenilemek artık registry'deki o hesabın kaydını güncelleyip
+      secret'ı yeniden yazmak demektir. Geçiş sırası zorunludur: önce V2 RPC
+      migration'ı, sonra yeni encrypted registry secret'ı, unpublished/canary
+      `/ready` kontrolü, yeni Worker deploy'u ve hesap başına sentetik
+      outbound/status smoke. Eski `WHATSAPP_ACCESS_TOKEN` yalnızca süreli
+      rollback penceresinde tutulur; kapı geçince silinir veya döndürülür.
+      Rollback gerekirse önce Task 039 Worker'ı geri yüklenir; bu eski Worker
+      korunmuş V1 RPC'yi ve rollback penceresindeki legacy secret'ı kullanır.
+      V2 için yıkıcı down migration yapılmaz.
 - [x] Yalnızca `vetai-staging` Worker'ını deploy et:
       `wrangler deploy --config wrangler.staging.toml`.
 - [x] Binding'leri doğrula: Queue producer/consumer, Cron tetikleyicisi

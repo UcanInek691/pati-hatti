@@ -42,7 +42,7 @@ unreachable poison work.
 
 ## RPCs
 
-Three `SECURITY INVOKER`, `VOLATILE`, empty-`search_path` functions, granted
+`SECURITY INVOKER`, `VOLATILE`, empty-`search_path` functions, granted
 to `service_role` only (revoked from `PUBLIC`, `anon`, `authenticated`),
 wrapped by `src/outboundDelivery.ts`:
 
@@ -50,7 +50,13 @@ wrapped by `src/outboundDelivery.ts`:
   (`FOR UPDATE OF ... SKIP LOCKED`, so concurrent Cron runs never block on
   each other) and returns `claimed` (with account/recipient/content and the
   new claim token), `exhausted` (a poison row was just terminated — the
-  caller should keep looping), or `empty`.
+  caller should keep looping), or `empty`. Preserved byte-for-byte as a
+  rollback target only; the Worker no longer calls it (Task 040).
+- `claim_outbound_message_v2()` — same body and result contract as
+  `claim_outbound_message()`, plus the claimed row's own
+  `whatsapp_account_id`, which the Worker uses to resolve that exact
+  account's Meta credential (see "Exact-account routing and PII boundary"
+  below). This is the RPC the Worker actually calls (Task 040).
 - `release_outbound_message(p_outbox_id, p_claim_token)` — called after a
   failed Meta send; returns `retry_scheduled`, terminal `failed`, or `stale`
   (token no longer matches the current lease holder).
@@ -70,7 +76,7 @@ per the task contract.
 
 ## Exact-account routing and PII boundary
 
-`claim_outbound_message()` joins `outbound_message_outbox` to
+`claim_outbound_message_v2()` joins `outbound_message_outbox` to
 `whatsapp_accounts` on the same composite tenant-safe key set at insert time
 (Task 017), so a reply always sends from the exact clinic account the
 inbound message arrived on — never a caller-supplied account. The recipient
@@ -78,16 +84,23 @@ phone number and message content never leave the backend: they exist only in
 the outbox row, the Meta API request, and the resulting `messages` row, all
 of which are `service_role`-only with no client-facing RLS policy.
 
+The Worker uses that claimed `whatsapp_account_id` to look up the one
+matching entry in `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` (Task 040) — the
+registry is never trusted to name its own account, only the claimed row is.
+A claimed row whose account has no matching registry entry is released
+without ever calling Meta.
+
 ## Sending
 
-`src/whatsappSend.ts` validates token, Graph API version (`v<integer>.0`),
-numeric phone-number ID, E.164 recipient, and content length locally, then
-sends exactly one text message via native `fetch` with a 30-second request
-timeout:
+`src/whatsappSend.ts` takes the resolved access token as a parameter — it
+never reads a token from `Env` itself (Task 040) — and validates that
+token, Graph API version (`v<integer>.0`), numeric phone-number ID, E.164
+recipient, and content length locally, then sends exactly one text message
+via native `fetch` with a 30-second request timeout:
 
 ```
 POST https://graph.facebook.com/{WHATSAPP_GRAPH_API_VERSION}/{phone_number_id}/messages
-Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}
+Authorization: Bearer {resolved per-account access token}
 Content-Type: application/json
 
 {
@@ -130,13 +143,18 @@ inside `ctx.waitUntil`. Each invocation claims and processes at most 10 rows
 (`MAX_OUTBOUND_ROWS_PER_RUN`), so backlog beyond that drains over multiple
 minutes rather than blocking on one over-long run.
 
-Two `Env` fields: `WHATSAPP_ACCESS_TOKEN` (secret; placeholder only in
-`.dev.vars.example`, real value never committed) and
-`WHATSAPP_GRAPH_API_VERSION` (non-secret, `[vars]` in `wrangler.toml`, set to
-`v25.0`). Before claiming anything, `drainOutboundMessages` validates both are
-present and well-formed; on invalid config it makes zero database or Meta
-calls. All Meta calls in tests are mocked — no real Meta or Supabase call has
-been made by this task.
+Two `Env` fields: `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` (secret; a JSON array
+of up to 10 `{whatsapp_account_id, phone_number_id, access_token}` entries,
+one per pilot clinic's WhatsApp Business account — placeholder only in
+`.dev.vars.example`, real value never committed; see
+[`src/whatsappCredentials.ts`](../src/whatsappCredentials.ts) for the exact
+validation rules, Task 040) and `WHATSAPP_GRAPH_API_VERSION` (non-secret,
+`[vars]` in `wrangler.toml`, set to `v25.0`). Before claiming anything,
+`drainOutboundMessages` validates both are present and well-formed; on
+invalid config it makes zero database or Meta calls. A row claimed for an
+account with no matching registry entry is released and retried like any
+other failed send, never reaching Meta. All Meta calls in tests are mocked —
+no real Meta or Supabase call has been made by this task.
 
 ## Failed rows have no operational owner yet
 

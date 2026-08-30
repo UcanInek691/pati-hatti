@@ -503,6 +503,9 @@ Verified evidence before the context-system change:
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
 - A full staff/admin panel beyond the minimal read/detail/resolve surface.
+- No self-service clinic credential provisioning, dynamic credential broker,
+  or platform-admin secret-management surface exists. Task 040's encrypted
+  pilot registry is deliberately capped at ten WhatsApp accounts.
 - Production deployment and production external-service configuration.
 
 ## Environment constraints
@@ -570,6 +573,24 @@ deployed to staging or production. The next executable gate is a separately
 approved staging migration + Worker deploy followed by one live second-pet
 WhatsApp smoke.
 
+Task 040 (per-account Meta credential isolation) is `COMPLETE` at the
+repository and disposable-database gates as of 2026-08-31. The Worker no
+longer has a runtime path to the single global `WHATSAPP_ACCESS_TOKEN`; it
+requires one fully validated, encrypted `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`
+registry capped at ten accounts. The V2 claim returns the locked outbox row's
+own `whatsapp_account_id` and `phone_number_id` from the existing composite
+tenant join, and the sender resolves only that exact pair. A malformed
+registry claims nothing; a missing exact mapping makes no Meta call and uses
+the bounded existing release/exhaustion/staff-item path. Local verification
+(1,618 tests, two paid eval gates skipped), both Worker dry-runs, Codex review,
+the migration and rollback fixture on disposable `vetai-test` with zero
+residue, catalog ACL/lock checks, and mandatory Claude Opus review all passed.
+The V1 RPC remains only as the Task 039 Worker rollback target. Task 040 has
+not uploaded a registry secret, migrated or deployed staging/production, or
+called Meta. Activation remains a separately approved expand-first staging
+gate with a bounded legacy-secret rollback window and per-account synthetic
+outbound/status smokes.
+
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
 
@@ -600,6 +621,12 @@ occurred.
 ## Durable safety invariants
 
 - Service-role credentials exist only in secure Worker bindings and never in client code.
+- Outbound Meta credentials are selected only from the exact
+  `(whatsapp_account_id, phone_number_id)` pair returned by the locked,
+  tenant-safe outbox claim. The encrypted pilot registry is accepted only as
+  a complete 1–10-entry value; malformed configuration cannot claim work or
+  fall back to another account/global token, and a missing exact pair cannot
+  reach Meta.
 - Anonymous users receive no direct application-table access.
 - Authenticated staff can access only clinics where membership is verified.
 - Cross-tenant relationships are rejected by database constraints even if application code is wrong.

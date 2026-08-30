@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { isWhatsAppCredentialRegistryValid } from "./whatsappCredentials";
 
 export type ReadinessResult = { status: "ready" } | { status: "unavailable" };
 
@@ -52,7 +53,7 @@ export function checkReadiness(env: Env): ReadinessResult {
     if (!isNonPlaceholderString(env.SUPABASE_SERVICE_ROLE_KEY)) return { status: "unavailable" };
     if (!isNonPlaceholderString(env.SUPABASE_ANON_KEY)) return { status: "unavailable" };
     if (!isNonPlaceholderString(env.OPENAI_API_KEY)) return { status: "unavailable" };
-    if (!isNonPlaceholderString(env.WHATSAPP_ACCESS_TOKEN)) return { status: "unavailable" };
+    if (!isWhatsAppCredentialRegistryValid(env.WHATSAPP_ACCOUNT_CREDENTIALS_JSON)) return { status: "unavailable" };
     if (!isNonPlaceholderString(env.WHATSAPP_GRAPH_API_VERSION) || !GRAPH_VERSION_PATTERN.test(env.WHATSAPP_GRAPH_API_VERSION)) {
       return { status: "unavailable" };
     }

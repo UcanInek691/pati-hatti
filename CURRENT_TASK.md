@@ -1,6 +1,6 @@
 # Current task — 040 Per-account Meta credential isolation
 
-Status: `READY`
+Status: `COMPLETE`
 
 Opened by Codex on 2026-08-30 after Task 039 completed every local,
 disposable-database, Claude Opus, paid Luna-eval and real staging WhatsApp
@@ -279,11 +279,246 @@ Production remains untouched throughout Task 040.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence only.
+- Task implementation started from the Task 040 contract commit
+  `3256718 docs: define SaaS roadmap and credential isolation task`; the only
+  other pending change (`M .gitignore`) predates this task and was left
+  untouched throughout.
+- `supabase/migrations/` ended at `20260829000200_inbound_message_bursts.sql`
+  and `supabase/tests/` ended at `039_inbound_message_bursts.sql` (Task 039);
+  there was no prior Task 040 migration or fixture, confirmed by directory
+  listing before writing the new files.
+- Pre-Task-040, `src/env.ts` declared a single `WHATSAPP_ACCESS_TOKEN: string`
+  field and `src/whatsappSend.ts` read it directly from `Env` to build the
+  `Authorization` header; `src/outboundDelivery.ts` exposed only
+  `claim_outbound_message()` (no `whatsapp_account_id` in its result); there
+  was exactly one WhatsApp credential in the whole system, confirmed by
+  grepping `src/` for `WHATSAPP_ACCESS_TOKEN` before making any change.
+- `outbound_message_outbox` already carried `whatsapp_account_id` (added in
+  the Task 017/029 lineage) and `whatsapp_accounts` already had a unique
+  `phone_number_id`; no schema change to either table was needed — only a
+  new RPC that also selects and returns `whatsapp_accounts.phone_number_id`,
+  confirmed by reading both table definitions before writing the migration.
+- Self-caught defect while writing `test/whatsappCredentials.test.ts` (not a
+  pre-existing production bug): the module's own `ACCOUNT_ID_PATTERN` is
+  intentionally case-sensitive (rejects uppercase), but the test's
+  `accountA`/`accountB` constants (`"11111111-…"`, `"22222222-…"`) contain no
+  hex letters, so `accountA.toUpperCase()` was a no-op and the "rejects an
+  uppercase whatsapp_account_id" case asserted `false` against an
+  accidentally-still-valid id. Caught by the `pnpm test` run in this same
+  session (1 failing test), fixed by using a literal id containing a hex
+  letter (`"…11111111111a".toUpperCase()`) so the case actually exercises
+  case-sensitivity; rerun was fully green. `src/whatsappCredentials.ts`
+  itself needed no change.
+- Two other self-caught issues while authoring the same new test file, fixed
+  before any test run: a raw invisible control byte (`\x07`) typed directly
+  into a string literal instead of `String.fromCharCode(7)` (found via a
+  `python3 repr()` inspection after an `Edit` string-match silently failed),
+  and one test scenario (`"a non-plain entry and hidden extra columns"`)
+  that was provably untestable through this module's real input surface —
+  the function only ever receives a JSON string, and `JSON.parse` always
+  yields plain, fully-enumerable objects, so neither a null-prototype nor a
+  non-enumerable extra key survives the JSON round-trip — deleted rather
+  than kept as a vacuous assertion.
 
 ## Delivery record
 
-To be filled by the implementing agent. Do not change Status.
+### Changed files
+
+- New, **NOT RUN against any database**:
+  `supabase/migrations/20260830000100_per_account_whatsapp_credentials.sql`
+  (adds `claim_outbound_message_v2()`, byte-for-byte reuse of
+  `claim_outbound_message()`'s lock/lease/retry body plus a
+  `whatsapp_accounts` join for `whatsapp_account_id`/`phone_number_id`;
+  `claim_outbound_message()` itself is untouched, preserved only as a
+  rollback target), `supabase/tests/040_per_account_whatsapp_credentials.sql`
+  (rollback-only fixture: cross-tenant claim isolation, expiry/reclaim,
+  attempt exhaustion, and grant/rollback-compatibility checks across two
+  synthetic clinics/accounts).
+- New: `src/whatsappCredentials.ts` (`isWhatsAppCredentialRegistryValid`,
+  `resolveWhatsAppAccessToken` — validates and reads the
+  `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` registry: ≤5000 bytes, 1–10 entries,
+  exactly 3 keys per entry, lowercase-UUID account id, numeric phone number
+  id, 1–1024-code-point trimmed control-character-free token, no duplicate
+  account or phone ids), `test/whatsappCredentials.test.ts`.
+- Narrow edits: `src/env.ts` (`WHATSAPP_ACCESS_TOKEN` replaced with
+  `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`), `src/outboundDelivery.ts` (added
+  `claimOutboundMessageV2`/`ClaimOutboundMessageV2Result` alongside the
+  unchanged V1 `claimOutboundMessage`), `src/outboundSender.ts`
+  (`drainOutboundMessages` now calls `claimOutboundMessageV2`, resolves the
+  claimed account's credential via `resolveWhatsAppAccessToken`, and releases
+  without ever calling Meta when no matching entry exists),
+  `src/whatsappSend.ts` (`sendWhatsAppTextMessage` now takes the resolved
+  access token as a parameter instead of reading `Env` directly),
+  `src/readiness.ts` (delegates to
+  `isWhatsAppCredentialRegistryValid`), and the corresponding test files
+  (`test/outboundDelivery.test.ts`, `test/outboundSender.test.ts`,
+  `test/whatsappSend.test.ts`, `test/readiness.test.ts`).
+- Mechanical env-fixture rename only (single field, no other change) across
+  14 test files not in the Allowed-changes list but requiring the update to
+  keep their existing `Env` fixtures typechecking:
+  `test/appointmentEngine.test.ts`, `test/appointmentFlow.test.ts`,
+  `test/clinicOperations.test.ts`, `test/contactAutomation.test.ts`,
+  `test/conversationState.test.ts`, `test/index.test.ts`,
+  `test/intakeConsumer.test.ts`, `test/intakeDeadLetter.test.ts`,
+  `test/intakeJobLease.test.ts`, `test/openaiIntake.test.ts`,
+  `test/staffPage.test.ts`, `test/supabaseIngest.test.ts`,
+  `test/supabaseOutboundStatus.test.ts`, `test/whatsappIngest.test.ts`.
+- `.dev.vars.example`: `WHATSAPP_ACCESS_TOKEN=[…]` replaced with the
+  `WHATSAPP_ACCOUNT_CREDENTIALS_JSON=[{...}]` placeholder shape. No secret
+  value was set or uploaded anywhere.
+- Docs (narrow, targeted edits, not rewrites): `docs/outbound-delivery.md`
+  (RPCs, exact-account routing/PII boundary, sending, and cron
+  cadence/config sections updated for the V2 RPC and credential registry),
+  `docs/production-readiness.md` (secret checklist entry renamed),
+  `docs/staging-runbook.md` (added a forward-looking note after the existing,
+  untouched historical secret-setup record, describing the future
+  per-account rotation procedure — the historical `[x]` checklist entries
+  from the real past staging session were left verbatim), and
+  `docs/saas-urunlestirme-yol-haritasi.md` (§10 heading only, marked Task 040
+  implemented; no other content changed).
+- Untouched, out of scope: `wrangler.toml`, `wrangler.staging.toml` (neither
+  ever referenced either env var name — `WHATSAPP_GRAPH_API_VERSION` is
+  their only WhatsApp-related var, unaffected), the user's pre-existing
+  `.gitignore` change, `PROJECT_CONTEXT.md`.
+
+### Verification run this session
+
+- `pnpm install --frozen-lockfile` → `Already up to date`.
+- `pnpm typecheck` → clean, no errors.
+- `pnpm test` → first run: **1611 passed, 1 failed, 2 skipped** (1614
+  total); the one failure was the self-introduced test-authoring defect in
+  `test/whatsappCredentials.test.ts` described above (source code was
+  correct throughout). After fixing the test, rerun: **1612 passed, 0
+  failed, 2 skipped** (1614 total). The 2 skipped are the pre-existing
+  `test/liveOpenAiEval.test.ts` / `test/liveOpenAiMultiTurnEval.test.ts`
+  live-eval suites, correctly skipped since no real OpenAI call was made.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+  succeeded; bindings unchanged except `WHATSAPP_GRAPH_API_VERSION` shown as
+  before (`WHATSAPP_ACCESS_TOKEN` was never a `[vars]`/binding entry, so
+  wrangler's binding list is unaffected by its removal from `Env`).
+- `pnpm exec wrangler deploy --dry-run --config wrangler.staging.toml --outdir .wrangler/dry-run-staging` →
+  succeeded, same shape.
+- `git diff --check` → exit 0, no whitespace errors (only benign LF→CRLF
+  autocrlf notices on Windows).
+- No real Supabase, Cloudflare, Meta or OpenAI call was made. No commit,
+  push, deploy or secret upload was performed. Both new SQL files remain
+  `NOT RUN` against any database — verified only by exhaustive manual
+  cross-referencing against the real table/RPC definitions in
+  `supabase/migrations/`.
+
+### Checks intentionally not run
+
+- The disposable-database migration + rollback-fixture run, the Claude Opus
+  security/tenant/secret-boundary review, and any real staging WhatsApp
+  activation listed under "Required verification and review gates" were not
+  run — this task's contract reserves them for a separately authorized
+  follow-up, and the task instructions for this session forbid running any
+  migration or SQL fixture against any database or calling any real
+  Cloudflare/Supabase/Meta/OpenAI service.
+
+### Risks for Codex/Claude Opus review
+
+- The new `supabase/tests/040_per_account_whatsapp_credentials.sql` fixture
+  has never been executed — its correctness rests entirely on manual
+  cross-referencing against the real migration files in this session. It
+  should be run against a disposable database before being trusted.
+- `src/outboundSender.ts`'s new not-found-credential path releases the row
+  (`releaseOutboundMessage`) rather than failing it terminally; a
+  permanently-misconfigured account will retry up to
+  `MAX_OUTBOUND_DELIVERY_ATTEMPTS` and then reach the existing terminal
+  `failed` state like any other repeated Meta failure — worth confirming
+  this is the intended failure mode for a missing/never-configured
+  credential versus a distinct terminal state.
+- `claim_outbound_message()` (V1) is intentionally left reachable (grants
+  unchanged) solely as a rollback target; nothing in this task's scope
+  removes the old `WHATSAPP_ACCESS_TOKEN`-shaped code path from the Worker's
+  git history, so a rollback deploy would need the old secret to still
+  exist in Cloudflare — worth confirming that secret has not already been
+  deleted.
+
+### Codex review record — 2026-08-31
+
+Verdict: **PASS for code, local verification, and disposable-database
+validation; mandatory Claude Opus read-only review still pending.**
+
+Codex reviewed the complete credential parser, V1/V2 claim bodies, outbound
+claim→credential→Meta→accept/release path, readiness boundary, tests, docs,
+and all mechanical Env-fixture changes. Four minimum corrections were made:
+
+1. Token control-character validation now rejects the complete Unicode `Cc`
+   category, including C1 controls, instead of only C0 plus DEL.
+2. Focused tests now prove the 5,000-byte ceiling uses UTF-8 bytes, registry
+   order cannot change exact-pair resolution, and one malformed later entry
+   invalidates the whole registry.
+3. A sender test now proves two different phone-number IDs use two different
+   endpoints and exact Authorization tokens.
+4. The staging and production runbooks now carry the complete expand-first,
+   bounded-rollback sequence. The legacy token is retained only until the
+   per-account smoke gate and rollback window close, not deleted immediately
+   after migration.
+
+Independent local verification after those corrections:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+focused Vitest                   -> PASS; 5 files, 243 tests
+pnpm test                        -> PASS; 34 files, 1,618 passed,
+                                     2 paid eval gates skipped
+production Wrangler dry-run      -> PASS; no deploy, bindings unchanged
+staging Wrangler dry-run         -> PASS; no deploy, bindings unchanged
+git diff --check                 -> PASS; line-ending notices only
+```
+
+Disposable database evidence:
+
+- Target was explicitly verified as `vetai-test`
+  (`cyjpiapxvalqltcsywam`), using a separate temporary CLI workdir; the
+  repository remained linked to `vetai-staging` and staging/production were
+  untouched.
+- Pre-check: migration history ended at `20260829000600` and
+  `claim_outbound_message_v2()` did not exist.
+- `20260830000100_per_account_whatsapp_credentials.sql` applied successfully
+  through the management-backed SQL query path. As with prior disposable SQL
+  Editor validation, this intentionally did not add a migration-history row.
+- `supabase/tests/040_per_account_whatsapp_credentials.sql` returned `PASS`;
+  all seven fixture-residue counts were `0`.
+- Post-apply catalog checks proved `SECURITY INVOKER`, `VOLATILE`, empty
+  `search_path`, exact eight-column result shape, composite tenant join,
+  `FOR UPDATE OF o SKIP LOCKED`, no `PUBLIC`/`anon`/`authenticated` execute,
+  and `service_role` execute.
+
+No secret was read, written, printed, uploaded, rotated, or returned. No real
+Meta/OpenAI call, Worker deploy, staging/production migration, commit, or push
+occurred. The remaining repository gate is the mandatory Claude Opus review
+of tenant/secret isolation, retry semantics, grants, rollback, and operational
+rotation; staging activation remains a later explicit user-approval step.
+
+### Claude Opus read-only review and closure — 2026-08-31
+
+Verdict: **PASS.** Opus independently verified the complete registry
+fail-closed boundary, exact-pair/order-independent resolution, absence of
+secret/log leakage, V1/V2 SQL equivalence, composite tenant isolation,
+service-role-only grants, Worker-only V2 call path, bounded missing-credential
+release behavior, expand-first rollback plan, and the non-vacuous SQL fixture.
+No production-code, schema, RLS, or architecture correction was required.
+
+One low-severity test weakness was closed before commit: the 11-entry registry
+case previously generated an invalid 11th UUID, so it could pass without
+independently exercising `MAX_ENTRIES = 10`. It now uses eleven valid,
+distinct lowercase UUIDs and passes. The remaining Opus notes are accepted
+non-blockers: non-ASCII format characters remain allowed because the contract
+deliberately treats Meta tokens as opaque (any unsupported header still fails
+closed); V1 remains intentionally available during the bounded rollback
+window; `/ready` validates registry shape rather than database coverage, which
+is why per-account smokes are mandatory; fixture failure details contain only
+synthetic disposable data; and the global ten-row drain ceiling can delay but
+not starve healthy accounts because releases receive a two-minute backoff.
+
+Task 040 has passed its repository, disposable-database, Codex, and mandatory
+Opus gates. Staging/production activation, secret upload/rotation, migration,
+deploy, and real Meta smoke remain separately authorized work and were not
+performed here.
 
 ---
 

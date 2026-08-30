@@ -33,9 +33,10 @@ export async function sendWhatsAppTextMessage(
   phoneNumberId: string,
   recipientE164: string,
   content: string,
+  accessToken: string,
   env: Env,
 ): Promise<SendWhatsAppTextMessageResult> {
-  if (!env.WHATSAPP_ACCESS_TOKEN.trim()) return FAILED;
+  if (!accessToken.trim()) return FAILED;
   if (!GRAPH_VERSION_PATTERN.test(env.WHATSAPP_GRAPH_API_VERSION)) return FAILED;
   if (!PHONE_NUMBER_ID_PATTERN.test(phoneNumberId)) return FAILED;
   if (!E164_PATTERN.test(recipientE164)) return FAILED;
@@ -54,7 +55,7 @@ export async function sendWhatsAppTextMessage(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,
+        authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",

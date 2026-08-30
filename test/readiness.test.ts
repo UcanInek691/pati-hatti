@@ -13,7 +13,9 @@ function validEnv(): Env {
     SUPABASE_ANON_KEY: "anon-key-abc123",
     OPENAI_API_KEY: "sk-abc123",
     INTAKE_QUEUE: { send: async () => {} } as unknown as Queue<IntakeQueueMessage>,
-    WHATSAPP_ACCESS_TOKEN: "access-token-abc123",
+    WHATSAPP_ACCOUNT_CREDENTIALS_JSON: JSON.stringify([
+      { whatsapp_account_id: "11111111-1111-1111-1111-111111111111", phone_number_id: "918000001", access_token: "access-token-abc123" },
+    ]),
     WHATSAPP_GRAPH_API_VERSION: "v25.0",
   };
 }
@@ -76,7 +78,6 @@ describe("checkReadiness: presence/placeholder/whitespace", () => {
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_ANON_KEY",
     "OPENAI_API_KEY",
-    "WHATSAPP_ACCESS_TOKEN",
   ] as const;
 
   it.each(plainStringFields)("%s missing (empty) -> unavailable", (field) => {
@@ -101,6 +102,19 @@ describe("checkReadiness: presence/placeholder/whitespace", () => {
     "[openai-api-key]",
   ])("a placeholder-looking value (%s) -> unavailable", (placeholder) => {
     expect(checkReadiness({ ...validEnv(), OPENAI_API_KEY: placeholder })).toEqual({ status: "unavailable" });
+  });
+});
+
+describe("checkReadiness: WHATSAPP_ACCOUNT_CREDENTIALS_JSON", () => {
+  // Full registry validation is exhaustively covered by whatsappCredentials.test.ts;
+  // this only proves checkReadiness delegates to it and fails closed.
+  it.each([
+    { label: "empty", value: "" },
+    { label: "whitespace", value: "   " },
+    { label: "not JSON", value: "not-json" },
+    { label: "empty array", value: "[]" },
+  ])("$label -> unavailable", ({ value }) => {
+    expect(checkReadiness({ ...validEnv(), WHATSAPP_ACCOUNT_CREDENTIALS_JSON: value })).toEqual({ status: "unavailable" });
   });
 });
 
