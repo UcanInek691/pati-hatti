@@ -1,4 +1,293 @@
-# Current task — 039 Per-pet appointment lifecycle and burst-safe messaging
+# Current task — 040 Per-account Meta credential isolation
+
+Status: `READY`
+
+Opened by Codex on 2026-08-30 after Task 039 completed every local,
+disposable-database, Claude Opus, paid Luna-eval and real staging WhatsApp
+gate. The shared SaaS direction is recorded in
+`docs/saas-urunlestirme-yol-haritasi.md`.
+
+The current outbound sender still reads one global Worker secret,
+`WHATSAPP_ACCESS_TOKEN`. That is safe only while the platform has one active
+WhatsApp account. A second clinic would either use the first account's token
+or fail to send. This task removes that single-account assumption without
+adding an admin panel, billing engine or provisioning workflow.
+
+## Goal
+
+1. Select the Meta access token from the exact tenant-bound WhatsApp account
+   claimed with each outbound row.
+2. Keep every token outside source code, Git, Supabase tables, logs, error
+   bodies and test artefacts.
+3. Prove with two synthetic clinics/accounts that neither account can use the
+   other's credential, including malformed/missing/mismatched configuration.
+4. Preserve the existing at-least-once outbox lease, retry, acceptance,
+   delivery-status and staff-work-item semantics.
+5. Provide a safe expand-first rollout and rollback path for a later,
+   separately authorized staging activation. Production remains untouched.
+
+## Fixed architecture decisions
+
+### A. Pilot credential container
+
+1. Replace runtime use of the single `WHATSAPP_ACCESS_TOKEN` with one encrypted
+   Worker secret named `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`.
+2. The secret is a JSON array. Each element has exactly these three keys:
+   - `whatsapp_account_id`: canonical lowercase UUID;
+   - `phone_number_id`: Meta's 1–64 digit phone-number ID;
+   - `access_token`: opaque, trimmed secret text of 1–1,024 code points.
+3. The array is a deliberately small pilot-scale registry, not a general
+   secret database. It must reject:
+   - non-array roots, arrays outside 1–10 entries, or raw UTF-8 JSON over
+     5,000 bytes (Cloudflare's current per-Worker variable limit is 5 KB);
+   - non-plain entries, missing/extra keys and invalid values;
+   - duplicate `whatsapp_account_id` values;
+   - duplicate `phone_number_id` values;
+   - a token containing control characters or surrounding whitespace.
+4. Any malformed registry invalidates the whole registry. The runtime must not
+   partially accept a prefix and must not fall back to another account or to
+   the legacy global token.
+5. The parser/resolver is pure, deterministic, bounded and has no logging. It
+   never returns the full registry to application call sites; it resolves one
+   exact account-ID/phone-ID pair to one token or a closed failure.
+6. The token stays an opaque string. Do not encode assumptions about a current
+   Meta token prefix, because Meta may change its format.
+7. Cloudflare Secrets Store is not used as a dynamic lookup table in this
+   task. Its Worker integration binds named secrets statically at deploy time;
+   a database `credential_ref` cannot select an arbitrary binding at runtime.
+   A future migration to static per-secret bindings or a dedicated broker
+   requires a separately reviewed task and measured operational need. The
+   registry is therefore capped at ten WhatsApp accounts; clinic eleven is a
+   mandatory architecture-migration gate, not an invitation to raise the cap.
+
+### B. Tenant-bound database claim
+
+1. Add an expand-only RPC named `claim_outbound_message_v2`; do not replace or
+   drop the existing `claim_outbound_message` in this task.
+2. V2 reuses the reviewed SQL body and lock semantics unchanged, but returns
+   one additional `whatsapp_account_id` column from the same composite join:
+   `outbound_message_outbox (whatsapp_account_id, clinic_id)` to
+   `whatsapp_accounts (id, clinic_id)`.
+3. The returned account UUID and phone-number ID must come from that locked,
+   tenant-safe claim path, never from a Worker request, recipient, route row,
+   model output or caller parameter.
+4. `src/outboundDelivery.ts` must call only V2 and strictly validate the new
+   eight-field response. Empty/exhausted rows require every nullable output,
+   including the account ID, to be exactly null.
+5. Keep the old RPC solely so the previously deployed Worker remains a valid
+   rollback target. New Worker code must not call it.
+
+### C. Send and failure behavior
+
+1. `drainOutboundMessages` validates the credential registry before claiming
+   any row. A globally malformed/missing registry causes zero claims and zero
+   Meta calls.
+2. After a valid claim, resolve credentials using the exact pair
+   `(whatsappAccountId, phoneNumberId)`. A missing or mismatched mapping causes
+   zero Meta calls and releases that exact claim through the existing retry
+   RPC. Existing database attempt exhaustion and delivery-failure staff work
+   item behavior remains the terminal path.
+3. `sendWhatsAppTextMessage` receives only the one resolved token needed for
+   that call. It must not receive or parse the full registry.
+4. Authorization must be `Bearer <that exact account token>`. Tests prove two
+   different claims produce their own headers and endpoints. Tests must use
+   obviously synthetic tokens and IDs.
+5. Accepted, already-accepted, stale, retry-scheduled and exhausted behavior is
+   unchanged. This task does not claim exactly-once delivery.
+6. No code path may log or return a token, registry, Authorization header,
+   recipient, message body or Meta response body. Existing fixed aggregate
+   logs may remain.
+7. `/ready` validates presence and full shape of the new registry and reports
+   only the existing generic `ready`/`unavailable` result. It must not expose
+   which account is missing, the registry count or any identifier.
+
+### D. Configuration, rotation and rollback
+
+1. `Env` and `.dev.vars.example` use
+   `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`; production/staging Wrangler TOML files
+   contain no plaintext registry or token.
+2. Remove runtime references to `WHATSAPP_ACCESS_TOKEN`. Existing test fixtures
+   may be mechanically renamed, but no real or production-like token enters
+   the repository.
+3. Document this future rollout order:
+   1. apply the expand-only V2 RPC migration;
+   2. upload the new encrypted registry secret;
+   3. verify `/ready` on an unpublished/canary version;
+   4. deploy the new Worker;
+   5. run one account at a time through a synthetic outbound/status smoke;
+   6. retain the old global secret only during the bounded rollback window;
+   7. after the gate passes, delete/rotate the old global token.
+4. Rollback is Worker-first: redeploy the Task 039 Worker, which can still call
+   the retained V1 RPC and legacy secret during the rollback window. The V2
+   RPC may remain unused; no destructive down migration is needed.
+5. Changing one clinic's token initially requires atomically replacing the
+   encrypted JSON secret. The complete registry is validated before deploy;
+   no partial registry activation is permitted. This operational limitation is
+   documented and measured before choosing a more complex secret backend.
+6. The implementing agent performs no secret upload, staging/production
+   migration, Meta call, deploy, resource creation, commit or push.
+
+### E. Scope boundaries
+
+This task does **not** add or change:
+
+- clinic provisioning/offboarding UI or Embedded Signup;
+- platform-admin roles, break-glass access or an `/admin` page;
+- usage metering, tariff, campaign, quota, invoice or payment behavior;
+- `/staff` visual design, composer, notification or appointment UI;
+- inbound extraction, prompts, model choice, safety rules or Turkish copy;
+- Meta application settings, WABA ownership or real account tokens;
+- production resources or configuration.
+
+No paid OpenAI eval is required: prompt, extraction schema, model and safety
+behavior are untouched.
+
+## Required implementation
+
+### Part 1 — Database expansion
+
+1. Add
+   `supabase/migrations/20260830000100_per_account_whatsapp_credentials.sql`
+   with `public.claim_outbound_message_v2()`.
+2. Preserve V1 byte-for-byte. V2 uses `SECURITY INVOKER`, empty `search_path`,
+   service-role-only execute grants, the same `FOR UPDATE OF o SKIP LOCKED`,
+   oldest-due ordering, retry/exhaustion limits and five-minute lease.
+3. Add `supabase/tests/040_per_account_whatsapp_credentials.sql`, wrapped in
+   `BEGIN`/`ROLLBACK`, proving:
+   - two clinics and two WhatsApp accounts return the matching account ID and
+     phone-number ID;
+   - composite tenant joins cannot cross accounts;
+   - empty, exhausted and reclaimed states preserve the existing contract;
+   - anon/authenticated/public cannot call V2;
+   - service_role can call it;
+   - fixture residue is zero.
+4. A one-session SQL fixture may document that it cannot prove real lock
+   blocking. Source lock-order semantics and any structural regression
+   assertion must be stated honestly.
+
+### Part 2 — Strict registry boundary
+
+1. Add `src/whatsappCredentials.ts` with the bounded parser and exact resolver.
+2. Add `test/whatsappCredentials.test.ts` covering every malformed shape,
+   duplicate, trust-boundary and exact-pair case, including two-clinic
+   positive/negative mappings.
+3. Avoid dependencies, schema libraries, crypto, caching layers or a generic
+   secret abstraction. Standard `JSON.parse`, existing validation patterns and
+   a short linear scan are sufficient at pilot scale.
+
+### Part 3 — Outbound wiring
+
+1. Update `src/outboundDelivery.ts`, `src/outboundSender.ts`,
+   `src/whatsappSend.ts`, `src/env.ts` and `src/readiness.ts` as fixed above.
+2. Update focused tests for V2 response parsing, credential selection, missing
+   mapping release, exact Authorization header, zero-call fail-closed paths,
+   generic readiness and no sensitive logging.
+3. Existing Env fixtures may receive only the mechanical binding replacement
+   needed to compile; their behavior must not otherwise change.
+
+### Part 4 — Documentation
+
+Narrowly update:
+
+- `.dev.vars.example` with a clearly synthetic JSON example;
+- `docs/outbound-delivery.md` with credential selection and failure semantics;
+- `docs/production-readiness.md` with the rollout/rollback gate;
+- `docs/staging-runbook.md` with the future staging secret-rotation procedure
+  and removal of stale global-token language;
+- `docs/saas-urunlestirme-yol-haritasi.md` only to mark Task 040 implemented,
+  not to redesign later phases;
+- `CURRENT_TASK.md` only in **Observed context** and **Delivery record**.
+
+## Allowed changes
+
+- `supabase/migrations/20260830000100_per_account_whatsapp_credentials.sql`
+  (new)
+- `supabase/tests/040_per_account_whatsapp_credentials.sql` (new)
+- `src/whatsappCredentials.ts` (new)
+- `src/env.ts`
+- `src/outboundDelivery.ts`
+- `src/outboundSender.ts`
+- `src/whatsappSend.ts`
+- `src/readiness.ts`
+- `test/whatsappCredentials.test.ts` (new)
+- `test/outboundDelivery.test.ts`
+- `test/outboundSender.test.ts`
+- `test/whatsappSend.test.ts`
+- `test/readiness.test.ts`
+- existing `test/*.test.ts` files only for a mechanical Env-fixture binding
+  rename; no assertion or behavior change outside the focused five files
+- `.dev.vars.example`
+- `docs/outbound-delivery.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` only in **Observed context** and **Delivery record**
+
+Anything else is out of scope. The pre-existing `.gitignore` working-tree
+change is user-owned and must remain untouched/uncommitted.
+
+## Acceptance criteria
+
+1. No new Worker runtime path reads `WHATSAPP_ACCESS_TOKEN`; outbound delivery
+   requires `WHATSAPP_ACCOUNT_CREDENTIALS_JSON`.
+2. No token or registry value is stored in SQL, source, docs, Git diff, logs,
+   returned errors or generated build artefacts.
+3. V2 returns the exact internal WhatsApp account ID from the same tenant-safe
+   composite join as the phone-number ID and outbox row.
+4. A claim for clinic/account A can select only A's exact credential; B's token
+   is never used for A under missing, reordered, duplicated or mismatched
+   configuration.
+5. Globally malformed configuration claims nothing. A valid registry missing
+   one claimed account sends nothing and safely releases only that row.
+6. Meta send acceptance and database acceptance still use the same claim token
+   and retain the existing at-least-once limitation.
+7. `/ready` is unavailable for a malformed/missing registry and reveals no
+   account-level detail.
+8. The old claim RPC remains callable by the old Worker for rollback, while the
+   new Worker statically calls only V2.
+9. All new SQL objects are RLS/grant-compatible and service-role-only as
+   specified; the disposable fixture passes with zero residue.
+10. Existing inbound, AI, appointment, staff, selective-automation and status
+    behavior remains unchanged.
+
+## Required verification and review gates
+
+The implementer runs:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --dry-run --config wrangler.staging.toml --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+The implementer does not apply migrations or run SQL fixtures against any
+database. Codex must then:
+
+1. review the complete diff and outbound call path;
+2. rerun the required commands;
+3. apply the migration and run the Task 040 rollback fixture only on disposable
+   `vetai-test`;
+4. request a mandatory read-only Claude Opus security/tenant/secret review;
+5. close findings, update `PROJECT_CONTEXT.md`, and commit only after PASS.
+
+Staging secret upload, staging migration/deploy and any real Meta send are a
+separate explicit user-approval gate after the repository task is committed.
+Production remains untouched throughout Task 040.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementing agent. Do not change Status.
+
+---
+
+# Previous task — 039 Per-pet appointment lifecycle and burst-safe messaging
 
 Status: `COMPLETE` (closed 2026-08-30 after local, disposable-database,
 mandatory Claude Opus, paid Luna-eval, and real staging WhatsApp gates passed;

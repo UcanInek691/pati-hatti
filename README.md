@@ -10,6 +10,7 @@ WhatsApp üzerinden çalışan dijital resepsiyon ve randevu sisteminin Cloudfla
   ([PDF](output/pdf/kvkk-inceleme-paketi.pdf))
 - [Üretime hazırlık kontrol listesi](docs/production-readiness.md)
 - [Staging kurulum ve gerçek kanıt runbook'u](docs/staging-runbook.md)
+- [SaaS ürünleştirme ve ticari yol haritası](docs/saas-urunlestirme-yol-haritasi.md)
 
 ## Gereksinimler
 

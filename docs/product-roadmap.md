@@ -2,6 +2,11 @@
 
 Son karar tarihi: 2026-08-13.
 
+> Bu belge tarihsel ürün/görev kaydını korur. Task 039 sonrası çok-kiracılı
+> SaaS, panel, fiyatlandırma ve production sırası için güncel karar belgesi
+> [`saas-urunlestirme-yol-haritasi.md`](saas-urunlestirme-yol-haritasi.md)'dir.
+> Aktif uygulama sözleşmesi yine kökteki `CURRENT_TASK.md` dosyasıdır.
+
 Bu belge ürün geliştirme sırasını, gerçek servis doğrulamalarını, personel
 operasyonu kararını, model seçim kapısını, maliyet varsayımlarını ve ilk fiyat
 hipotezini tek yerde tutar. Bir üretim onayı veya hukuk/veteriner onayı değildir.
