@@ -295,12 +295,20 @@ return no prior question. This is not a user-text phrase classifier: positive
 intent still has to be recognized by the model, while all existing appointment
 and safety guards remain authoritative.
 
-For each successful production extraction, the consumer may write one fixed
-`openai_usage` structured log containing only model name and validated
-non-negative input/output/total token counts. Missing or malformed usage is
-treated as `null` without rejecting an otherwise valid extraction. The log
-contains no message, previous question, owner/pet/conversation/provider id,
-safety identifier, API key, provider body or monetary estimate.
+For each successful production extraction, the consumer records one append-only
+row to the `clinic_ai_usage_events` ledger (Task 042) via
+`record_intake_ai_usage_v1`, containing only model name, prompt version and
+validated non-negative input/output/total token counts, keyed by a SHA-256
+hash of the source event rather than the source event itself. A retried
+logical turn (same source event reprocessed) is deduplicated by that hash
+even if the provider was called again; it is not deduplicated by the token
+usage. Missing or malformed usage is treated as `null` without rejecting an
+otherwise valid extraction. The ledger contains no message, previous
+question, owner/pet/conversation/provider id, safety identifier, API key,
+provider body or monetary estimate. `get_clinic_monthly_usage_v1` is available
+only to `service_role` and cannot be called from a browser; the browser-visible
+exception is the aggregated, allowlist-protected platform-wide
+`get_platform_admin_overview_v1` RPC (Task 043).
 
 The revised synthetic corpora cover invitation replies, refusals, typos,
 mixed symptom/appointment requests and aggregate safety answers. On

@@ -166,6 +166,18 @@ verilmez. Normal `SELECT` politikalarına basitçe `OR is_platform_admin()`
 eklenmez; bu yaklaşım her okumayı güvenilir biçimde loglamaz ve izolasyonu
 gereksiz yere genişletir.
 
+**Durum (Task 043):** Bu listenin yalnız salt-okunur alt kümesi teslim edildi
+— klinik adı/durumu, WABA/telefon hesap sayısı, açık/acil iş sayaçları,
+outbound teslim durumu sayaçları, son inbound/outbound zamanı ve aylık
+kullanım toplamları
+([`platform-admin-overview.md`](platform-admin-overview.md)). Plan/özel
+fiyat metadata'sı ile provizyon, askıya alma ve offboarding adımları bu
+panele henüz eklenmedi; klinik yaşam döngüsü mutasyonları hâlâ ayrı bir
+operatör akışından yürütülüyor ([`clinic-lifecycle.md`](clinic-lifecycle.md)).
+Migration ve rollback kanıtı yalnız disposable `vetai-test` üzerinde geçti;
+staging/production etkinleştirmesi ve ilk gerçek platform-yönetici üyeliği
+henüz yapılmadı. Zorunlu Opus incelemesi dar düzeltmelerden sonra `PASS` verdi.
+
 ## 7. Kullanım, tarife ve faturalama
 
 ### 7.1 Ölçüm birimleri

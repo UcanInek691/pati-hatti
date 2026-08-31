@@ -932,3 +932,54 @@ This is measurement only: no currency amount, plan, quota, or runtime
 enforcement is introduced. See [`docs/usage-metering.md`](usage-metering.md)
 for the full contract, the internal-cost-versus-billing distinction, and the
 offboarding export requirement.
+
+## Platform-admin overview allowlist and cross-clinic RPC (Task 043)
+
+`supabase/migrations/20260831000300_platform_admin_overview.sql` and
+`supabase/tests/043_platform_admin_overview.sql`. The implementer did not
+apply or run them. Codex later applied the migration only to disposable
+`vetai-test`; the corrected rollback fixture passed and every fixed-ID fixture
+row was confirmed absent afterward. Staging and production remain unchanged;
+the mandatory read-only Opus review passed after the clinic-name invariant and
+two documentation boundaries were corrected.
+
+A new `public.platform_admins` table is a bare allowlist: `user_id` (primary
+key, references `auth.users(id) on delete cascade`) and `created_at`. Like
+`clinic_ai_usage_events`, RLS is enabled with **no policy** and **no grant at
+all** — including `service_role` — so membership is reachable only through
+two `SECURITY DEFINER`, `set search_path = ''` RPCs:
+
+The same migration also makes the clinic-name shape used by the closed browser
+parser structural: `clinics.name` must be trimmed, 1–200 characters and free
+of control characters. This prevents one legacy/directly inserted clinic row
+from making the all-clinic overview fail closed for every row.
+
+- `set_platform_admin_v1(p_user_id, p_enabled)` — backend/operator-only
+  bootstrap RPC, granted to `service_role` only, not called from `/admin`.
+  Idempotently inserts/deletes an allowlist row; returns `user_not_found`
+  without mutating if `p_user_id` does not exist in `auth.users`.
+- `get_platform_admin_overview_v1(p_month_start)` — granted to
+  `authenticated` only. Resolves the caller via `auth.uid()` and checks
+  `platform_admins` membership **inside this same function**; a normal
+  clinic's `admin`-role staff member is not a platform administrator and gets
+  back a single `forbidden` sentinel row with every clinic/aggregate field
+  null. Normal tenant RLS policies are unchanged — there is no
+  `OR is_platform_admin()` widening anywhere. For an enabled admin, it returns
+  one row per clinic (`empty` sentinel if `public.clinics` has no rows) with:
+  clinic id/name/`operational_status`; a WhatsApp account count; open/urgent
+  `staff_work_items` counts (`status <> 'resolved'`); pending/processing/failed
+  `outbound_message_outbox` counts; last inbound/outbound `messages` timestamp;
+  and the same monthly AI-usage aggregates as
+  `get_clinic_monthly_usage_v1` (Task 042), reused via a `left join lateral`
+  call rather than reimplemented. The result contains no phone number,
+  message content, owner/pet identifier, WhatsApp/Meta id, work-item id,
+  provider id, usage hash, or secret/credential of any kind.
+
+The `/admin` Worker route (`src/adminPage.ts`) is a dependency-free static
+page mirroring `/staff`'s pattern exactly: an HTML shell, a vanilla-JS
+`app.js`, and a `config.json` endpoint exposing only the public Supabase URL
+and anon key. It is read-only — there is no lifecycle mutation, pricing,
+invoicing, quota, CSV export, chart, or message-sending UI — and its own
+notice states it is not a production-approved privileged-access surface
+until MFA or an equivalent upstream control is verified (see
+[`docs/production-readiness.md`](production-readiness.md)).

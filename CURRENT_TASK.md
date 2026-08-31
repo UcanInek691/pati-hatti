@@ -1,6 +1,6 @@
 # Current task — 043 Platform-admin metadata overview (read-only MVP)
 
-Status: `READY`
+Status: `COMPLETE`
 
 Created by Codex on 2026-08-31 after Task 042 passed local, disposable-
 database and mandatory Claude Opus gates and was committed as `ed142bd`.
@@ -285,11 +285,280 @@ after commit.
 
 ## Observed context
 
-_Implementer fills this section from repository evidence only._
+- `clinic_ai_usage_events` (`supabase/migrations/20260831000200_usage_metering.sql`,
+  Task 042) is the only prior table in this codebase using the "RLS enabled,
+  no policy, all privileges revoked including `service_role`" pattern; the
+  new `platform_admins` table mirrors it exactly (same revoke statement
+  shape, same `security definer` + `set search_path = ''` RPC-only access
+  model), confirming this is now an established repository convention, not a
+  one-off.
+- `get_clinic_monthly_usage_v1(p_clinic_id, p_month_start)` (Task 042) is
+  `security definer stable set search_path = ''`, granted only to
+  `service_role`, and already implements the exact
+  `Europe/Istanbul` calendar-month aggregation this task needed. Because
+  `security definer` runs as the function owner rather than the caller,
+  `get_platform_admin_overview_v1` (owned by the same migration-applying
+  role) can call it via `left join lateral` and receive real aggregates even
+  though `authenticated` itself has no grant on it — reusing it instead of
+  duplicating the month-boundary arithmetic, per the task's explicit
+  instruction.
+- `staff_work_items.status` is a 4-value enum (`open|seen|in_progress|resolved`,
+  widened by `20260814000200_staff_assignment_and_alerts.sql`); "open work
+  item" for this task's purposes is `status <> 'resolved'`, not `status =
+  'open'` — using the narrower predicate would have undercounted `seen`/
+  `in_progress` items still needing attention.
+- `outbound_message_outbox.delivery_status` is `pending|processing|accepted|failed`;
+  `accepted` was deliberately left out of the overview's three counts
+  (pending/processing/failed) since it is the terminal-success state and not
+  an operational signal a platform admin needs surfaced.
+- `clinics.operational_status` (Task 041) defaults to `'suspended'` on
+  insert and requires `active|suspended|offboarding`; the fixture in
+  `043_platform_admin_overview.sql` sets one clinic `active` and leaves the
+  other at its default `suspended` to exercise both.
+- `supabase/tests/004_core_tenant_rls.sql` established the
+  `set local role authenticated; select set_config('request.jwt.claim.sub',
+  '<uuid>', true);` idiom for simulating `auth.uid()` per role/user inside a
+  `begin; ... rollback;` block; the new fixture reuses it to prove the
+  overview RPC's `forbidden`/`reported` branches as both a non-admin
+  same-clinic staff user and an enabled platform admin.
+- `information_schema.parameters` with `parameter_mode = 'OUT'` gives a
+  closed, machine-checkable list of a `SECURITY DEFINER` function's return
+  columns; the fixture asserts this list against a fixed 20-element array as
+  a structural proof that no phone/message/owner/pet/provider/hash/secret
+  column was added, rather than relying only on inline per-row null checks.
+- `src/staffPage.ts` (978 lines) is the exact template this task's
+  `src/adminPage.ts` and `test/adminPage.test.ts` needed to mirror:
+  `normalizeSupabaseUrl`'s https/loopback-http-only + no-userinfo/search/
+  hash/non-root-path rules, the 3-header `*_SECURITY_HEADERS` set, the
+  `serviceUnavailable()` 503 shape, and the shell/script/config route-handler
+  split — reused rather than redesigned, keeping `/admin` operationally
+  identical to `/staff` apart from its narrower RPC surface.
+- `rtk` (the user's global token-saving CLI prefix from
+  `~/.claude/CLAUDE.md`) is not installed in this shell; all verification
+  commands below were run with plain `pnpm`/`git` instead.
+- `.gitignore`'s pending modification predates this session and was not
+  touched, per explicit instruction.
 
 ## Delivery record
 
-_Implementer fills this section from repository evidence only._
+**Changed/added files** (nothing outside the task's permitted list; nothing
+committed, pushed, or deployed):
+- `supabase/migrations/20260831000300_platform_admin_overview.sql` (new) —
+  NOT RUN against any database. Creates `platform_admins` (bare allowlist,
+  RLS-no-policy-no-grant), `set_platform_admin_v1` (service_role-only
+  bootstrap RPC), `get_platform_admin_overview_v1` (authenticated-only,
+  `auth.uid()`-checked, `forbidden`/`empty`/`reported` result kinds).
+- `supabase/tests/043_platform_admin_overview.sql` (new, rollback-only
+  fixture) — NOT RUN against any database. Proves: table RLS/grant
+  lockdown; the closed 20-column OUT-parameter shape; `set_platform_admin_v1`
+  role/idempotency/`user_not_found` behavior; the `empty` sentinel before any
+  clinic exists; full fixture-data-matched `reported` rows for an enabled
+  admin across two clinics (including a known-all-zero clinic); the
+  `forbidden` sentinel for a same-clinic non-admin staff/`admin`-role user;
+  a zero-usage-month case; admin disable/re-enable and Auth-user-delete
+  cascade; invalid-input rejection with no mutation; and
+  `prosecdef`/`provolatile`/`search_path`/grant proofs for both functions.
+- `src/adminPage.ts` (new) — `AdminConfig`, `ADMIN_SECURITY_HEADERS`,
+  `readAdminConfig`, `ADMIN_HTML`/`ADMIN_APP_JS` template strings, and
+  `handleAdminShell`/`handleAdminScript`/`handleAdminConfig`, mirroring
+  `src/staffPage.ts`'s structure. The browser script stores its session
+  under a distinct `vetai_admin_access_token` key, validates every RPC row
+  against a closed 20-key shape before rendering, fails closed (clears state,
+  shows a fixed Turkish error) on any malformed response, and renders every
+  dynamic value only via `textContent`.
+- `src/index.ts` (edited) — added the `adminPage` import and an `/admin`
+  routing block (shell/`app.js`/`config.json`, 405+`Allow: GET` on non-GET,
+  404 on unknown `/admin/*`), placed immediately after the existing `/staff`
+  block, matching its structure exactly.
+- `test/adminPage.test.ts` (new, 34 tests) — `readAdminConfig` URL
+  validation (8 cases), `handleAdminShell` (200/CSP/headers/body-equality,
+  503-no-leakage, required semantic region IDs, single self-hosted script
+  with no inline handlers, MVP/MFA notice, no lifecycle/pricing/billing/
+  export/chart/messaging keyword), `handleAdminScript` (distinct session
+  key, password-grant auth, exactly one RPC call site
+  (`rpc/get_platform_admin_overview_v1`) and no lifecycle mutation RPC name,
+  closed-shape validation function presence, fixed sentinel messages,
+  Istanbul-month default, logout/401/403 session clearing, no service-role/
+  console/innerHTML/eval/refresh_token/unrestricted-select reference,
+  textContent-only rendering), `handleAdminConfig` (exact two-field body, no
+  service-role leakage, 503 on unsafe config).
+- `test/index.test.ts` (edited) — added a `describe("worker admin routes", ...)`
+  block mirroring the existing `describe("worker staff routes", ...)` block:
+  GET shell/`app.js`/`config.json`, 503 on missing config, 405+`Allow: GET`+
+  security headers on POST to all four paths, 404+security headers on
+  `/admin/unknown`.
+- `docs/platform-admin-overview.md` (new, Turkish) — what the page is and is
+  not (no mutation/pricing/billing/export/chart/messaging), how
+  authorization happens inside the RPC via `auth.uid()`, what a `reported`
+  row does and does not contain, the `/admin` page's own architecture, and
+  the not-yet-satisfied MFA gate.
+- `docs/database-schema.md` (edited) — appended a "Platform-admin overview
+  allowlist and cross-clinic RPC (Task 043)" section matching the existing
+  Task 042 section's style, marked NOT RUN.
+- `docs/production-readiness.md` (edited) — added one Section-1 human-gate
+  checkbox stating password-only Supabase Auth is not an adequate control
+  for `/admin`'s blast radius and must stay unchecked until MFA or an
+  equivalent upstream control is verified.
+- `docs/saas-urunlestirme-yol-haritasi.md` (edited) — appended a "Durum (Task
+  043)" status paragraph to the existing admin-panel vision section, stating
+  only the read-only subset shipped and lifecycle/pricing UI did not.
+- `docs/kvkk-inceleme-paketi.md` (edited) — added five inventory rows
+  (WhatsApp account credential registry, `whatsapp_contact_routes`,
+  `clinic_offboarding_receipts`, `clinic_ai_usage_events`, `platform_admins`)
+  to the Section 3 technical inventory table, and three corresponding
+  blank-period rows to the Section 6 retention table (explicitly flagging
+  that no audit trail exists for who granted platform-admin membership, and
+  inventing no legal basis or retention period).
+- `docs/ai-behavior-and-safety.md` (edited, ~line 299) — corrected the stale
+  `openai_usage` console-log claim to describe the Task 042
+  `clinic_ai_usage_events` ledger instead.
+- `docs/inbound-queue.md` (edited, ~line 372) — corrected the same stale
+  claim, adding that a retried logical turn is deduplicated by the ledger's
+  source-event hash even when the provider was called again.
+
+**Verification commands run, exact results:**
+- `pnpm install --frozen-lockfile` → `Already up to date. Done in 825ms
+  using pnpm v11.9.0`.
+- `pnpm typecheck` (`tsc --noEmit`) → clean, no output, exit 0.
+- `pnpm test` (full suite via vitest) → first run: **1 file failed** —
+  `test/adminPage.test.ts`'s own "calls only the overview RPC" assertion
+  false-positived on `ADMIN_APP_JS`'s `STATUS_LABELS` display map, whose
+  keys `suspended`/`offboarding` legitimately contain the substrings
+  "suspend"/"offboard" (they render the read-only `operational_status`
+  field, they are not lifecycle mutation calls). Fixed by tightening that
+  one test to check the actual `rpc/` call sites and specific lifecycle RPC
+  function names instead of a bare substring match — no product code
+  changed. Second run, fully green: **37 files, 1849 passed, 2 skipped
+  (pre-existing live-eval tests unrelated to this task), 0 failed.**
+  `test/adminPage.test.ts` alone: 34/34 passing.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` → `Total
+  Upload: 196.19 KiB / gzip: 39.38 KiB`, bindings listed
+  (`INTAKE_QUEUE`, `APP_TIMEZONE`, `WHATSAPP_GRAPH_API_VERSION` — unchanged
+  from before this task, no new binding), `--dry-run: exiting now.` — no
+  error.
+- `git diff --check` → clean, exit 0 (only benign LF→CRLF autocrlf warnings
+  on Windows, no trailing-whitespace or conflict-marker errors reported).
+
+**NOT RUN (per explicit task constraint — never executed against any
+database):**
+- `supabase/migrations/20260831000300_platform_admin_overview.sql`
+- `supabase/tests/043_platform_admin_overview.sql`
+
+**Codex review corrections and local re-verification (2026-08-31):**
+- Hardened the browser's closed response boundary: canonical UUID and
+  timestamp validation, exact next-month period coherence, safe aggregate
+  subset checks, singleton sentinel enforcement, duplicate-clinic rejection,
+  strict clinic-name checks and Europe/Istanbul timestamp rendering. The
+  same validator source is executed directly by the unit tests instead of
+  being checked only as script text. A `forbidden` message is no longer
+  cleared immediately after rendering, and non-string runtime config
+  bindings now return 503 rather than throwing.
+- Added minimal responsive styling while retaining a self-hosted script and
+  a CSP-limited inline style boundary; no dependency, route or binding was
+  added.
+- Repaired the rollback fixture so protected-table checks run after resetting
+  the simulated runtime role, fixture rows obey current staff/outbox state
+  constraints, the global overview does not assume the disposable database
+  contains exactly two clinics, and the nested overview/monthly-usage RPCs
+  are explicitly required to share an owner.
+- Corrected two documentation drifts: missing provider usage creates a ledger
+  row with null token fields (not no row), and `whatsapp_contact_routes` is a
+  Task 033/034 boundary rather than Task 038.
+- Fresh checks after these corrections: frozen install PASS; typecheck PASS;
+  full suite **37 files, 1,857 passed, 2 opt-in live-eval tests skipped, 0
+  failed** (`test/adminPage.test.ts`: 47/47); production Worker dry-run PASS
+  with unchanged bindings; `git diff --check` PASS. The first sandboxed Node
+  attempt failed with a Windows `EPERM lstat C:\\Users\\mehme` restriction;
+  rerunning the same local commands outside that restricted filesystem view
+  passed. No external service was called.
+
+**Limitations and risks for Codex/Opus to inspect:**
+1. The migration and fixture are hand-written and manually reviewed against
+   existing patterns only; neither has ever been executed. They need a real
+   disposable-database run (`begin; ... rollback;` for the fixture) before
+   this task can leave READY, exactly as Task 042 required.
+2. `get_platform_admin_overview_v1`'s reliance on
+   `get_clinic_monthly_usage_v1` via `left join lateral` depends on both
+   functions being owned by the same role (migration-applying role) so that
+   `security definer` bypasses the callee's own `service_role`-only grant.
+   If a future migration is ever applied under a different owning role, this
+   call could start failing with `insufficient_privilege` at read time
+   rather than at migration time — worth an explicit owner check during
+   review.
+3. `set_platform_admin_v1` has no audit trail of who granted/revoked
+   membership or when beyond `platform_admins.created_at` (which is
+   overwritten to nothing on delete) — flagged as an open item in the KVKK
+   doc update above, not resolved by this task.
+4. The `/admin` page's only access control today is a Supabase Auth
+   password; `docs/production-readiness.md`'s new checkbox marks this
+   unresolved, but nothing in this task enforces it technically (e.g. no
+   rate limiting, no session-length restriction) — worth confirming that
+   absence is acceptable for a "read-only MVP" scope before any real
+   `platform_admins` row is ever inserted.
+5. The overview RPC's five `left join` subqueries (accounts/work-items/
+   outbound/messages) plus the `left join lateral` into the usage RPC run
+   once per clinic per call with no pagination or clinic-count limit;
+   acceptable at the stated 5–20-clinic MVP scale per the task's own
+   context, but worth confirming that scale assumption still holds at
+   review time.
+6. This report and the SQL fixture's own inline assertions are the only
+   verification the RPCs' authorization/PII boundaries have received; no
+   automated tool independently re-derives the 20-column closed shape or
+   the RLS/grant lockdown claims outside of the fixture's own logic.
+
+**Disposable database evidence (Codex, 2026-08-31):**
+- The linked target was verified twice as `vetai-test`
+  (`cyjpiapxvalqltcsywam`); `vetai-staging` was listed separately and remained
+  unlinked. Production and staging were not queried or changed.
+- Codex applied only
+  `20260831000300_platform_admin_overview.sql` through the linked SQL query
+  path. The first rollback-fixture run exposed a fixture-only catalog
+  expectation: PostgreSQL reports `set search_path = ''` as the canonical
+  option value `""`, not an empty text value. The assertion was corrected;
+  the failed transaction rolled back.
+- The corrected `043_platform_admin_overview.sql` fixture then passed. Its
+  real PostgreSQL run also confirmed that the overview and monthly-usage RPCs
+  share an owner, closing the nested `SECURITY DEFINER` execution concern.
+- A separate read-only residue/catalog query returned zero fixture Auth users,
+  platform-admin memberships, clinics, WhatsApp accounts, owners,
+  conversations, messages, webhook events, outbox rows, staff work items and
+  usage events. It also confirmed `platform_admins` RLS enabled, zero policies
+  and both exact RPC signatures present.
+- The Task 043 migration is now present only on disposable `vetai-test`.
+  Migration history was not repaired or changed. Mandatory Opus review remains
+  pending; no real platform-admin membership was created.
+
+**Mandatory Opus review and corrections (2026-08-31):**
+- The initial read-only review returned `CHANGES_REQUIRED` with no RLS,
+  authorization, tenant-isolation or PII-leak finding. It identified two
+  required corrections: the browser's clinic-name assumptions were not yet a
+  database invariant, so one malformed legacy name could fail the whole
+  overview; and `docs/ai-behavior-and-safety.md` incorrectly implied that the
+  service-role-only clinic usage RPC was callable from a browser.
+- Added `clinics_name_shape_check` (trimmed, 1–200 characters, no control
+  characters) to the still-uncommitted Task 043 migration. The rollback
+  fixture now proves the validated catalog constraint and rejects trailing-
+  space, 201-character and control-character names. A preflight query showed
+  zero clinics/zero invalid names on disposable `vetai-test`; the forward
+  correction was applied only there, the updated fixture passed, and a fresh
+  residue query returned zero in every fixture category plus a validated
+  constraint. Staging and production remain untouched.
+- Corrected the usage document to state that
+  `get_clinic_monthly_usage_v1` is service-role-only and browser-inaccessible;
+  only the allowlist-protected platform overview is browser-visible.
+- Closed the two non-blocking documentation findings too: the panel document
+  now records the no-pagination 5–20-clinic ceiling and cross-links the
+  accepted absence of a platform-membership audit trail. Opus's informational
+  DOM-harness note was left unchanged: the exact shipped parser source is
+  executed by tests, and adding a new DOM harness/dependency is not justified
+  for this MVP.
+- Post-correction verification passed again: frozen install, typecheck, 37
+  files / 1,857 tests passed with the same two opt-in live-eval skips, Worker
+  dry-run with unchanged bindings, and `git diff --check`.
+- The narrow read-only Opus re-check confirmed F1–F4 closed and returned
+  `PASS`. No new finding was raised. Task 043 therefore passed local,
+  disposable-database and mandatory Opus gates; staging/production activation
+  and the first real membership remain separately unauthorized and undone.
 
 ---
 

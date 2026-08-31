@@ -96,6 +96,11 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Kimlik doğrulama | Supabase Auth kullanıcı hesabı ve oturum verileri | Personel girişi | Supabase Auth; uygulama tabloları yalnız kullanıcı UUID'sini referanslar |
 | Queue/DLQ | Konuşma ve sağlayıcı mesaj kimliği | Dayanıklı arka plan işleme ve hata kurtarma | Cloudflare Queues; ham mesaj metni yok |
 | Teknik secret'lar | API anahtarları ve webhook secret'ları | Servisler arası kimlik doğrulama | Yalnız Cloudflare şifreli Worker binding'leri; veritabanı/istemci kodunda yok |
+| WhatsApp hesap kimlik bilgisi kaydı | Klinik başına `whatsapp_account_id`, `phone_number_id`, WhatsApp erişim token'ı (Task 040) | Giden mesajı doğru klinik WhatsApp hesabından, doğru kimlik bilgisiyle göndermek | Veritabanında değil; yalnız Cloudflare'ın şifreli `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` Worker secret binding'i içinde, en fazla 10 girişlik sabit bir dizi olarak |
+| Seçici otomasyon iletişim rotası | Klinik ve E.164 iletişim numarası çifti, otomasyon açık/kapalı bayrağı (Task 033/034, `whatsapp_contact_routes`) | Belirli bir numara için otomatik yanıtı açıp kapatma | Supabase; klinik bazında ayrılmış, mesaj içeriği veya sahip/hayvan verisi içermez |
+| Klinik kapanış makbuzu | Klinik kimliği, kapanış token'ının hash'i, sabit `'offboarded'` eylemi, kapanış zamanı (Task 041, `clinic_offboarding_receipts`) | Bir kapanışın tek seferlik ve geri döndürülemez biçimde gerçekleştiğinin kaydı | Supabase; RLS açık, politika yok, yalnız `service_role` erişebilir |
+| Klinik AI kullanım defteri | Klinik kimliği, model/istem sürümü, doğrulanmış token sayıları, kaynak olayın hash'i (ham kimlik değil) (Task 042, `clinic_ai_usage_events`) | İç maliyet takibi ve aylık kullanım özetinin hesaplanması — faturalama veya kota değildir, bkz. [`usage-metering.md`](usage-metering.md) | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir |
+| Platform yöneticisi izin listesi | Auth kullanıcı kimliği (Task 043, `platform_admins`) | `/admin` panelindeki klinikler arası salt-okunur özete kimin erişebileceğini belirleme | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir; bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
 
 Not: Evcil hayvana ilişkin sağlık anlatımının gerçek kişiyle bağlantılı olduğu
 durumlarda hukuki niteliği ve uygulanacak koruma seviyesi uzman tarafından
@@ -209,6 +214,9 @@ anlamına gelmez. Süreleri aşağıda uzman ve veri sorumlusu doldurmalıdır.
 | Uygulama ve güvenlik logları | Ham mesaj/secret loglanmıyor; altyapı log ayarları ayrıca doğrulanmalı | | | | |
 | Yedekler | Production yedekleme politikası henüz belirlenmedi | | | | |
 | Meta, OpenAI, Cloudflare ve Supabase tarafındaki sağlayıcı kayıtları | Sözleşme, bölge ve hesap ayarlarına bağlı | | | | |
+| Klinik AI kullanım defteri (`clinic_ai_usage_events`) | Klinik silinince kademeli olarak silinir; bağımsız otomatik süre yok | | | | |
+| Klinik kapanış makbuzu (`clinic_offboarding_receipts`) | Klinik kimliğine göre benzersiz; otomatik süre yok | | | | |
+| Platform yöneticisi izin listesi (`platform_admins`) | Auth kullanıcısı silinince kademeli silinir; ayrıca kimin ne zaman/hangi gerekçeyle yönetici yapıldığına dair ayrı bir denetim kaydı **yoktur** — bu, kayıt altyapısı gerektiren ayrı bir karardır | | | | |
 
 Saklama şartı ortadan kalktığında silme, yok etme veya anonimleştirme yöntemi;
 periyodik imha süresi; yedeklerde uygulanma yöntemi ve sorumlu unvan ayrıca

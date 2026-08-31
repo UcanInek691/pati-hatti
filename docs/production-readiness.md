@@ -70,6 +70,18 @@ itself.
     reviewing expert; it states verified facts only and deliberately answers
     none of the above.
 
+- [ ] Multi-factor authentication (or an equivalent upstream privileged-access
+      control) is verified for every account enrolled in `platform_admins`
+      before `/admin` (Task 043,
+      [`platform-admin-overview.md`](platform-admin-overview.md)) is used
+      against real data. The MVP shipped in Task 043 relies solely on
+      Supabase Auth email/password for that page; a leaked or reused password
+      is the only barrier to a read of every clinic's operational metadata
+      and monthly AI-usage summary across tenants. Password-only auth is not
+      an adequate control for that blast radius and this box must stay
+      unchecked until MFA (or an equivalent control, e.g. a network-level
+      restriction plus short-lived sessions) is in place and verified.
+
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
 

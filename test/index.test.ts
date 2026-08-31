@@ -230,6 +230,54 @@ describe("worker staff routes", () => {
   });
 });
 
+describe("worker admin routes", () => {
+  it.each(["https://vetai.test/admin", "https://vetai.test/admin/"])("GET %s returns the admin HTML shell", async (url) => {
+    const res = await worker.fetch(new Request(url), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("GET /admin/app.js returns the admin browser script", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/admin/app.js"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
+  });
+
+  it("GET /admin/config.json returns only the public Supabase config", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/admin/config.json"), env);
+    expect(res.status).toBe(200);
+    const body = await res.json<Record<string, string>>();
+    expect(Object.keys(body).sort()).toEqual(["supabaseAnonKey", "supabaseUrl"]);
+  });
+
+  it("GET /admin returns 503 when Supabase configuration is missing", async () => {
+    const noConfigEnv: Env = { ...env, SUPABASE_URL: "", SUPABASE_ANON_KEY: "" };
+    const res = await worker.fetch(new Request("https://vetai.test/admin"), noConfigEnv);
+    expect(res.status).toBe(503);
+  });
+
+  it.each(["/admin", "/admin/", "/admin/app.js", "/admin/config.json"])(
+    "POST %s returns 405 with Allow: GET and admin security headers",
+    async (path) => {
+      const res = await worker.fetch(new Request(`https://vetai.test${path}`, { method: "POST" }), env);
+      expect(res.status).toBe(405);
+      expect(res.headers.get("Allow")).toBe("GET");
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
+    },
+  );
+
+  it("GET /admin/unknown returns 404 with admin security headers", async () => {
+    const res = await worker.fetch(new Request("https://vetai.test/admin/unknown"), env);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
+  });
+});
+
 function textMessageWebhookBody(): unknown {
   return {
     object: "whatsapp_business_account",

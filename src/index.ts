@@ -11,6 +11,7 @@ import { processIntakeQueueMessage } from "./intakeConsumer";
 import { processIntakeDeadLetterQueueMessage } from "./intakeDeadLetter";
 import { drainOutboundMessages } from "./outboundSender";
 import { STAFF_SECURITY_HEADERS, handleStaffConfig, handleStaffScript, handleStaffShell } from "./staffPage";
+import { ADMIN_SECURITY_HEADERS, handleAdminConfig, handleAdminScript, handleAdminShell } from "./adminPage";
 import { checkReadiness } from "./readiness";
 import type { QueueDisposition } from "./intakeConsumer";
 import { handlePrivacyPage } from "./privacyPage";
@@ -201,6 +202,25 @@ export default {
         return handleStaffConfig(env);
       }
       return new Response("Not Found", { status: 404, headers: STAFF_SECURITY_HEADERS });
+    }
+
+    if (url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname.startsWith("/admin/")) {
+      if (request.method !== "GET") {
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { ...ADMIN_SECURITY_HEADERS, Allow: "GET" },
+        });
+      }
+      if (url.pathname === "/admin" || url.pathname === "/admin/") {
+        return handleAdminShell(env);
+      }
+      if (url.pathname === "/admin/app.js") {
+        return handleAdminScript();
+      }
+      if (url.pathname === "/admin/config.json") {
+        return handleAdminConfig(env);
+      }
+      return new Response("Not Found", { status: 404, headers: ADMIN_SECURITY_HEADERS });
     }
 
     return new Response("Not Found", { status: 404 });

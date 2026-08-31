@@ -635,9 +635,39 @@ The ledger is measurement, not billing. It can count AI work whose reply was
 not delivered, and `stale_claim | not_found` can leave a real paid provider
 call unmetered. Therefore it cannot be the sole source of an automatic
 customer invoice. Activation must apply and verify the Task 042 migration
-before deploying the dependent Worker. Before external KVKK approval, the
-legal inventory must add `clinic_ai_usage_events`; stale documentation that
-still describes the removed `openai_usage` console log must also be corrected.
+before deploying the dependent Worker. Task 043 added
+`clinic_ai_usage_events` to the external KVKK inventory and corrected the two
+stale documents that still described the removed `openai_usage` console log.
+
+Task 043 (platform-admin metadata overview) is `COMPLETE` at the repository
+and disposable-database gates as of 2026-08-31. `/admin` is a dependency-free,
+read-only, cross-clinic operational overview for an explicit Supabase Auth UUID
+allowlist; a clinic `admin` role does not confer platform access. Membership is
+stored in `platform_admins` with RLS enabled, no policy and no direct runtime
+table grant. Its bootstrap RPC is service-role-only; the authenticated overview
+RPC derives `auth.uid()` and checks membership inside the same closed
+`SECURITY DEFINER` function before reading cross-tenant aggregates. Normal
+tenant RLS policies were not widened.
+
+The overview returns only clinic UUID/name/status, operational counters, last
+inbound/outbound timestamps and the selected Europe/Istanbul month's Task 042
+aggregates. It returns no phone, message or clinical content, owner/pet/
+conversation/provider/account/work-item identifiers, hashes or credentials.
+The browser validates the exact 20-key response, periods, canonical UUIDs,
+timestamps, safe counts, sentinel coherence and duplicate clinics before
+rendering only through `textContent`. `clinics_name_shape_check` now makes its
+trimmed 1–200-character, control-free clinic-name assumption structural.
+
+Local verification passed with 1,857 tests and two opt-in paid eval gates
+skipped. The migration and corrected rollback fixture passed only on disposable
+`vetai-test`, including nested usage-RPC owner equality and zero fixture
+residue; mandatory Claude Opus review passed after the clinic-name and
+documentation corrections. Staging and production remain untouched, and no
+real platform-admin membership exists. Password-only `/admin` access is not
+approved for production until MFA or an equivalent upstream control is
+verified. Membership grant/revoke audit history and pagination remain explicit
+MVP limits; the unsliced view is accepted only for the current 5–20-clinic
+scale.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:

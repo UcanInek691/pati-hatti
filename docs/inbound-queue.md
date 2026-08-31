@@ -368,13 +368,17 @@ a real slot is held, only the existing exact raw-text `EVET | HAYIR` grammar
 can confirm or release it. All safety, pet, stage, stale-state and unavailable
 slot outcomes remain fail-closed.
 
-After a successful OpenAI extraction, the consumer emits at most one
-content-free `openai_usage` log with model name and validated token counts.
-There is no such log on a failed/no-model path or when provider usage is
-missing/malformed. No message text, previous question, identity, provider id,
-safety identifier, secret, response body or price is logged. Queue retries may
-perform another extraction and therefore another per-attempt usage record;
-finalization remains atomic and idempotent as described above.
+After a successful OpenAI extraction, the consumer records one row to the
+`clinic_ai_usage_events` ledger (Task 042) via `record_intake_ai_usage_v1`,
+containing model name, prompt version and validated token counts, keyed by a
+hash of the source event rather than the source event itself. There is no
+such row on a failed/no-model path. When provider usage is missing/malformed,
+the logical turn is still recorded but its three token fields are `null`. No
+message text, previous question, identity, provider id, safety identifier,
+secret, response body or price is stored. A queue retry may perform another
+extraction against the provider, but the ledger insert is keyed by the source event's hash, so the
+retried logical turn is recorded at most once even though the provider was
+called again; finalization remains atomic and idempotent as described above.
 
 ### Clinic personalization of `human_handoff` replies (Task 031)
 
