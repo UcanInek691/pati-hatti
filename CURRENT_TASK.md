@@ -1,4 +1,382 @@
-# Current task — 043 Platform-admin metadata overview (read-only MVP)
+# Current task — 044 Clinic schedule and appointment-slot self-service
+
+Status: `READY`
+
+Created by Codex on 2026-09-01 after Task 043 passed local, disposable-
+database and mandatory Claude Opus gates, was committed as `b1d87db`, and was
+activated only on `vetai-staging` after separate user approval. This task is
+the next narrow Phase-4 productization slice: a clinic controls its own public
+opening schedule and bookable slot inventory from the existing `/staff`
+surface. It does not widen `/admin`, create billing, or add a second clinic
+application.
+
+## Goal
+
+Extend the existing tenant-scoped `/staff` page so clinic personnel can see
+their clinic's weekly hours, full-day closures and future appointment-slot
+inventory. Only that clinic's `admin` staff may mutate these settings. The
+database must enforce tenant and role authorization, keep booked/held work
+safe, and preserve the existing rule that only an explicit owner confirmation
+can confirm an appointment.
+
+## Fixed product and security decisions
+
+1. **The panels remain separate.** `/admin` is Maya's cross-clinic,
+   metadata-only platform view. `/staff` is the clinic's tenant-scoped
+   operational surface. This task changes only `/staff`; it adds no
+   cross-clinic query or mutation and no platform-admin exception to clinic
+   RLS.
+2. **One shared clinic application.** Do not create a per-customer Worker,
+   code fork, route, dependency or separate staff page. Existing Supabase Auth,
+   `/staff`, RLS and clinic branding/configuration are reused.
+3. **Least privilege.** Every same-clinic staff member may read the non-PII
+   schedule. Only a `clinic_staff.role = 'admin'` member of that exact clinic
+   may change hours, closure dates or slot inventory. `veterinarian` and
+   `receptionist` remain read-only in this task; later delegation requires a
+   separate permission model rather than silently widening this role check.
+4. **Slot inventory is the booking authority.** Weekly hours and closure dates
+   control truthful clinic-open/closed copy and constrain new slot generation.
+   `appointment_slots` remains the exact availability authority. Removing a
+   day or narrowing hours deletes only affected future `available` slots.
+5. **Existing commitments are preserved.** A schedule change never deletes,
+   releases, cancels, moves or edits a `held` or `confirmed` slot. A hold that
+   won the row-lock race before a schedule change may still be confirmed during
+   its existing ten-minute lease. The RPC returns preserved active-slot counts
+   and the UI must warn the clinic; it must not claim those owners were
+   contacted or appointments cancelled.
+6. **No automatic calendar engine.** One admin action generates the selected
+   `Europe/Istanbul` local day's 30-minute slots from that weekday's configured
+   interval. Removing a closure does not silently regenerate slots. No endless
+   recurrence, background generator, split shift, room, veterinarian, service,
+   capacity, external-calendar sync, reminder or rescheduling feature is added.
+7. **Time boundary.** Inputs and UI labels are `Europe/Istanbul` local dates
+   and `HH:MM` times. Stored appointment instants remain `timestamptz`; slot
+   generation converts through the named timezone. Browser-local timezone and
+   UTC date accidents are forbidden.
+8. **No new clinical/identity exposure.** The schedule view may return clinic
+   UUID/name/status, weekday/time configuration, closure dates, slot UUID/time
+   and closed slot status only. It must not return owner, pet, conversation,
+   message, phone, provider, booking-token, hold-token, cancellation-audit or
+   credential fields.
+9. **Lifecycle gate.** Suspended/offboarding clinics may read their schedule
+   but every mutation fails closed. Only `active` clinics may change or
+   generate availability.
+10. **Authentication recovery is separate.** This task does not add invites,
+    password reset, password change, MFA or platform-admin membership UI.
+    Those form the next privileged-access task and must not be improvised in
+    the schedule change.
+11. **Historical Meta token debt stays explicit.** The legacy Cloudflare
+    `WHATSAPP_ACCESS_TOKEN` is already deleted and unused, but repository
+    evidence does not prove Meta-side revocation of the older token pasted into
+    chat. `docs/production-readiness.md` must retain/add a production-blocking
+    checkbox for explicit Meta-side invalidation; this task does not handle or
+    inspect token values.
+
+## Required database implementation
+
+Create
+`supabase/migrations/20260901000100_clinic_schedule_management.sql` without
+editing any applied migration.
+
+All new RPCs use `SECURITY DEFINER`, the fixed empty `search_path`, no dynamic
+SQL and an internal `auth.uid()` check. Revoke from `PUBLIC`, `anon`, and
+`service_role`; grant only the intended authenticated read/mutation surface.
+The functions must not rely on browser-side role checks.
+
+### Shared authorization rules
+
+- Invalid null/shape/range input raises before mutation.
+- An absent or cross-tenant clinic is indistinguishable (`not_found` or zero
+  rows, as appropriate).
+- A same-clinic non-admin mutation returns `forbidden` with zero mutation.
+- A non-active clinic mutation returns `inactive` with zero mutation.
+- Mutations lock the target clinic row before reading membership/configuration
+  and before touching schedule/slot rows.
+- Result kinds and null/count coherence are closed and documented.
+
+### `list_clinic_appointment_slots_v1(p_clinic_id, p_from, p_to)`
+
+Authenticated, same-clinic read RPC. Require local dates with
+`p_from <= p_to` and a maximum inclusive 62-day window. Return ordered future
+and selected-window rows containing exactly:
+
+- `slot_id`;
+- `starts_at`, `ends_at`;
+- `status` (`available | held | confirmed`).
+
+Return no row for absent/cross-tenant access. Do not expose any booking or
+identity columns. Existing direct authenticated table access to
+`appointment_slots` must remain revoked and policy-free.
+
+### `set_clinic_weekly_hours_v1(...)`
+
+Inputs: clinic UUID, ISO weekday 1–7, enabled boolean, and nullable local
+`opens_at` / `closes_at`.
+
+- Enabled requires both times, whole-minute values, strict `opens_at <
+  closes_at`, and `:00 | :30` half-hour alignment so the interval can generate
+  the existing fixed 30-minute slots.
+- Disabled requires both times null and removes that weekday row.
+- Exact replay is idempotent.
+- After upsert/delete, remove only this clinic's future `available` slots whose
+  `Europe/Istanbul` weekday matches and which are no longer fully contained in
+  the configured interval; disabling removes all future available slots for
+  that weekday.
+- Preserve every `held`/`confirmed` slot and return its affected count for the
+  warning boundary.
+- Closed results include at least `updated | unchanged | not_found | forbidden
+  | inactive`, plus nonnegative removed/preserved counts with explicit
+  coherence.
+
+### `set_clinic_closure_date_v1(...)`
+
+Inputs: clinic UUID, local date, closed boolean.
+
+- `true` inserts idempotently; `false` deletes idempotently.
+- Adding a closure removes only future `available` slots on that clinic-local
+  date. Held/confirmed rows are preserved and counted.
+- Removing a closure creates no slots automatically.
+- Reject dates outside a bounded operator window (past dates and dates more
+  than 366 days ahead) so accidental unbounded configuration is impossible.
+- Closed results and counts follow the same role/tenant/lifecycle/coherence
+  boundary as weekly hours.
+
+### `generate_clinic_appointment_slots_v1(p_clinic_id, p_local_date)`
+
+- Require an active clinic-admin caller and a local date from today through
+  366 days ahead.
+- Require one configured, half-hour-aligned weekly interval for that ISO
+  weekday and no matching full-day closure.
+- Convert the named `Europe/Istanbul` local interval into absolute instants,
+  generate only still-future fixed 30-minute slots, and never generate a slot
+  extending beyond closing time.
+- Use the existing `(clinic_id, starts_at)` unique key and `ON CONFLICT DO
+  NOTHING`; never modify an existing available/held/confirmed row.
+- Bound one call to at most 48 candidate rows.
+- Return a closed result such as `generated | unchanged | closed |
+  unconfigured | past | not_found | forbidden | inactive`, with coherent
+  candidate/created/existing counts.
+
+### `delete_clinic_appointment_slot_v1(p_clinic_id, p_slot_id)`
+
+- Lock the exact tenant-scoped slot.
+- Delete only a future `available` slot.
+- A held or confirmed row returns `in_use` without mutation; a past/started
+  row returns `past`; absent/cross-tenant remains `not_found`.
+- Never release a hold, cancel a confirmed booking, alter a conversation or
+  write a customer-facing reply/audit row.
+
+## Required `/staff` implementation
+
+Narrowly extend `src/staffPage.ts`; do not add a framework or dependency.
+
+1. Add a responsive Turkish **Klinik takvimi** section to the existing page,
+   not a new route. Keep work queue/detail and strict-whitelist behavior intact.
+2. Load only clinics visible through existing RLS plus the current user's
+   `clinic_staff` row. Strictly validate exact response keys, canonical UUIDs,
+   closed role/status values, bounded array sizes and unique clinics.
+3. Support a clinic selector for a user belonging to more than one clinic.
+   Never infer the schedule clinic from a caller-supplied WhatsApp account.
+4. Read weekly hours and closure dates through their existing same-clinic
+   SELECT policies. Read slots only through
+   `list_clinic_appointment_slots_v1`.
+5. Render seven weekday rows with native checkbox and `<input type="time"
+   step="1800">`; native date controls for adding/removing closure dates and
+   generating one day's slots; and a bounded upcoming-slot list with status
+   labels and delete controls only for future `available` rows.
+6. If the current membership role is not `admin`, render all schedule data
+   read-only and explain that only the clinic administrator can change it.
+   The server-side RPC role check remains authoritative.
+7. Display explicit copy that hours/closures do not cancel held/confirmed
+   appointments and do not notify owners. Surface preserved-active counts
+   after mutations; never claim an appointment was cancelled or a person was
+   contacted.
+8. Use one in-flight guard per mutation family or one shared schedule-mutation
+   guard; disable relevant controls while active and refresh authoritative
+   state after success. Clear stale schedule data on any fetch/parse/auth
+   failure.
+9. Convert/display every slot with `timeZone: "Europe/Istanbul"`; send local
+   dates/times as strings, not browser-derived UTC midnights.
+10. Every database value reaches the DOM through `textContent`; no dynamic
+    `innerHTML`, logging, raw error body, identity/content field, service-role
+    key or Meta credential is introduced. Existing distinct staff
+    `sessionStorage` behavior remains unchanged.
+11. Modest native CSS/navigation improvements are allowed only where needed to
+    keep the now-larger single page usable and accessible. No branding system,
+    chart, calendar library, asset pipeline or dependency.
+
+## Required automated evidence
+
+### SQL rollback fixture
+
+Add `supabase/tests/044_clinic_schedule_management.sql` under
+`begin; ... rollback;` with fixed, task-scoped IDs. Prove at least:
+
+1. authenticated same-clinic staff can read hours/closures and the fixed slot
+   projection but cannot directly read/write `appointment_slots`;
+2. clinic admin mutation succeeds; veterinarian/receptionist, anon,
+   service-role runtime invocation and cross-clinic callers are denied with
+   zero mutation;
+3. suspended/offboarding clinic mutations fail closed;
+4. weekly-hours create/update/replay/remove, half-hour/range validation and
+   future available-slot cleanup are exact;
+5. closure add/replay/remove, date bounds and local-date cleanup are exact;
+6. held/confirmed rows survive every hours/closure mutation and returned
+   preserved counts are exact;
+7. slot generation respects the weekly interval, closure, current time,
+   30-minute alignment, uniqueness and the 48-row cap;
+8. slot deletion handles available, held, confirmed, past, absent and
+   cross-tenant rows without changing any booking relation;
+9. all five RPCs (one read plus four mutations) have the required security
+   mode/search path/grants and the
+   list projection contains no identity, phone, content, token or provider
+   field;
+10. fixture work is tenant/fixed-ID scoped and rollback leaves zero residue.
+
+The single-session fixture may prove lock order and revalidation structurally;
+it must not claim a real two-session blocking test unless one is actually run.
+
+### TypeScript tests
+
+Narrowly extend `test/staffPage.test.ts` to execute or inspect the real page
+script and prove:
+
+- clinic/membership/hours/closure/slot response parsing, hostile/extra/missing
+  keys, duplicates, unsafe counts/dates/timestamps and closed enums;
+- multi-clinic selection and tenant-scoped request paths;
+- admin edit controls versus non-admin read-only behavior;
+- exact four mutation RPC paths/bodies/auth headers and closed-result handling;
+- half-hour/date validation before fetch;
+- `Europe/Istanbul` rendering independent of browser timezone;
+- in-flight duplicate-submit prevention, authoritative refresh and stale-data
+  clearing;
+- held/confirmed rows have no delete action and preserved-count warnings are
+  truthful;
+- existing work queue, notification, detail, login/logout and strict whitelist
+  tests remain unchanged and passing;
+- no direct appointment-slot table read, service-role/Meta secret, content
+  endpoint expansion, console logging, dynamic `innerHTML`, dependency or
+  external asset is introduced.
+
+## Documentation
+
+Narrowly update:
+
+- `docs/clinic-operations.md` — self-service hours/closures, half-hour ceiling,
+  and preserved active-slot boundary;
+- `docs/appointment-booking-engine.md` — staff generation/deletion semantics,
+  appointment-slot authority and grandfathered hold race;
+- `docs/staff-workflow.md` — clinic selector, admin-only edits, read-only roles
+  and fixed Turkish warnings;
+- `docs/database-schema.md` — five RPCs (one read plus four mutations), grants
+  and no direct slot access;
+- `docs/production-readiness.md` — clinic schedule/slot setup smoke plus the
+  still-unproven Meta-side revocation of the historical exposed token;
+- `docs/saas-urunlestirme-yol-haritasi.md` — correct the now-stale Task 041–043
+  staging status and mark only this Phase-4 slice implemented;
+- `docs/product-roadmap.md` only if needed to replace a directly contradictory
+  “no schedule UI” statement;
+- `CURRENT_TASK.md` only in its **Observed context** and **Delivery record**
+  sections for the implementer.
+
+Do not invent a retention period, legal basis, appointment-notification claim,
+veterinary approval, Meta revocation proof or production readiness claim.
+
+## Scope boundaries
+
+Do not add or change:
+
+- `/admin`, platform-admin membership or cross-clinic mutation;
+- staff invitation, password reset/change, MFA, authorization recovery or
+  Supabase email/SMTP configuration;
+- clinic provisioning/suspend/resume/offboarding RPCs;
+- public clinic name/phone/address editing;
+- owner/pet/conversation/message detail or staff composer;
+- appointment confirmation/cancellation/rescheduling, reminders, templates,
+  payment, room/veterinarian/service assignment, split shifts, recurring jobs
+  or external calendar sync;
+- plans, prices, campaigns, allowances, quota enforcement, invoices or
+  payments;
+- prompts, model, eval corpus, AI extraction, safety rules, veterinary/KVKK
+  copy or customer-facing WhatsApp reply text;
+- Queue, webhook, outbound sender, Meta credentials, Wrangler configuration,
+  environment bindings, dependencies or lockfile;
+- existing migration files or staging/production resources.
+
+No paid OpenAI eval is required because no prompt/model/extraction/safety/reply
+behavior changes.
+
+## Allowed changes
+
+- `supabase/migrations/20260901000100_clinic_schedule_management.sql` (new)
+- `supabase/tests/044_clinic_schedule_management.sql` (new)
+- `src/staffPage.ts`
+- `test/staffPage.test.ts`
+- `docs/clinic-operations.md`
+- `docs/appointment-booking-engine.md`
+- `docs/staff-workflow.md`
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/product-roadmap.md` (only the directly contradictory status sentence,
+  if one exists)
+- `CURRENT_TASK.md` (implementer: **Observed context** and **Delivery record**
+  only)
+
+Anything else requires Codex to amend this contract before implementation.
+The pre-existing user-owned `.gitignore` change and untracked
+`docs/043-opus-inceleme.md` are explicitly out of scope and must remain
+untouched.
+
+## Required verification
+
+The implementer runs:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+The implementer must not run the migration or SQL fixture against any
+database and must report both as `NOT RUN`. After implementation, Codex reviews
+the complete diff/call paths, reruns local checks, applies migration + rollback
+fixture only to disposable `vetai-test`, and requests mandatory Claude Opus
+read-only review for RLS/tenant/time/concurrency/KVKK boundaries. Staging
+activation requires a separate explicit user approval after a verified commit.
+No production mutation, commit, push, deploy, Meta/OpenAI call, secret change
+or plugin installation is authorized for the implementer.
+
+## Acceptance criteria
+
+- A clinic admin can manage only its own weekly hours, closure dates and future
+  available slots through `/staff`; all other clinic roles are read-only.
+- Cross-tenant, non-active and malformed requests produce zero mutation.
+- Schedule narrowing/closure removes only affected future available slots;
+  held/confirmed appointments survive and receive a truthful warning.
+- Generated slots are bounded, idempotent, half-hour aligned, within the named
+  Istanbul-local interval and never invented without configured hours.
+- The browser receives no booking identity/content/token/credential data and
+  never directly accesses the protected slots table.
+- Existing WhatsApp automation, work queue, intake, safety, appointment
+  confirmation/cancellation and outbound behavior remain unchanged.
+- Local, disposable-database, Codex and mandatory Opus gates pass before
+  commit; production and paid eval remain untouched.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementing agent. Do not commit, push, deploy, apply SQL,
+run paid evals or mutate external services.
+
+---
+
+# Previous task — 043 Platform-admin metadata overview (read-only MVP)
 
 Status: `COMPLETE`
 
