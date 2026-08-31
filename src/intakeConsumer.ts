@@ -5,6 +5,8 @@ import type { FinalizeIntakeQueueJobInput } from "./intakeJobLease";
 import { getConversationIntakeContext } from "./conversationState";
 import type { ConversationIntakeContext, IntakeStage } from "./conversationState";
 import { extractIntakeViaOpenAi, OPENAI_INTAKE_MODEL } from "./openaiIntake";
+import { INTAKE_EXTRACTION_PROMPT_VERSION } from "../prompts/intake-extraction-prompt";
+import { recordIntakeAiUsageV1 } from "./usageMetering";
 import { planIntakeTurn, readCanonicalPersistedSnapshot } from "./intakeTurn";
 import type { PersistedIntakeData, PlanResult } from "./intakeTurn";
 import type { IntakeExtraction } from "./intakeExtraction";
@@ -448,14 +450,21 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     const safetyIdentifier = await deriveSafetyIdentifier(context.ownerId);
     const extractionResult = await extractIntakeViaOpenAi(claim.messageText, safetyIdentifier, env, previousQuestion);
     if (!extractionResult.ok) return "retry";
-    if (extractionResult.usage !== null) {
-      console.log("intake consumer: openai_usage", {
+
+    const meteringResult = await recordIntakeAiUsageV1(
+      {
+        conversationId,
+        providerMessageId,
+        claimToken: claim.claimToken,
         model: OPENAI_INTAKE_MODEL,
-        input_tokens: extractionResult.usage.inputTokens,
-        output_tokens: extractionResult.usage.outputTokens,
-        total_tokens: extractionResult.usage.totalTokens,
-      });
-    }
+        promptVersion: INTAKE_EXTRACTION_PROMPT_VERSION,
+        usage: extractionResult.usage,
+      },
+      env,
+    );
+    if (meteringResult.kind === "stale_claim" || meteringResult.kind === "not_found") return "ack";
+    if (meteringResult.kind === "failed") return "retry";
+
     const persistedSnapshot = readCanonicalPersistedSnapshot(context.intakeData);
     const extraction = clearStaleAppointmentIntent(
       persistedSnapshot.ok ? persistedSnapshot.value.intent : null,

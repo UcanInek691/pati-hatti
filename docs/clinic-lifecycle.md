@@ -119,9 +119,15 @@ validation (column count, closed result enum, no extra fields).
 2. Remove the account entry from the encrypted Cloudflare registry.
 3. Verify `/ready`.
 4. Confirm no outstanding outbox work for the clinic.
-5. `finalize_clinic_offboarding_v1` with the current token.
-6. Revoke Meta/system-user access externally (outside this codebase).
-7. Review the clinic staff identities in Supabase Auth and separately delete
+5. Export any needed AI-usage reconciliation report with
+   `get_clinic_monthly_usage_v1` (see `docs/usage-metering.md`). The usage
+   ledger has no independent retention: rows cascade-delete with the clinic
+   and cannot be recovered after finalize. How long a report must be kept
+   afterward is a human legal/financial policy decision this task does not
+   set.
+6. `finalize_clinic_offboarding_v1` with the current token.
+7. Revoke Meta/system-user access externally (outside this codebase).
+8. Review the clinic staff identities in Supabase Auth and separately delete
    users who no longer serve any clinic. Finalize removes `clinic_staff` links
    but intentionally cannot delete shared `auth.users`, identities, or sessions.
 

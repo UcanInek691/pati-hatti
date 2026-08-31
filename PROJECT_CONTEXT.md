@@ -617,6 +617,28 @@ intentionally unaligned because this disposable proof used SQL Editor after
 history drift made a blind push unsafe. Staging and production remain
 untouched; the lifecycle client is not wired to a public/admin route.
 
+Task 042 (clinic-scoped AI usage ledger and monthly reconciliation) is
+`COMPLETE` at the repository and disposable-database gates as of 2026-08-31.
+One append-only `clinic_ai_usage_events` row represents one schema-valid
+logical intake-AI turn and is deduplicated from the tenant-safe current claim;
+the caller cannot supply a clinic or either hash. The table carries no raw
+message, phone, owner, pet or provider identifier. Its deterministic UUID
+hashes remain protected pseudonymous data, not anonymous data. RLS is enabled
+with no policy or direct table grant, including for `service_role`; recording
+and monthly `Europe/Istanbul` aggregation are exposed only through two closed
+`SECURITY DEFINER` RPCs. Local verification passed with 1,800 tests and two
+paid eval gates skipped; the migration and rollback fixture passed only on
+disposable `vetai-test` with zero fixture residue; Codex and mandatory Claude
+Opus review passed. Staging and production remain untouched.
+
+The ledger is measurement, not billing. It can count AI work whose reply was
+not delivered, and `stale_claim | not_found` can leave a real paid provider
+call unmetered. Therefore it cannot be the sole source of an automatic
+customer invoice. Activation must apply and verify the Task 042 migration
+before deploying the dependent Worker. Before external KVKK approval, the
+legal inventory must add `clinic_ai_usage_events`; stale documentation that
+still describes the removed `openai_usage` console log must also be corrected.
+
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
 

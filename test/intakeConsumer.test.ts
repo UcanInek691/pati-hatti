@@ -7,6 +7,8 @@ import type { Env } from "../src/env";
 import type { IntakeQueueMessage } from "../src/intakeQueue";
 import { UNSUPPORTED_MEDIA_MARKER } from "../src/whatsappIngest";
 import { PET_IDENTITY_TEXT } from "../src/intakeReply";
+import { OPENAI_INTAKE_MODEL } from "../src/openaiIntake";
+import { INTAKE_EXTRACTION_PROMPT_VERSION } from "../prompts/intake-extraction-prompt";
 import {
   INTAKE_CORRECTION_PROMPT_TEXT,
   POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT,
@@ -133,6 +135,10 @@ function finalizeRow(
   return jsonResponse([{ result, intake_stage: null, state_version: null }]);
 }
 
+function meteringRow(result: "recorded" | "duplicate" | "stale_claim" | "not_found"): Response {
+  return jsonResponse([{ result }]);
+}
+
 function offerRow(
   result: "offered" | "unavailable" | "existing_confirmed" | "in_progress" | "already_completed" | "stale_claim" | "stale_state",
   extra: { intake_stage?: string; state_version?: number } = {},
@@ -180,6 +186,7 @@ type Routes = {
   complete?: () => Response;
   context?: () => Response;
   openai?: () => Response;
+  metering?: () => Response;
   finalize?: () => Response;
   appointmentOffer?: () => Response;
   appointmentDecision?: () => Response;
@@ -195,6 +202,7 @@ function routedFetch(routes: Routes) {
     if (url.includes("/rpc/complete_intake_queue_job")) return routes.complete ? routes.complete() : new Response("", { status: 500 });
     if (url.includes("/rpc/get_conversation_intake_context")) return routes.context ? routes.context() : new Response("", { status: 500 });
     if (url.includes("api.openai.com")) return routes.openai ? routes.openai() : new Response("", { status: 500 });
+    if (url.includes("/rpc/record_intake_ai_usage_v1")) return routes.metering ? routes.metering() : new Response("", { status: 500 });
     if (url.includes("/rpc/finalize_appointment_offer_queue_job")) {
       return routes.appointmentOffer ? routes.appointmentOffer() : new Response("", { status: 500 });
     }
@@ -220,6 +228,7 @@ function happyRoutes(overrides: Partial<Routes> & { extraction?: Record<string, 
     claim: overrides.claim ?? (() => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: MESSAGE_TEXT })),
     context: overrides.context !== undefined ? overrides.context : () => contextRow(),
     openai: overrides.openai ?? (() => openAiResponse(overrides.extraction ?? extractionJson())),
+    metering: overrides.metering ?? (() => meteringRow("recorded")),
     finalize: overrides.finalize ?? (() => finalizeRow("applied")),
     appointmentOffer: overrides.appointmentOffer,
     appointmentDecision: overrides.appointmentDecision,
@@ -391,7 +400,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
     expect(finalizeBody.p_pet_id).toBe(PET_ID);
     expect(finalizeBody.p_claim_token).toBe(CLAIM_TOKEN);
@@ -410,7 +419,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("emergency_handoff");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -426,7 +435,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -446,7 +455,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_intake_data).toMatchObject({ intent: "human_handoff", pet_name: "Pamuk", species: "kedi" });
@@ -463,7 +472,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
   });
@@ -478,7 +487,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
   });
@@ -497,7 +506,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
@@ -513,7 +522,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
     expect(finalizeBody.p_reply_category).toBe("safety_questions");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -529,7 +538,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
     expect(finalizeBody.p_reply_text).not.toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
@@ -551,7 +560,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("pet_identification");
     expect(finalizeBody.p_reply_category).toBe("pet_identity");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -567,7 +576,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
     expect(finalizeBody.p_reply_category).toBe("complaint");
     expect(typeof finalizeBody.p_reply_text).toBe("string");
@@ -585,7 +594,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("completed");
     expect(finalizeBody.p_reply_category).toBeNull();
     expect(finalizeBody.p_reply_text).toBeNull();
@@ -612,7 +621,7 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("retry");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(replySpy).not.toHaveBeenCalled();
   });
 });
@@ -646,8 +655,8 @@ describe("processIntakeQueueMessage: clinic operational context personalization 
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(bodyOf(fetchMock, 3)).toEqual({ p_conversation_id: CONVERSATION_ID });
-    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(bodyOf(fetchMock, 4)).toEqual({ p_conversation_id: CONVERSATION_ID });
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(finalizeBody.p_reply_text).toBe(openClinicText("Merkez Veteriner Klinigi", "+905551112233"));
   });
@@ -663,7 +672,7 @@ describe("processIntakeQueueMessage: clinic operational context personalization 
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(finalizeBody.p_reply_text).toBe(closedClinicText("Merkez Veteriner Klinigi", "+905551112233"));
   });
@@ -683,7 +692,7 @@ describe("processIntakeQueueMessage: clinic operational context personalization 
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
     expect(finalizeBody.p_reply_text).toBe(GENERIC_HUMAN_HANDOFF_TEXT);
   });
@@ -699,7 +708,7 @@ describe("processIntakeQueueMessage: clinic operational context personalization 
 
     expect(result).toBe("ack");
     expect(clinicCallCount(fetchMock)).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("never calls the clinic RPC for an emergency_handoff category reply", async () => {
@@ -713,7 +722,7 @@ describe("processIntakeQueueMessage: clinic operational context personalization 
 
     expect(result).toBe("ack");
     expect(clinicCallCount(fetchMock)).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("personalizes the handoff reply reached directly from the human_handoff stage without an OpenAI call", async () => {
@@ -764,7 +773,7 @@ describe("processIntakeQueueMessage: poison snapshot fallback", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_intake_data).toMatchObject({ schema_version: 1, complaint: "limping" });
@@ -787,7 +796,7 @@ describe("processIntakeQueueMessage: poison snapshot fallback", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("completed");
     expect(finalizeBody.p_pet_id).toBeNull();
     expect(finalizeBody.p_reply_category).toBeNull();
@@ -809,7 +818,7 @@ describe("processIntakeQueueMessage: finalization disposition mapping", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe(expected);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });
 
@@ -825,12 +834,12 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(true);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
 
-    const offerBody = bodyOf(fetchMock, 3);
+    const offerBody = bodyOf(fetchMock, 4);
     expect(offerBody.p_conversation_id).toBe(CONVERSATION_ID);
     expect(offerBody.p_provider_message_id).toBe(PROVIDER_MESSAGE_ID);
     expect(offerBody.p_claim_token).toBe(CLAIM_TOKEN);
@@ -859,7 +868,7 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe(expected);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("a matched-pet appointment_request plan with no resolved pet id retries without calling the offer RPC", async () => {
@@ -877,7 +886,7 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("retry");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("a report_symptom intent at ready_for_triage still finalizes normally, never calling the offer RPC", async () => {
@@ -893,7 +902,7 @@ describe("processIntakeQueueMessage: appointment offer routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(false);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
-    expect(bodyOf(fetchMock, 3).p_reply_text).toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
+    expect(bodyOf(fetchMock, 4).p_reply_text).toBe(POST_CONFIRMATION_APPOINTMENT_INVITATION_TEXT);
   });
 });
 
@@ -909,12 +918,12 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("finalize_appointment_decision_queue_job"))).toBe(true);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
 
-    const decisionBody = bodyOf(fetchMock, 3);
+    const decisionBody = bodyOf(fetchMock, 4);
     expect(decisionBody.p_decision).toBe("confirm");
     expect(decisionBody.p_pet_id).toBe(PET_ID);
     expect(decisionBody.p_claim_token).toBe(CLAIM_TOKEN);
@@ -935,7 +944,7 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
 
     await processIntakeQueueMessage(validBody, env);
 
-    const decisionBody = bodyOf(fetchMock, 3);
+    const decisionBody = bodyOf(fetchMock, 4);
     expect(decisionBody.p_decision).toBe(decision);
   });
 
@@ -958,7 +967,7 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe(expected);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("appointment_selection stage with no resolved pet id retries without calling the decision RPC", async () => {
@@ -976,7 +985,7 @@ describe("processIntakeQueueMessage: appointment decision routing", () => {
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("retry");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("a handoff-grade safety decision at appointment_selection stage bypasses the decision RPC entirely and finalizes to human_handoff", async () => {
@@ -1022,7 +1031,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(true);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_pet_id).toBe(PET_ID);
     expect(body.p_expected_version).toBe(2);
     expect(body.p_intake_data).toMatchObject({ intent: "appointment_cancel_request" });
@@ -1059,7 +1068,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(true);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(false);
-    expect(bodyOf(fetchMock, 3)).toMatchObject({ p_pet_id: PET_ID, p_expected_version: 1 });
+    expect(bodyOf(fetchMock, 4)).toMatchObject({ p_pet_id: PET_ID, p_expected_version: 1 });
   });
 
   it("a first-message cancellation without a pet name asks which pet when multiple pets exist", async () => {
@@ -1087,7 +1096,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(false);
-    expect(bodyOf(fetchMock, 3)).toMatchObject({
+    expect(bodyOf(fetchMock, 4)).toMatchObject({
       p_next_stage: "pet_identification",
       p_pet_id: null,
       p_reply_category: "pet_identity",
@@ -1119,7 +1128,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("finalize_appointment_cancel_offer_queue_job"))).toBe(false);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
-    expect(bodyOf(fetchMock, 3)).toMatchObject({
+    expect(bodyOf(fetchMock, 4)).toMatchObject({
       p_next_stage: "pet_identification",
       p_pet_id: null,
       p_reply_category: "pet_identity",
@@ -1184,7 +1193,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     await expect(processIntakeQueueMessage(validBody, env)).resolves.toBe("ack");
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("api.openai.com"))).toBe(true);
-    expect(bodyOf(fetchMock, 3).p_decision).toBe("repeat");
+    expect(bodyOf(fetchMock, 4).p_decision).toBe("repeat");
   });
 
   it("keeps deterministic emergency precedence over a cancellation request", async () => {
@@ -1201,7 +1210,7 @@ describe("processIntakeQueueMessage: Task 039 cancellation routing", () => {
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(urls.some((url) => url.includes("finalize_appointment_cancel"))).toBe(false);
     expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
-    expect(bodyOf(fetchMock, 3)).toMatchObject({
+    expect(bodyOf(fetchMock, 4)).toMatchObject({
       p_next_stage: "human_handoff",
       p_reply_category: "emergency_handoff",
     });
@@ -1413,7 +1422,7 @@ describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)
     const urls = fetchMock.mock.calls.map(([input]) => input.toString());
     expect(bodyOf(fetchMock, 2).input).toHaveLength(2);
     expect(urls.some((url) => url.includes("finalize_appointment_offer_queue_job"))).toBe(false);
-    expect(bodyOf(fetchMock, 3).p_intake_data).toMatchObject({ intent: "routine_request" });
+    expect(bodyOf(fetchMock, 4).p_intake_data).toMatchObject({ intent: "routine_request" });
   });
 
   it("omits the context item when the nearest prior outbound message is not a question", async () => {
@@ -1458,9 +1467,8 @@ describe("processIntakeQueueMessage: Task 029 previous-question context (Part 1)
   });
 });
 
-describe("processIntakeQueueMessage: content-free OpenAI usage telemetry (Task 038)", () => {
-  it("logs one fixed structured token record after a successful model call", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+describe("processIntakeQueueMessage: Task 042 AI usage metering wiring", () => {
+  it("calls record_intake_ai_usage_v1 exactly once with the correct request shape before finalization", async () => {
     const fetchMock = happyRoutes({
       openai: () =>
         openAiResponse(extractionJson(), {
@@ -1473,56 +1481,86 @@ describe("processIntakeQueueMessage: content-free OpenAI usage telemetry (Task 0
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
 
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith("intake consumer: openai_usage", {
-      model: "gpt-5.6-luna",
-      input_tokens: 456,
-      output_tokens: 78,
-      total_tokens: 534,
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.filter((url) => url.includes("record_intake_ai_usage_v1")).length).toBe(1);
+    expect(urls.indexOf(urls.find((url) => url.includes("record_intake_ai_usage_v1"))!)).toBeLessThan(
+      urls.findIndex((url) => url.includes("finalize_intake_queue_job")),
+    );
+
+    const meteringBody = bodyOf(fetchMock, 3);
+    expect(meteringBody).toEqual({
+      p_conversation_id: CONVERSATION_ID,
+      p_provider_message_id: PROVIDER_MESSAGE_ID,
+      p_claim_token: CLAIM_TOKEN,
+      p_model: OPENAI_INTAKE_MODEL,
+      p_prompt_version: INTAKE_EXTRACTION_PROMPT_VERSION,
+      p_input_tokens: 456,
+      p_output_tokens: 78,
+      p_total_tokens: 534,
     });
-    const serialized = JSON.stringify(logSpy.mock.calls);
-    for (const forbidden of [
-      MESSAGE_TEXT,
-      CONVERSATION_ID,
-      PROVIDER_MESSAGE_ID,
-      CLAIM_TOKEN,
-      OWNER_ID,
-      PET_ID,
-      "test-openai-key",
-      "conv-hash",
-      "vomiting",
-    ]) {
+
+    const serialized = JSON.stringify(meteringBody);
+    for (const forbidden of [MESSAGE_TEXT, OWNER_ID, "vomiting"]) {
       expect(serialized).not.toContain(forbidden);
     }
   });
 
-  it("does not log malformed or missing usage for an otherwise valid extraction", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const fetchMock = happyRoutes({
-      openai: () =>
-        openAiResponse(extractionJson(), {
-          input_tokens: 456,
-          output_tokens: -1,
-          total_tokens: 455,
-        }),
-    });
+  it("calls the metering RPC with a null token triplet when the model call omits usage", async () => {
+    const fetchMock = happyRoutes({ openai: () => openAiResponse(extractionJson()) });
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    expect(logSpy).not.toHaveBeenCalled();
+
+    const meteringBody = bodyOf(fetchMock, 3);
+    expect(meteringBody.p_input_tokens).toBeNull();
+    expect(meteringBody.p_output_tokens).toBeNull();
+    expect(meteringBody.p_total_tokens).toBeNull();
   });
 
-  it("does not emit usage when the model call fails", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const fetchMock = happyRoutes({ openai: () => new Response("provider failure", { status: 500 }) });
+  it.each([
+    { label: "recorded", response: meteringRow("recorded") },
+    { label: "duplicate", response: meteringRow("duplicate") },
+  ])("metering result $label preserves normal finalize behavior", async ({ response }) => {
+    const fetchMock = happyRoutes({ metering: () => response });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("finalize_intake_queue_job"))).toBe(true);
+  });
+
+  it.each([
+    { label: "stale_claim", response: meteringRow("stale_claim") },
+    { label: "not_found", response: meteringRow("not_found") },
+  ])("metering result $label acknowledges without finalizing", async ({ response }) => {
+    const fetchMock = happyRoutes({ metering: () => response, finalize: () => new Response("", { status: 500 }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries without finalizing when the metering RPC fails", async () => {
+    const fetchMock = happyRoutes({
+      metering: () => new Response("", { status: 500 }),
+      finalize: () => new Response("", { status: 500 }),
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("retry");
-    expect(logSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it("does not emit usage on a no-model handoff path", async () => {
+  it("no longer logs an openai_usage console line", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = happyRoutes({});
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
+    expect(logSpy.mock.calls.some(([message]) => message === "intake consumer: openai_usage")).toBe(false);
+  });
+
+  it("does not call the metering RPC on a no-model handoff path", async () => {
     const fetchMock = happyRoutes({
       context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, state_version: 5 }),
       finalize: () => finalizeRow("applied", { intake_stage: "human_handoff", state_version: 6 }),
@@ -1530,7 +1568,8 @@ describe("processIntakeQueueMessage: content-free OpenAI usage telemetry (Task 0
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    expect(logSpy).not.toHaveBeenCalled();
+    const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
+    expect(urls.some((url) => url.includes("record_intake_ai_usage_v1"))).toBe(false);
   });
 });
 
@@ -1607,7 +1646,7 @@ describe("processIntakeQueueMessage: Task 029 no-model terminal/budget path (Par
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("api.openai.com"))).toBe(true);
   });
@@ -1670,7 +1709,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 4);
+    const finalizeBody = bodyOf(fetchMock, 5);
     expect(finalizeBody.p_next_stage).toBe("human_handoff");
     expect(finalizeBody.p_reply_category).toBe("human_handoff");
   });
@@ -1703,7 +1742,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    expect(bodyOf(fetchMock, 4)).toMatchObject({
+    expect(bodyOf(fetchMock, 5)).toMatchObject({
       p_next_stage: "human_handoff",
       p_reply_category: "human_handoff",
     });
@@ -1734,7 +1773,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     await processIntakeQueueMessage(validBody, env);
 
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
   });
 
@@ -1765,7 +1804,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     // Asserted positively: `not.toBe` also passes on an undefined body, which
     // is how the old fixture could have gone green for the wrong reason.
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
   });
 
@@ -1797,7 +1836,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
     expect(finalizeBody.p_reply_category).not.toBe("human_handoff");
   });
@@ -1822,7 +1861,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     await processIntakeQueueMessage(validBody, env);
 
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("complaint_collection");
   });
 
@@ -1853,7 +1892,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     await processIntakeQueueMessage(validBody, env);
 
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).not.toBe("human_handoff");
   });
 
@@ -1885,7 +1924,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     await processIntakeQueueMessage(validBody, env);
 
-    expect(bodyOf(fetchMock, 3).p_next_stage).not.toBe("human_handoff");
+    expect(bodyOf(fetchMock, 4).p_next_stage).not.toBe("human_handoff");
   });
 
   it("does not trigger from stale history when the final inbound is not the claimed message", async () => {
@@ -1915,7 +1954,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
 
     await processIntakeQueueMessage(validBody, env);
 
-    expect(bodyOf(fetchMock, 3).p_next_stage).not.toBe("human_handoff");
+    expect(bodyOf(fetchMock, 4).p_next_stage).not.toBe("human_handoff");
   });
 
   it("never overrides a completed conversation even with repeated questions and no actionable fact", async () => {
@@ -1947,7 +1986,7 @@ describe("processIntakeQueueMessage: Task 029 no-progress fallback (Part 3)", ()
     const result = await processIntakeQueueMessage(validBody, env);
 
     expect(result).toBe("ack");
-    const finalizeBody = bodyOf(fetchMock, 3);
+    const finalizeBody = bodyOf(fetchMock, 4);
     expect(finalizeBody.p_next_stage).toBe("completed");
     expect(finalizeBody.p_reply_category).toBeNull();
   });
@@ -1979,10 +2018,10 @@ describe("processIntakeQueueMessage: selected-pet conflict handoff (Task 037)", 
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    // 5 calls: claim, context, OpenAI, clinic-operational-context (a
+    // 6 calls: claim, context, OpenAI, metering, clinic-operational-context (a
     // human_handoff-category reply is personalized before finalize), finalize.
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    const body = bodyOf(fetchMock, 4);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    const body = bodyOf(fetchMock, 5);
     expect(body.p_next_stage).toBe("human_handoff");
     expect(body.p_reply_category).toBe("human_handoff");
     expect(body.p_pet_id).toBe(PET_ID);
@@ -2024,10 +2063,10 @@ describe("processIntakeQueueMessage: selected-pet conflict handoff (Task 037)", 
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    // 4 calls: claim, context, OpenAI, finalize — an emergency-grade reply is
-    // not clinic-personalized (Task 031's gate is human_handoff-only).
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    const body = bodyOf(fetchMock, 3);
+    // 5 calls: claim, context, OpenAI, metering, finalize — an emergency-grade
+    // reply is not clinic-personalized (Task 031's gate is human_handoff-only).
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("human_handoff");
     const intakeData = body.p_intake_data as Record<string, unknown>;
     expect(intakeData.pet_name).toBe("Fluffy");
@@ -2048,13 +2087,13 @@ describe("processIntakeQueueMessage: selected-pet conflict handoff (Task 037)", 
 });
 
 describe("processIntakeQueueMessage: bounded work per attempt", () => {
-  it("calls claim, context, OpenAI, and finalize exactly once each on the happy path, and never completes separately", async () => {
+  it("calls claim, context, OpenAI, metering, and finalize exactly once each on the happy path, and never completes separately", async () => {
     const fetchMock = happyRoutes();
     vi.stubGlobal("fetch", fetchMock);
 
     await processIntakeQueueMessage(validBody, env);
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     const urls = fetchMock.mock.calls.map(([input]) => (input as { toString(): string }).toString());
     expect(urls.some((url) => url.includes("complete_intake_queue_job"))).toBe(false);
   });
@@ -2306,7 +2345,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("intake_confirmation");
     expect(body.p_reply_category).toBe("intake_confirmation");
     expect(body.p_reply_text).toBe(buildIntakeConfirmationText("Pamuk", "kedi", "topallıyor"));
@@ -2339,7 +2378,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("safety_check");
     expect(body.p_create_pet_name).toBe("Pamuk");
     expect(body.p_create_pet_species).toBe("kedi");
@@ -2368,7 +2407,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("safety_check");
     expect(body.p_pet_id).toBeNull();
     expect(body.p_create_pet_name).toBe("Pamuk");
@@ -2394,7 +2433,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("safety_check");
     expect(body.p_create_pet_name).toBeNull();
     expect(body.p_pet_id).toBe(PET_ID);
@@ -2420,7 +2459,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("intake_confirmation");
     expect(body.p_reply_category).toBe("intake_confirmation");
     expect(body.p_reply_text).toBe(INTAKE_CORRECTION_PROMPT_TEXT);
@@ -2451,7 +2490,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     expect(body.p_next_stage).toBe("intake_confirmation");
     expect(body.p_reply_text).toBe(buildIntakeConfirmationText("Karabaş", null, null));
     expect(body.p_create_pet_name).toBeNull();
@@ -2477,11 +2516,11 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    // 5 calls: claim, context, OpenAI, clinic-operational-context (a
+    // 6 calls: claim, context, OpenAI, metering, clinic-operational-context (a
     // human_handoff-category reply is personalized before finalize — see
     // `prepareOutboundReply`), finalize.
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    const body = bodyOf(fetchMock, 4);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    const body = bodyOf(fetchMock, 5);
     expect(body.p_next_stage).toBe("human_handoff");
     expect(body.p_reply_category).toBe("human_handoff");
     expect(body.p_create_pet_name).toBeNull();
@@ -2512,7 +2551,7 @@ describe("processIntakeQueueMessage: intake confirmation routing (Task 036)", ()
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const body = bodyOf(fetchMock, 3);
+    const body = bodyOf(fetchMock, 4);
     // Must be the safety questionnaire, not a confirmation and not a pet
     // creation — no p_create_pet_name on this turn.
     expect(body.p_reply_category).toBe("safety_questions");
@@ -2560,7 +2599,7 @@ describe("processIntakeQueueMessage: recording notice (Task 036)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    const text = bodyOf(fetchMock, 3).p_reply_text as string;
+    const text = bodyOf(fetchMock, 4).p_reply_text as string;
     expect(text.startsWith(RECORDING_NOTICE_DRAFT_TEXT)).toBe(true);
     // Prefixed, not replacing: the turn's own reply still follows it.
     expect(text.length).toBeGreaterThan(RECORDING_NOTICE_DRAFT_TEXT.length + 2);
@@ -2574,6 +2613,6 @@ describe("processIntakeQueueMessage: recording notice (Task 036)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     expect(await processIntakeQueueMessage(validBody, env)).toBe("ack");
-    expect(bodyOf(fetchMock, 3).p_reply_text as string).not.toContain(RECORDING_NOTICE_DRAFT_TEXT);
+    expect(bodyOf(fetchMock, 4).p_reply_text as string).not.toContain(RECORDING_NOTICE_DRAFT_TEXT);
   });
 });

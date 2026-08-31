@@ -1,4 +1,507 @@
-# Current task — 041 Safe clinic provisioning and offboarding
+# Current task — 042 Clinic-scoped AI usage ledger and monthly reconciliation
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-08-31 after Task 041 was reviewed, verified, committed
+as `a5c8287`, and closed. This is the roadmap's Phase 3 measurement task. It is
+deliberately limited to measurement and reconciliation; it does not build the
+owner admin UI, tariffs, automatic invoices, payments, or quotas.
+
+## Goal
+
+Replace the current transient `openai_usage` console line with an append-only,
+clinic-scoped, PII-minimized ledger for successful logical intake-AI turns, and
+add a closed monthly reconciliation RPC. A redelivered Queue job for the same
+representative inbound burst must not create a second ledger row. An operator
+must be able to reproduce one clinic's monthly AI-turn, AI-touched-conversation,
+and token totals without reading message content.
+
+## Fixed product and accounting decisions
+
+1. **This is measurement, not billing.** No amount in TRY or another currency,
+   plan, campaign, allowance, overage, invoice, payment, quota, or runtime block
+   is introduced. The output is evidence for manual pilot reconciliation only.
+2. The measured unit is one **logical successful intake-AI turn**: the current
+   representative WhatsApp event reached the reviewed OpenAI extractor and the
+   extractor returned a schema-valid result. A burst containing up to four
+   messages is one turn, not four messages.
+3. The ledger is written immediately after a valid OpenAI result and before
+   planning/finalization. Therefore it measures incurred AI work even if a
+   later state/route race suppresses the outbound reply. Such a rare race is an
+   internal-cost event, not automatically a customer charge.
+4. At-least-once delivery is deduplicated by the representative
+   `webhook_events` row resolved inside PostgreSQL from the already-claimed
+   `(conversation_id, provider_message_id, claim_token)`. The caller never
+   supplies `clinic_id`, a source-event ID, a conversation hash, or a billing
+   identity.
+5. A retry after a post-model crash may cause another real provider call, but
+   the ledger remains one logical turn and keeps the first recorded token
+   sample. The OpenAI project bill remains the truth for total provider spend;
+   this ledger is the tenant allocation/reconciliation truth. Documentation
+   must state this difference explicitly.
+6. `manual`, `personal`, unknown-account, unsupported-media, overflow/no-model,
+   completed/handoff no-model, failed-OpenAI, group/callback, DLQ, and outbound
+   delivery paths create no AI-usage row. A contact changed away from `ai`
+   after claim may still have the internal-cost event described in decision 3.
+7. Token usage is nullable as a coherent triplet. Provider usage absent or
+   invalid means all three stored token columns are null; the logical turn is
+   still counted and the report exposes a missing-token count.
+8. Monthly boundaries use `Europe/Istanbul`: inclusive local midnight on the
+   first day of the requested month and exclusive local midnight on the first
+   day of the next month.
+9. The ledger contains no raw/derived message text, phone number, owner name or
+   ID, pet name or ID, complaint, safety signal, provider message ID, Meta
+   credential, OpenAI key, response body, price, or invoice. It stores only the
+   clinic UUID, one-way SHA-256 hashes of internal random source/conversation
+   UUIDs, fixed event/model/prompt metadata, token counts, and server time.
+10. Ledger rows survive webhook/message retention because they have no FK to
+    those rows. They cascade on clinic deletion. The offboarding runbook must
+    require exporting any needed reconciliation report before finalization and
+    must say that financial/legal retention after clinic deletion remains a
+    human policy decision; this task does not invent a retention period.
+11. No staff or public RLS visibility is added. Both RPCs are server/operator
+    operations only. A future metadata-only `/admin` surface may consume the
+    report but is outside this task.
+
+## Required database implementation
+
+Create `supabase/migrations/20260831000200_usage_metering.sql` without editing
+any applied migration.
+
+### `public.clinic_ai_usage_events`
+
+Create an append-only runtime ledger with exactly the data needed by this task:
+
+- `id uuid primary key default gen_random_uuid()`;
+- `clinic_id uuid not null references public.clinics(id) on delete cascade`;
+- `event_kind text not null`, closed to the single value `intake_ai_turn`;
+- `source_event_hash text not null`, exactly 64 lowercase hex characters;
+- `conversation_hash text not null`, exactly 64 lowercase hex characters;
+- `model text not null`, trimmed, 1..120 code points, no control character;
+- `prompt_version text not null`, trimmed, 1..120 code points, no control
+  character;
+- nullable `input_tokens`, `output_tokens`, `total_tokens` as nonnegative
+  `bigint`; all three must be null or all three non-null;
+- `occurred_at timestamptz not null default now()`;
+- a named unique constraint on `(clinic_id, event_kind, source_event_hash)`;
+- an index suitable for `(clinic_id, occurred_at)` monthly reports.
+
+Enable RLS, create no policy, and revoke all table privileges from `public`,
+`anon`, `authenticated`, and `service_role`. Runtime access must be possible
+only through the two reviewed RPCs below. The table is append-only to runtime
+roles; the clinic FK cascade is the sole normal deletion path.
+
+### `public.record_intake_ai_usage_v1(...)`
+
+Create a narrowly scoped `security definer`, `volatile`, `search_path = ''`
+RPC. Revoke from `public`, `anon`, and `authenticated`; grant execute only to
+`service_role`. Inputs are:
+
+- conversation UUID;
+- provider message ID;
+- current intake claim token UUID;
+- model;
+- prompt version;
+- nullable input/output/total token counts.
+
+The RPC must validate all inputs, then resolve and lock the exact current
+representative inbound `webhook_events` row through its own `messages` and
+conversation relationship. It records only while that row is `processing` and
+the supplied claim token is current. `clinic_id`, `source_event_hash`, and
+`conversation_hash` are derived inside the RPC; both hashes use SHA-256 over
+the internal UUID text and are lowercase hex. No caller-provided tenant or hash
+is accepted.
+
+Return exactly one closed result row with `recorded | duplicate | stale_claim |
+not_found`. Use insert-on-conflict first-write-wins semantics. A duplicate must
+not update model, prompt, tokens, or time. Invalid input raises and partial
+mutation is impossible.
+
+### `public.get_clinic_monthly_usage_v1(...)`
+
+Create a read-only `security definer`, `stable`, `search_path = ''` RPC,
+execute granted only to `service_role`. Inputs are `clinic_id` and a date that
+must be the first day of a month. Return one closed row:
+
+- `result`: `reported | clinic_not_found`;
+- clinic UUID and requested `period_start` / exclusive `period_end` dates;
+- `ai_turn_count`;
+- `ai_touched_conversation_count` (`count(distinct conversation_hash)`);
+- summed input/output/total tokens, using zero only for the aggregate when no
+  known values exist;
+- `missing_token_usage_count`.
+
+Use Europe/Istanbul month boundaries against `occurred_at`. Never return event
+hashes, event rows, message/provider identifiers, or content. A known clinic
+with no events reports zeros. A missing clinic reports `clinic_not_found` with
+zero aggregates.
+
+## Required Worker implementation
+
+1. Add `src/usageMetering.ts` with strict native-fetch clients for both RPCs.
+   Reuse existing Supabase bindings; add no env field or dependency. Validate
+   input before fetch, require HTTPS or loopback, use an exact 10-second
+   `AbortSignal.timeout`, accept only one plain exact-key response row, and
+   fail closed with fresh result objects. Never log request/response bodies.
+2. In `src/intakeConsumer.ts`, after `extractIntakeViaOpenAi` returns a valid
+   result and before any planning/finalizer branch, call
+   `recordIntakeAiUsageV1` exactly once with `OPENAI_INTAKE_MODEL`,
+   `INTAKE_EXTRACTION_PROMPT_VERSION`, the current claim identity, and the
+   nullable usage triplet.
+3. `recorded` and `duplicate` continue the existing flow. `stale_claim` and
+   `not_found` acknowledge without planning/finalization. Transport/parser
+   `failed` retries. Remove the transient `openai_usage` console line; no new
+   identifiers or usage details are logged.
+4. Do not alter prompts, model selection, clinical/safety rules, replies,
+   appointment behavior, queue leases, routing modes, outbound delivery, or
+   webhook semantics.
+
+## Required automated evidence
+
+### SQL rollback fixture
+
+Add `supabase/tests/042_usage_metering.sql` under `begin; ... rollback;` and
+prove at least:
+
+1. a valid current AI claim records exactly one PII-minimized row with the
+   correct clinic, fixed metadata, hashes, token counts, and no source UUID or
+   provider ID column;
+2. exact replay returns `duplicate`, leaves the first row byte-for-byte
+   unchanged, and at-least-once delivery cannot double-count;
+3. another token, conversation, provider ID, tenant, manual/personal route, or
+   non-processing event cannot create a row;
+4. null token usage is accepted only as an all-null triplet; negative/partial,
+   malformed model/prompt, and other invalid inputs fail with zero mutation;
+5. two logical turns in one conversation count as two turns and one touched
+   conversation; another conversation counts separately;
+6. Europe/Istanbul start-inclusive/end-exclusive month boundaries and the
+   missing-token aggregate are exact;
+7. known-empty and absent-clinic report shapes are exact;
+8. authenticated/anon have no table visibility or mutation and cannot execute
+   either RPC; service_role has execute but no direct table privilege;
+9. clinic deletion cascades ledger rows; no fixture residue remains.
+
+The fixture must scope every mutation/assertion to its own fixed UUIDs and must
+not claim or update unrelated rows in a shared test database.
+
+### TypeScript tests
+
+Add `test/usageMetering.test.ts` covering strict validation, exact request
+shape/headers/path, 10-second timeout argument, all closed results, hostile
+objects/getters/keys, non-2xx/malformed JSON, missing env, fresh failure
+objects, and both monthly report result shapes.
+
+Extend `test/intakeConsumer.test.ts` to prove:
+
+- valid usage and null usage each call the metering RPC once before the chosen
+  finalizer;
+- `recorded` and `duplicate` preserve the existing behavior;
+- metering `failed` retries without finalization; stale/not-found acknowledge
+  without finalization;
+- OpenAI failure and every existing no-model/manual/personal/media/overflow
+  path make zero metering calls;
+- no `openai_usage` token log remains.
+
+Do not weaken existing tests or replace exact assertions with snapshots.
+
+## Documentation
+
+Add `docs/usage-metering.md` in Turkish-friendly plain language and narrowly
+update:
+
+- `docs/database-schema.md`;
+- `docs/production-readiness.md`;
+- `docs/clinic-lifecycle.md` (export-before-offboarding and deletion boundary);
+- `docs/saas-urunlestirme-yol-haritasi.md` (Phase 3 status only).
+
+State explicitly: logical turn versus real provider call, conversation versus
+message, nullable token evidence, Istanbul month boundary, no PII/content,
+internal-cost race, no automatic billing/quota, report export before clinic
+deletion, and the unresolved human legal/financial retention decision.
+
+## Scope boundaries
+
+Do not add or change:
+
+- `/admin`, `/staff`, public routes, authentication UI, branding, charts, CSV
+  download, pricing plans, discounts, campaigns, invoices, payments, quota or
+  enforcement;
+- Meta pricing/conversation APIs or any new external API;
+- prompt/model/eval corpus, safety logic, veterinary copy, KVKK notice copy;
+- env bindings, Wrangler config, dependencies, lockfile;
+- existing migration files or production/staging resources.
+
+No paid OpenAI eval is required because prompt, model, extractor schema,
+safety, and reply behavior are unchanged.
+
+## Allowed changes
+
+- `supabase/migrations/20260831000200_usage_metering.sql` (new)
+- `supabase/tests/042_usage_metering.sql` (new)
+- `src/usageMetering.ts` (new)
+- `test/usageMetering.test.ts` (new)
+- `src/intakeConsumer.ts`
+- `test/intakeConsumer.test.ts`
+- `docs/usage-metering.md` (new)
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/clinic-lifecycle.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` only in its Task 042 **Observed context** and **Delivery
+  record** sections
+
+The pre-existing `.gitignore` change is user-owned and must remain untouched.
+`PROJECT_CONTEXT.md` is Codex-owned and is updated only after review.
+
+## Required verification and review gates
+
+The implementer runs, without a real DB or external service:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+The implementer must mark the migration and SQL fixture `NOT RUN`, and must not
+commit, push, deploy, call a real service, or run paid evals.
+
+Codex then reviews the diff/call paths, reruns local checks, applies the full
+migration chain plus Fixture 042 on disposable `vetai-test`, verifies zero
+residue, updates `PROJECT_CONTEXT.md`, and commits only the reviewed Task 042
+files. Claude Opus performs a mandatory read-only review of append-only
+semantics, tenant derivation, RLS/grants, deduplication, monthly boundary,
+PII/KVKK surface, and the difference between measurement and billing. Staging
+activation and a real monthly pilot reconciliation require separate explicit
+user authorization after commit.
+
+## Observed context
+
+- Every `public.*_v1` RPC in `supabase/migrations/20260831000100_clinic_lifecycle.sql`
+  (`provision_clinic_v1`, `suspend_clinic_v1`, `resume_clinic_v1`,
+  `prepare_clinic_offboarding_v1`, `finalize_clinic_offboarding_v1`,
+  `claim_outbound_message_v2`) uses `security invoker` with a direct
+  `service_role` grant on the underlying table. `security definer` only
+  otherwise appears on internal `vetai_private` schema helpers
+  (`vetai_private.is_clinic_staff` in `20260806000000_core_tenant_schema.sql`,
+  the two `sync_*_work_item` trigger functions in
+  `20260809000400_staff_work_items.sql`) — never on a public, Worker-callable
+  RPC. This confirms the new migration's `security definer` +
+  zero-direct-grant design for `record_intake_ai_usage_v1` and
+  `get_clinic_monthly_usage_v1` is a deliberate, verified deviation from this
+  family's established convention (required because `service_role` has no
+  direct grant on `clinic_ai_usage_events` to rely on), not an oversight.
+- `pg_catalog.encode(pg_catalog.sha256(<uuid>::text::bytea), 'hex')` was
+  already used once in this codebase, in
+  `supabase/migrations/20260831000100_clinic_lifecycle.sql` (offboarding
+  token hashing) — confirming no `pgcrypto` extension is needed and the idiom
+  is consistent with existing repository convention.
+- `src/clinicLifecycle.ts` (`buildEndpoint`, lines 115-127) has the exact same
+  `!env.SUPABASE_URL.trim()` guard as the new `src/usageMetering.ts`, with no
+  `typeof env.SUPABASE_URL !== "string"` check either. `src/usageMetering.ts`
+  intentionally mirrors this exact template rather than introducing a
+  stricter guard the sibling file doesn't have.
+- `rtk` (the user's global token-saving CLI prefix) is not installed in this
+  shell (`rtk: command not found`); all verification commands below were run
+  with plain `pnpm`/`git` instead.
+- `.gitignore`'s pending modification (`tmp/` line) predates this session and
+  was not touched. `CURRENT_TASK.md`'s pending modification predates this
+  session too (`git diff --stat CURRENT_TASK.md` before any edit here showed
+  291 insertions/1 deletion — the Task 042 section itself, authored by
+  Codex) and only this task's two placeholder sections were filled in.
+
+## Delivery record
+
+**Changed/added files** (nothing outside the permitted list; nothing
+committed, pushed, or deployed):
+- `supabase/migrations/20260831000200_usage_metering.sql` (new) — NOT RUN
+  against any database.
+- `supabase/tests/042_usage_metering.sql` (new, rollback-only fixture) — NOT
+  RUN against any database.
+- `src/usageMetering.ts` (new) — native-fetch client for both RPCs, mirrors
+  `src/clinicLifecycle.ts`'s per-file boilerplate convention exactly.
+- `src/intakeConsumer.ts` (edited) — removed the transient
+  `console.log("intake consumer: openai_usage", ...)` line; added
+  `recordIntakeAiUsageV1` call immediately after a successful extraction and
+  before planning/finalization, branching `recorded`/`duplicate` → continue,
+  `stale_claim`/`not_found` → `"ack"`, `failed` → `"retry"`.
+- `test/intakeConsumer.test.ts` (edited) — added `metering` route
+  plumbing (`Routes` type, `routedFetch` dispatch on
+  `/rpc/record_intake_ai_usage_v1`, `happyRoutes` default
+  `meteringRow("recorded")`, `meteringRow()` helper); replaced the old
+  Task-038 `openai_usage` telemetry block with a metering-wiring block (exact
+  request shape, null-usage triplet, `recorded`/`duplicate` preservation,
+  `stale_claim`/`not_found` ack-without-finalize, `failed` retry-without-
+  finalize, no leftover `console.log`, zero metering calls on the no-model
+  handoff path); every pre-existing `bodyOf(fetchMock, N)` index and
+  `toHaveBeenCalledTimes(N)` count downstream of a successful extraction was
+  shifted by the one new interposed fetch call.
+- `test/usageMetering.test.ts` (new, 73 tests) — strict validation (wrong
+  types/extra-missing keys/invalid UUIDs/control characters/out-of-range or
+  non-integer tokens/incoherent token triplet/invalid month_start), exact
+  request shape/headers/timeout, all closed result kinds for both RPCs
+  including malformed/wrong-shape/non-plain/symbol-keyed rows, hostile
+  inputs, missing/blank env, network failure, non-2xx responses, and
+  no-logging checks.
+- `docs/usage-metering.md` (new, Turkish, plain language) — logical turn vs.
+  real provider call, conversation vs. message, nullable token evidence,
+  Istanbul month boundary, no PII/content, internal-cost race, no automatic
+  billing/quota, export-before-offboarding, and the open human
+  legal/financial retention decision.
+- `docs/clinic-lifecycle.md` (edited) — inserted an export-the-usage-report
+  step into the offboarding order, before `finalize_clinic_offboarding_v1`
+  (old steps 5-7 renumbered 6-8).
+- `docs/database-schema.md` (edited) — appended a "Clinic AI usage ledger and
+  monthly reconciliation (Task 042)" section describing the table, both
+  RPCs, and the zero-grant/RLS-no-policy access model, matching the existing
+  Task 041 section's style.
+- `docs/production-readiness.md` (edited) — added one bullet to the KVKK
+  human-gates retention list for the exported reconciliation report,
+  explicit that this document does not set that retention period.
+- `docs/saas-urunlestirme-yol-haritasi.md` (edited) — appended a "10b. Task
+  042" Phase-3 status subsection matching the existing Task 041 (10a)
+  subsection's style and disclaimers.
+
+**Verification commands run, exact results:**
+- `pnpm install --frozen-lockfile` → `Already up to date. Done in 516ms
+  using pnpm v11.9.0`.
+- `pnpm typecheck` (`tsc --noEmit`) → clean, no output, exit 0. Run twice
+  (after the source edit and again after the test edits).
+- `pnpm test` (full suite via vitest) → **36 files, 1790 passed, 2 skipped
+  (pre-existing live-eval tests unrelated to this task), 0 failed.** Run
+  independently twice (once mid-work showing the expected 80 pre-fix
+  failures in `test/intakeConsumer.test.ts` before the test file was
+  updated, once at the end fully green) to avoid trusting a single pass.
+  `test/intakeConsumer.test.ts` alone: 154/154 passing.
+  `test/usageMetering.test.ts` alone: 73/73 passing.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` → `Total
+  Upload: 179.82 KiB / gzip: 37.01 KiB`, bindings listed
+  (`INTAKE_QUEUE`, `APP_TIMEZONE`, `WHATSAPP_GRAPH_API_VERSION`), `--dry-run:
+  exiting now.` — no error.
+- `git diff --check` → clean (only benign LF→CRLF autocrlf warnings on
+  Windows, no trailing-whitespace or conflict-marker errors reported).
+
+**NOT RUN (per explicit task constraint — never executed against any
+database):**
+- `supabase/migrations/20260831000200_usage_metering.sql`
+- `supabase/tests/042_usage_metering.sql`
+
+**Limitations and risks for Codex/Opus to inspect:**
+1. The migration and fixture are hand-written and manually reviewed against
+   existing patterns only; neither has ever been executed. They need a real
+   disposable-database run (`begin; ... rollback;` for the fixture) before
+   this task can leave READY.
+2. `record_intake_ai_usage_v1`'s resolution join
+   (`messages` ⋈ `webhook_events` on `clinic_id, provider_event_id`/
+   `whatsapp_message_id`, filtered to `direction = 'inbound'` and
+   `processing_status = 'processed'`) should be re-checked against the
+   exact current shape of `claim_intake_queue_job`'s own resolution query for
+   any drift, since both must agree on what "the representative event" means
+   for the same `(conversation_id, provider_message_id)` pair.
+3. `get_clinic_monthly_usage_v1`'s Istanbul month-boundary arithmetic
+   (`v_period_start::timestamp at time zone 'Europe/Istanbul'`) inverts the
+   forward idiom used elsewhere in this codebase; it is exercised by the
+   fixture's proof blocks 7-9 (start-inclusive, end-exclusive, cross-year
+   scenarios) but those proofs have not been run.
+4. `src/usageMetering.ts`'s `buildEndpoint` shares `src/clinicLifecycle.ts`'s
+   lack of a `typeof env.SUPABASE_URL !== "string"` guard (both only check
+   `.trim()`), so a genuinely `undefined` `SUPABASE_URL` would throw
+   synchronously rather than resolve to `{ kind: "failed" }`. This is a
+   pre-existing characteristic of the established pattern this file
+   deliberately mirrors, not a regression introduced here — flagged in case
+   the whole RPC-client family is hardened later.
+5. `getClinicMonthlyUsageV1` reads `input.clinicId`/`input.monthStart` once
+   during validation and again when building the RPC body; a getter-backed
+   hostile input object could in principle return different values on the
+   second read. `recordIntakeAiUsageV1` avoids this by capturing each field
+   into a plain snapshot exactly once before validating. This asymmetry is
+   real but low-risk (the Worker only ever passes plain-object literals it
+   constructed itself into this function) — noted for review rather than
+   changed, to keep the diff minimal.
+6. Per decision 3 in this task's product/accounting section, the ledger
+   write happens before finalize; a rare state/route race after a successful
+   OpenAI call could record usage for a turn whose reply never reaches the
+   customer. This is intentional per the task contract (an internal-cost
+   event) but is worth Codex/Opus double-checking against the exact current
+   finalize/race-handling logic in `intakeConsumer.ts` and
+   `intakeJobLease.ts`.
+7. No test exercises the fixture SQL or migration SQL directly (per the
+   explicit constraint against running them) — the only proof of the SQL's
+   correctness right now is careful manual construction against confirmed
+   existing conventions, which Codex/Opus should verify empirically in a
+   disposable database before this task can close.
+
+## Codex review record (in progress) — 2026-08-31
+
+Codex traced the current Task 039 burst claim, Task 034 strict allowlist,
+Task 041 clinic lifecycle, both new RPCs, the Worker call site, the strict
+client parsers, fixture, and documentation. The implementation direction is
+accepted, but four pre-database issues were fixed before opening the external
+gates:
+
+1. Fixture 042 had no explicit `ai` routes under the strict allowlist and
+   attempted to claim several same-conversation messages ingested inside one
+   transaction. The former would return `ignored`; the latter could be
+   `superseded` by the burst representative rule. Fixture contacts are now
+   explicitly scoped to `ai | manual | personal`, AI proof messages use
+   independent conversations, and the aggregate-only same-conversation case
+   reuses an already-proven derived conversation hash without depending on
+   burst timing.
+2. The fixture's clinic activation and final residue assertion were broader
+   than its own fixed UUIDs. Both are now fixture-scoped; manual/personal
+   exclusion and the RLS/no-policy/zero-direct-service-role-grant catalog
+   boundary are explicit assertions.
+3. `src/usageMetering.ts` now rejects unsafe integers, wrong-typed Supabase
+   bindings, changing getter values, response rows for another clinic/month,
+   negative/fractional/incoherent aggregates, and nonzero
+   `clinic_not_found` rows. PostgreSQL `date` fields are parsed as their actual
+   `YYYY-MM-DD` Data API shape. Both input objects are exact-key and
+   single-read before fetch.
+4. The legal-facing documentation no longer calls the hashes anonymous or
+   simply "PII-free": a party that already has the internal UUID can recompute
+   the hash, so the docs now classify them as protected pseudonymous data.
+
+Codex local verification after these fixes:
+
+```text
+pnpm install --frozen-lockfile -> PASS, already up to date
+pnpm typecheck                 -> PASS, zero errors
+pnpm test                      -> PASS, 36 files, 1,800 passed, 2 skipped
+targeted tests                 -> PASS, 237/237 before the full run
+wrangler deploy --dry-run      -> PASS, no deploy, bindings unchanged
+git diff --check               -> PASS, only line-ending notices
+```
+
+The linked project ref was checked through the Supabase CLI and is exactly
+`vetai-test`; `vetai-staging` is a different, unlinked project. After explicit
+user approval, Codex applied only the Task 042 migration to that disposable
+project and ran `supabase/tests/042_usage_metering.sql` through the linked SQL
+query path. The rollback fixture returned `PASS`. A separate read-only residue
+check found zero Task 042 fixture clinics, accounts, routes, owners,
+conversations, messages, webhook events and usage rows. Catalog checks also
+confirmed RLS enabled, zero policies, no direct `service_role` table `SELECT`,
+and both RPCs present under their exact signatures. Migration history was not
+repaired or changed. `vetai-staging` and production remain untouched.
+
+Mandatory Claude Opus review initially returned `CHANGES_REQUIRED` for two
+documentation gaps only. `docs/usage-metering.md` now states the mandatory
+migration-first/Worker-second activation order and its bounded retry/DLQ cost,
+and it documents that `stale_claim | not_found` can leave a paid provider call
+unmetered. The narrow read-only re-check returned `PASS`; no code or SQL change
+was required for those findings.
+
+Two non-blocking follow-ups are intentionally carried forward: the external
+KVKK inventory must add `clinic_ai_usage_events` before legal approval, and
+the removed `openai_usage` console log must be deleted from the stale prose in
+`docs/ai-behavior-and-safety.md` and `docs/inbound-queue.md` (including the
+obsolete claim that a retry writes another usage record). Task 042 is
+`COMPLETE`; commit evidence is recorded in Git history.
+
+---
+
+# Previous task — 041 Safe clinic provisioning and offboarding
 
 Status: `COMPLETE`
 

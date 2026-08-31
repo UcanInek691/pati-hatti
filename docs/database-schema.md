@@ -892,3 +892,43 @@ transaction so lifecycle `FOR UPDATE` transitions cannot race a stale active
 decision. See [`docs/clinic-lifecycle.md`](clinic-lifecycle.md) for the
 closed result sets, the runtime boundary, and the pilot activation/offboarding
 order.
+
+## Clinic AI usage ledger and monthly reconciliation (Task 042)
+
+`supabase/migrations/20260831000200_usage_metering.sql` and
+`supabase/tests/042_usage_metering.sql`. The implementer did not apply or run
+them. Codex later applied the migration only to disposable `vetai-test`; the
+rollback fixture passed with zero residue. Staging/production remain unchanged
+and mandatory read-only Opus review passed.
+
+A new `public.clinic_ai_usage_events` table records one row per logical
+successful intake-AI turn: `clinic_id`, fixed `event_kind = 'intake_ai_turn'`,
+SHA-256 `source_event_hash`/`conversation_hash` (hex, derived from internal
+random UUIDs, never a raw identifier, but still treated as protected
+pseudonymous data), `model`/`prompt_version` text, a
+nullable-as-a-coherent-triplet `input_tokens`/`output_tokens`/`total_tokens`,
+and `occurred_at`. It carries no foreign key to `messages` or
+`webhook_events`, so it survives their retention and outlives a redelivery
+window, but cascades on `clinics` delete. Unlike every other table in this
+project, RLS is enabled with **no policy** and **no grant at all** —
+including `service_role` — so the ledger is reachable only through two
+`SECURITY DEFINER`, `set search_path = ''` RPCs:
+
+- `record_intake_ai_usage_v1(p_conversation_id, p_provider_message_id,
+  p_claim_token, p_model, p_prompt_version, p_input_tokens, p_output_tokens,
+  p_total_tokens)` re-resolves and locks the representative
+  `webhook_events` row through the already-claimed
+  `(conversation_id, provider_message_id, claim_token)` itself — the caller
+  never supplies `clinic_id` or either hash — and deduplicates at-least-once
+  Queue delivery via `unique (clinic_id, event_kind, source_event_hash)` +
+  `on conflict do nothing`, returning `recorded`, `duplicate`, `stale_claim`,
+  or `not_found`.
+- `get_clinic_monthly_usage_v1(p_clinic_id, p_month_start)` returns
+  clinic-scoped aggregates (turn count, AI-touched-conversation count, token
+  sums, missing-token count) over an `Europe/Istanbul` calendar month, never
+  event rows, hashes, or content.
+
+This is measurement only: no currency amount, plan, quota, or runtime
+enforcement is introduced. See [`docs/usage-metering.md`](usage-metering.md)
+for the full contract, the internal-cost-versus-billing distinction, and the
+offboarding export requirement.

@@ -31,6 +31,11 @@ itself.
   - retention periods for messages, intake data, and staff work items —
     **this document does not set or suggest a retention period; that is a
     legal decision**,
+  - retention of the clinic AI-usage reconciliation report (Task 042,
+    [`usage-metering.md`](usage-metering.md)) exported before an offboarding —
+    the ledger itself has no independent retention and is deleted with the
+    clinic, so this is only about the exported report; **this document does
+    not set that period either**,
   - the deletion/export process for a data subject's request,
   - processor agreements with Cloudflare, Meta, OpenAI, and Supabase's
     hosting provider.

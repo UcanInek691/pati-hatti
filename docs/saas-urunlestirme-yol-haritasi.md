@@ -284,6 +284,28 @@ Task 041, Faz 2'yi ("Güvenli provizyon/offboarding") uygular:
 Admin paneli (Faz 4), faturalama (Faz 3/7) ve UI aynı göreve eklenmez;
 `src/clinicLifecycle.ts` hiçbir public route'a bağlanmaz.
 
+## 10b. Task 042 (uygulandı, disposable veritabanında doğrulandı)
+
+Task 042, Faz 3'ü ("Ölçüm") uygular:
+
+- klinik başına append-only bir AI kullanım defteri
+  (`clinic_ai_usage_events`) ve iki `SECURITY DEFINER` RPC
+  (`record_intake_ai_usage_v1`, `get_clinic_monthly_usage_v1`) — at-least-once
+  Queue teslimatını çift saymadan, ham mesaj/doğrudan iletişim alanı taşımadan
+  (UUID hash'leri yine korunan pseudonymous veridir);
+- `Europe/Istanbul` takvim ayına göre klinik başına aylık tur/token
+  mutabakat raporu;
+- faturalama, tarife, kota veya admin/personel arayüzü eklemez — sadece
+  ölçüm ve manuel pilot mutabakatı için kanıt üretir;
+- implementer tarafından migration ve fixture hiçbir veritabanında
+  çalıştırılmadı; Codex daha sonra yalnız disposable `vetai-test` üzerinde
+  migration'ı uyguladı, rollback fixture'ı PASS verdi ve sıfır artık
+  doğrulandı. Staging/production değişmedi; zorunlu salt-okunur Opus incelemesi
+  PASS verdi — bkz. [`docs/usage-metering.md`](usage-metering.md).
+
+Admin paneli (Faz 4), gerçek faturalama (Faz 3/7'nin geri kalanı) ve kota
+aynı göreve eklenmez; `src/usageMetering.ts` hiçbir public route'a bağlanmaz.
+
 ## 11. Kaynak ve yeniden doğrulama notu
 
 - Cloudflare Worker secret'ları: https://developers.cloudflare.com/workers/configuration/secrets/
