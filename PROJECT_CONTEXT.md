@@ -591,9 +591,13 @@ the V2 migration applied, the exact one-account registry was stored only as an
 encrypted Cloudflare secret, preview `/health` and `/ready` returned 200, the
 Worker deployed with its Queue/Cron bindings, and one real user-initiated
 WhatsApp smoke reached Meta `read` on attempt 1 with no outstanding outbox
-work. The old global secret is unused by the active Worker and is retained
-only through the bounded rollback window ending 2026-09-01 03:15
-`Europe/Istanbul`; production remains untouched.
+work. The staging rollback window was closed early after that proof: Maya
+authorized deletion of the legacy
+`WHATSAPP_ACCESS_TOKEN` from `vetai-staging`, secret-name inspection confirmed
+the per-account registry remained, and `/ready` still returned HTTP 200. A
+Task 039 Worker rollback now requires explicitly restoring a valid legacy
+secret first; the unused V1 RPC remains available. Production remains
+untouched.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:

@@ -1,4 +1,190 @@
-# Current task — 040 Per-account Meta credential isolation
+# Current task — 041 Safe clinic provisioning and offboarding
+
+Status: `READY`
+
+Opened by Codex on 2026-08-31 after Task 040 passed repository,
+disposable-database, mandatory Opus and real staging activation gates. The
+single pilot account now uses an exact account-bound encrypted Meta
+credential; the legacy global staging secret has been removed.
+
+## Goal
+
+Provide the smallest repeatable database lifecycle for adding, suspending,
+resuming and permanently offboarding a clinic without free-form production
+SQL, a platform-admin UI, billing logic or credential values in PostgreSQL.
+
+This task is the backend foundation for the future metadata-only `/admin`
+surface. It does not build that surface.
+
+## Fixed architecture decisions
+
+### A. Clinic lifecycle state
+
+1. Add `clinics.operational_status` with the closed values
+   `suspended | active | offboarding`. Existing clinics backfill to `active`;
+   newly provisioned clinics start `suspended`.
+2. Add null-coherent suspension/offboarding timestamps and a current
+   offboarding UUID token. A token exists only in `offboarding`.
+3. Status is operational metadata. It must not weaken existing tenant RLS,
+   authenticated staff reads, composite FKs or erasure cascades.
+
+### B. Service-role-only lifecycle RPCs
+
+Add five `SECURITY INVOKER`, empty-search-path, service-role-only RPCs:
+
+1. `provision_clinic_v1(...)`
+   - accepts caller-generated canonical UUIDs for clinic and WhatsApp account,
+     an existing Auth user UUID, clinic name/contact profile, Meta
+     phone-number ID/display name and staff role;
+   - validates all inputs before mutation;
+   - atomically inserts the clinic, primary `clinic_staff` membership and
+     WhatsApp account with `automation_default = 'personal'`;
+   - creates no AI route, weekly hours, appointment slots, owner/pet/message
+     data or credential value;
+   - exact replay returns `already_provisioned`; any partial/different reuse
+     raises and rolls back rather than merging tenants.
+2. `suspend_clinic_v1(clinic_id)`
+   - locks the clinic, changes `active` to `suspended`, and atomically removes
+     only that clinic's `pending | processing` outbox rows;
+   - preserves accepted/failed history, routes, staff, hours and slots;
+   - returns a closed `suspended | already_suspended | not_found` result.
+3. `resume_clinic_v1(clinic_id)`
+   - changes only `suspended` to `active`;
+   - creates no route and sends nothing;
+   - refuses `offboarding` and returns a closed result.
+4. `prepare_clinic_offboarding_v1(clinic_id)` and
+   `finalize_clinic_offboarding_v1(clinic_id, token)` form one two-step
+   destructive workflow:
+   - prepare locks and moves the clinic to `offboarding`, removes its
+     `pending | processing` outbox work and returns a fresh UUID token;
+   - the operator must remove the account entry from the encrypted Cloudflare
+     registry and verify `/ready` before finalize;
+   - finalize accepts only the current token, deletes the clinic through the
+   existing cascades, and writes a backend-only PII-free receipt containing
+   only clinic UUID, a one-way hash of the offboarding token, action and
+   timestamp;
+   - exact finalize replay hashes the supplied token and returns
+     `already_offboarded`; wrong/stale tokens fail closed. No RPC can inspect,
+     store or mutate a Meta token.
+
+All RPCs must revoke `PUBLIC`, `anon`, and `authenticated`; only
+`service_role` may execute them. No dynamic SQL.
+
+### C. Runtime suspension boundary
+
+1. The effective contact-automation resolver must return `personal` for any
+   non-`active` clinic before message content, owner or conversation mutation.
+   Unlisted/personal privacy behavior remains unchanged.
+2. `claim_outbound_message_v2()` must claim rows only for active clinics.
+   Suspension/prepare cleanup handles unclaimed work. A Meta request already
+   handed off before the database lock cannot be recalled and must be
+   documented truthfully.
+3. Delivery-status callbacks for already accepted rows remain recordable while
+   a clinic is suspended/offboarding.
+4. Staff RLS visibility remains available during suspension so operators can
+   inspect and resolve work; no staff mutation privilege is broadened.
+
+### D. Operator boundary
+
+1. Add a server-only native-fetch TypeScript client for these fixed RPCs with
+   strict input and exact response validation. It is not wired to a public
+   route in this task.
+2. Document the exact pilot order:
+   provision suspended → add registry entry → `/ready` → configure hours,
+   slots and explicit AI routes through existing reviewed operations → resume
+   → synthetic inbound/outbound/status smoke.
+3. Document the reverse order:
+   suspend/prepare → remove registry entry → `/ready` → confirm no outstanding
+   outbox → finalize offboarding → revoke Meta/system-user access externally.
+4. Supabase Auth user creation/invitation remains an explicit prerequisite;
+   this task links an existing user UUID and does not handle passwords, OTPs,
+   email invitations or browser sessions.
+
+## Required behavior and tests
+
+1. Forward migration plus rollback-only SQL fixture must prove:
+   - existing-clinic backfill and new suspended provisioning;
+   - exact replay, conflict rollback and missing Auth user rejection;
+   - no AI route or business data created by provisioning;
+   - suspended/offboarding inbound resolves personal with zero
+     webhook/owner/conversation/message residue;
+   - V2 claim skips non-active clinics while status callbacks remain usable;
+   - suspension deletes only tenant-matching pending/processing rows and
+     preserves accepted/failed rows and other clinics;
+   - resume cannot escape offboarding;
+   - current-token finalize, stale-token rejection, exact replay and complete
+     existing cascade behavior;
+   - RLS/grants, cross-tenant denial and zero fixture residue.
+2. TypeScript tests cover invalid inputs, malformed/additive Data API shapes,
+   non-2xx/JSON failures, 10-second timeout, fresh results, no logging and no
+   secret/message/provider-body leakage.
+3. Existing inbound, selective-automation, outbound-delivery and status
+   fixtures must remain compatible; update only when the new lifecycle state
+   requires an explicit active-clinic seed.
+
+## Scope boundaries
+
+Not included:
+
+- `/admin` or visual `/staff` redesign;
+- Auth-user creation, invitation or password handling;
+- Cloudflare/Meta secret mutation from runtime code;
+- billing, packages, quotas, usage metering or payment;
+- notification, composer, multi-branch or Embedded Signup;
+- prompt/model/extraction/safety/reply changes;
+- production/staging migration, deploy, secret creation or real service call.
+
+No dependency or lockfile change is allowed.
+
+## Allowed changes
+
+- `supabase/migrations/20260831000100_clinic_lifecycle.sql` (new);
+- `supabase/tests/041_clinic_lifecycle.sql` (new);
+- only existing SQL fixture files whose active-clinic seeds must be made
+  explicit; already-applied migration files must not be edited (the new
+  forward migration re-creates any affected function bodies);
+- `src/clinicLifecycle.ts` (new);
+- `test/clinicLifecycle.test.ts` (new);
+- `docs/clinic-lifecycle.md` (new);
+- narrow updates to `docs/database-schema.md`,
+  `docs/saas-urunlestirme-yol-haritasi.md`,
+  `docs/staging-runbook.md`, and `docs/production-readiness.md`;
+- `CURRENT_TASK.md` only in **Observed context** and **Delivery record**.
+
+Do not modify `src/index.ts`, `src/env.ts`, Worker configuration, prompts,
+clinical copy, package files, unrelated migrations/tests or
+`PROJECT_CONTEXT.md`.
+
+## Required verification and review gates
+
+The implementing agent must run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+Migration apply and SQL fixture remain `NOT RUN` for the implementer. Codex
+must review the full diff/call paths, run the migration and rollback proof on
+disposable `vetai-test`, and request mandatory read-only Claude Opus review
+for lifecycle locking, RLS/tenant isolation, destructive offboarding and KVKK
+erasure semantics. No paid OpenAI eval is required because this task cannot
+change model behavior.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementing agent. Do not change `Status`.
+
+---
+
+# Previous task — 040 Per-account Meta credential isolation
 
 Status: `COMPLETE`
 
@@ -537,11 +723,13 @@ verified Task 040 commit. Production was not touched.
   from the staging database's exact account UUID/phone-number-ID pair and
   saved only as Cloudflare's encrypted
   `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` secret.
-- Cloudflare secret-name inspection confirmed both the new registry and the
-  legacy `WHATSAPP_ACCESS_TOKEN`. The latter is not read by the Task 040
-  Worker and is retained only for a bounded Worker-first rollback window
-  ending **2026-09-01 03:15 Europe/Istanbul**. If no rollback is needed, it
-  must then be removed from `vetai-staging`; the V1 RPC may remain unused.
+- Cloudflare secret-name inspection initially confirmed both the new registry
+  and the legacy `WHATSAPP_ACCESS_TOKEN`. After the real smoke reached `read`,
+  Maya authorized closing the rollback window early. The legacy secret was
+  deleted from `vetai-staging` on 2026-08-31; a fresh `/ready` check still
+  returned HTTP 200 and secret-name inspection showed only the new registry.
+  The V1 RPC remains unused, but a Task 039 Worker rollback would now require
+  deliberately restoring a valid legacy secret first.
 - The new Worker was first uploaded as an unpublished preview. Its `/health`
   and `/ready` endpoints both returned HTTP 200. The reviewed build was then
   deployed only to `vetai-staging`; the Cron, producer, primary consumer and
