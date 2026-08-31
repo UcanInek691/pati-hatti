@@ -1,4 +1,299 @@
-# Current task — 042 Clinic-scoped AI usage ledger and monthly reconciliation
+# Current task — 043 Platform-admin metadata overview (read-only MVP)
+
+Status: `READY`
+
+Created by Codex on 2026-08-31 after Task 042 passed local, disposable-
+database and mandatory Claude Opus gates and was committed as `ed142bd`.
+This is the first half of roadmap Phase 4: one shared, content-blind platform
+operations view. It deliberately does not put lifecycle mutations, secrets,
+pricing, invoicing or customer content in a browser.
+
+## Goal
+
+Add one `/admin` page that a normal clinic staff account cannot use. An
+explicitly allowlisted Supabase Auth user may see all clinics' operational
+metadata, health counters and the selected `Europe/Istanbul` month's Task 042
+usage aggregates without receiving message content, owner/pet identity,
+telephone numbers, provider identifiers, hashes, credentials or arbitrary SQL
+access.
+
+## Fixed product and security decisions
+
+1. **Read-only first.** This task adds no browser action for provisioning,
+   suspension, resumption, offboarding, credential rotation, route mutation,
+   staff mutation, messaging, pricing or billing. Those require separate
+   mutation-specific authorization and audit design.
+2. Platform access is an explicit allowlist of Supabase Auth user UUIDs. A
+   clinic `admin` role is not a platform-admin role. Email-domain matching,
+   hard-coded email addresses and prompt/UI checks are forbidden.
+3. Authorization happens inside the same database RPC that returns metadata.
+   The browser must not perform a separate “am I admin?” check followed by a
+   broadly readable query.
+4. Normal RLS policies are not widened with `OR is_platform_admin()`. Platform
+   admins receive no direct cross-tenant table `SELECT` and cannot query
+   owners, pets, conversations, messages, webhook events, outbox rows, contact
+   routes or the usage ledger.
+5. `/admin` uses the existing public Supabase URL/anon-key configuration and
+   Supabase Auth session pattern. `SUPABASE_SERVICE_ROLE_KEY`, Meta credentials
+   and any secret value must never enter HTML, JavaScript, config responses,
+   browser storage or logs.
+6. The first overview exposes only clinic name/UUID/status, aggregate account
+   and operational-health counts, last inbound/outbound timestamps and one
+   selected month's Task 042 aggregate. It exposes no phone number, WABA/Meta
+   ID, account UUID, auth user UUID, work-item ID/reason, provider ID, usage
+   hash, message or clinical content.
+7. The page is a pilot-scale all-clinic view. Pagination and charts are YAGNI
+   for the current 5–20-clinic target; add them only after measured need.
+8. Password-only Supabase Auth is not claimed to be a final privileged-access
+   control. Production enablement remains blocked until the operator chooses
+   and verifies an MFA or equivalent upstream access-control policy. This task
+   must state that limit rather than imply MFA exists.
+9. Task 042 remains measurement, not billing. No TRY amount, package, campaign,
+   allowance, quota, overage, invoice, payment or automatic enforcement field
+   is added.
+10. The prior Opus follow-ups are part of this task: update the external KVKK
+    technical inventory for the current routing/credential/offboarding/usage/
+    platform-admin metadata, and remove the two stale prose claims about the
+    deleted `openai_usage` console log.
+
+## Required database implementation
+
+Create `supabase/migrations/20260831000300_platform_admin_overview.sql`
+without editing any applied migration.
+
+### `public.platform_admins`
+
+Create the smallest membership table:
+
+- `user_id uuid primary key references auth.users(id) on delete cascade`;
+- `created_at timestamptz not null default now()`.
+
+It stores no email, name, clinic, note or credential. Enable RLS, create no
+policy, and revoke all table privileges from `public`, `anon`,
+`authenticated`, and `service_role`. Membership is reachable only through the
+two RPC boundaries below.
+
+### `public.set_platform_admin_v1(p_user_id uuid, p_enabled boolean)`
+
+Create a `security definer`, `volatile`, `set search_path = ''` bootstrap RPC.
+Revoke from `public`, `anon`, and `authenticated`; grant execute only to
+`service_role`.
+
+- Validate both inputs.
+- If the Auth user does not exist, return exactly `user_not_found` with no
+  mutation.
+- `true` inserts idempotently and returns `enabled`.
+- `false` deletes idempotently and returns `disabled`.
+- Never accept an email, clinic ID, role text or caller-supplied audit data.
+- Invalid input raises before mutation.
+
+This RPC is backend/operator-only and is not wired to `/admin` in this task.
+
+### `public.get_platform_admin_overview_v1(p_month_start date)`
+
+Create a `security definer`, `stable`, `set search_path = ''` RPC. Revoke from
+`public`, `anon`, and `service_role`; grant execute only to `authenticated`.
+It must derive the caller from `auth.uid()` and check `platform_admins` inside
+the same function before reading any cross-tenant metadata.
+
+Require the first day of a month. Return a closed result set:
+
+- a non-admin receives exactly one `forbidden` sentinel row with all clinic
+  and aggregate fields null, while the requested period dates may be echoed;
+- an authorized caller with no clinics receives exactly one `empty` sentinel;
+- otherwise return one `reported` row per clinic ordered by clinic name then
+  UUID.
+
+Each `reported` row contains exactly:
+
+- `clinic_id`, `clinic_name`, `operational_status`;
+- `whatsapp_account_count`;
+- non-resolved `open_work_item_count` and its `urgent_work_item_count` subset;
+- `pending_outbound_count`, `processing_outbound_count`,
+  `failed_outbound_count`;
+- `last_inbound_at`, `last_outbound_at` from aggregate message timestamps;
+- requested `period_start` and exclusive `period_end`;
+- Task 042 `ai_turn_count`, `ai_touched_conversation_count`, summed
+  input/output/total tokens, and `missing_token_usage_count`.
+
+Reuse `get_clinic_monthly_usage_v1` for month semantics rather than duplicating
+its Istanbul-boundary rules. All counts are nonnegative `bigint`. Sentinel
+null-coherence and reported-row non-null coherence must be explicit. No
+dynamic SQL. A platform admin can see cross-clinic metadata only through this
+fixed projection and receives no underlying row identifiers except clinic ID.
+
+## Required Worker/UI implementation
+
+1. Add `src/adminPage.ts`, following the existing dependency-free `/staff`
+   shell/script/config pattern and reusing its already-reviewed public
+   Supabase config reader/security headers rather than adding a binding or
+   dependency.
+2. Serve GET-only `/admin`, `/admin/`, `/admin/app.js`, and
+   `/admin/config.json` from `src/index.ts`. Unknown `/admin/*` is 404; other
+   methods are 405. Missing/invalid public Supabase config returns 503 without
+   emitting a partial page or config.
+3. The Turkish page provides email/password login, logout, a native
+   `<input type="month">`, refresh, a clear authorization/error region, and a
+   responsive clinic table/cards. Default month must be derived for
+   `Europe/Istanbul`, not browser local/UTC accident.
+4. The browser calls only Supabase Auth and
+   `/rest/v1/rpc/get_platform_admin_overview_v1` with the authenticated user's
+   JWT. It never calls lifecycle, route, message, owner, pet, outbox or direct
+   usage-table endpoints.
+5. Validate every RPC row as a plain exact-key object with the closed
+   `reported | empty | forbidden` shapes, canonical UUID/status/timestamp/date
+   fields, nonnegative safe-integer counts, sentinel null coherence, no
+   duplicate clinics and matching requested period. Any malformed response
+   clears prior data and fails closed.
+6. Render all returned values through DOM `textContent`; never interpolate
+   database values into `innerHTML`. Do not log response rows, tokens, emails
+   or error bodies. Store only the access token under a distinct admin session
+   key; logout clears it.
+7. Display an explicit Turkish notice that the page contains metadata only,
+   does not expose customer messages or phone numbers, has no mutation/billing
+   authority, and is not production-approved privileged access until MFA or
+   equivalent upstream control is verified.
+
+## Required automated evidence
+
+### SQL rollback fixture
+
+Add `supabase/tests/043_platform_admin_overview.sql` under
+`begin; ... rollback;` and prove at least:
+
+1. `platform_admins` has RLS enabled, no policy, and no direct grant for
+   anonymous, authenticated or service roles;
+2. only service role can execute `set_platform_admin_v1`; nonexistent users
+   do not create membership; enable/disable are idempotent;
+3. anon/service role cannot execute the overview and authenticated non-admin
+   receives only the exact `forbidden` sentinel;
+4. an enabled platform admin sees metadata for two clinics while a same-clinic
+   staff role alone still receives `forbidden`;
+5. the two clinics' work/outbox/message-time and monthly-usage aggregates are
+   exact and isolated, including a known-empty clinic/month;
+6. result columns contain no phone, owner, pet, conversation/message/provider,
+   account, work-item, hash, token-secret or content field;
+7. disabling membership immediately returns `forbidden`; deleting the Auth
+   user cascades membership;
+8. invalid month/input fails with zero mutation; function security mode,
+   search path and grants match the contract;
+9. fixture mutations are fixed-ID scoped and rollback leaves zero residue.
+
+The fixture may insert protected aggregate seed rows as the database owner,
+but must not weaken RLS/grants or claim/update unrelated shared-database rows.
+
+### TypeScript tests
+
+Add `test/adminPage.test.ts` and narrowly extend `test/index.test.ts` to prove:
+
+- all four route/status/header/config behaviors;
+- the config contains only the public Supabase origin and anon key;
+- Auth/login/logout and the distinct admin session key;
+- exact overview RPC path/body/auth header and Istanbul month conversion;
+- strict closed response parsing, hostile/extra/missing keys, unsafe counts,
+  wrong periods, duplicates and sentinel coherence;
+- prior rendered data is cleared on failure/forbidden;
+- database strings reach only `textContent`, never `innerHTML`;
+- no service-role/Meta credential, content-table endpoint, lifecycle mutation,
+  raw body/token/email logging, chart framework or dependency is introduced.
+
+Do not weaken existing tests or replace exact assertions with snapshots.
+
+## Documentation and follow-up cleanup
+
+Add `docs/platform-admin-overview.md` and narrowly update:
+
+- `docs/database-schema.md`;
+- `docs/production-readiness.md` (MFA/equivalent privileged-access gate);
+- `docs/saas-urunlestirme-yol-haritasi.md` (Phase 4 read-only status only);
+- `docs/kvkk-inceleme-paketi.md` with an understandable technical inventory
+  entry for `whatsapp_contact_routes`, the encrypted per-account credential
+  registry location/boundary, `clinic_offboarding_receipts`,
+  `clinic_ai_usage_events`, and `platform_admins`;
+- `docs/ai-behavior-and-safety.md` and `docs/inbound-queue.md` only to remove
+  the obsolete `openai_usage` log claims and state that Task 042 deduplicates a
+  retried logical turn even though the provider may have been called again.
+
+Do not invent legal bases or retention periods. Mark every unresolved period,
+role allocation, cross-border-transfer decision and privileged-access policy
+for external Turkish legal/KVKK approval.
+
+## Scope boundaries
+
+Do not add or change:
+
+- provisioning/suspend/resume/offboarding UI or any `/admin` mutation;
+- plans, prices, discounts, campaigns, usage allowances, invoices, payments,
+  quotas, CSV/export or charts;
+- owner/pet/conversation/message/work-item detail, phone/account/provider IDs,
+  break-glass access, search or support impersonation;
+- Cloudflare Access/MFA configuration, new secret/env binding, dependencies,
+  Wrangler config or lockfile;
+- prompts, model, eval corpus, safety/veterinary copy, appointment, routing,
+  Queue, webhook, outbound or Meta behavior;
+- existing migration files or staging/production resources.
+
+No paid OpenAI eval is required because prompt/model/extraction/safety/reply
+behavior is unchanged.
+
+## Allowed changes
+
+- `supabase/migrations/20260831000300_platform_admin_overview.sql` (new)
+- `supabase/tests/043_platform_admin_overview.sql` (new)
+- `src/adminPage.ts` (new)
+- `test/adminPage.test.ts` (new)
+- `src/index.ts`
+- `test/index.test.ts`
+- `docs/platform-admin-overview.md` (new)
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/kvkk-inceleme-paketi.md`
+- `docs/ai-behavior-and-safety.md`
+- `docs/inbound-queue.md`
+- `CURRENT_TASK.md` only in this Task 043 **Observed context** and **Delivery
+  record** sections
+
+The pre-existing `.gitignore` change is user-owned and must remain untouched.
+`PROJECT_CONTEXT.md` is Codex-owned and is updated only after review.
+
+## Required verification and review gates
+
+The implementer runs without a real DB or external service:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+The implementer must mark the migration and fixture `NOT RUN`, and must not
+commit, push, deploy, call a real service, create an Auth user/admin membership,
+or run paid evals.
+
+Codex reviews the full authorization/data flow, applies targeted fixes, reruns
+local checks, then—with separate user approval—applies the migration and
+rollback fixture only on disposable `vetai-test`, verifies zero residue,
+updates `PROJECT_CONTEXT.md`, and commits only reviewed Task 043 files. Claude
+Opus performs a mandatory read-only review of the cross-tenant metadata
+projection, `SECURITY DEFINER` boundaries, Auth membership, RLS/grants, PII/
+KVKK inventory and browser fail-closed behavior. Staging activation and the
+first real platform-admin membership require separate explicit authorization
+after commit.
+
+## Observed context
+
+_Implementer fills this section from repository evidence only._
+
+## Delivery record
+
+_Implementer fills this section from repository evidence only._
+
+---
+
+# Previous task — 042 Clinic-scoped AI usage ledger and monthly reconciliation
 
 Status: `COMPLETE`
 
