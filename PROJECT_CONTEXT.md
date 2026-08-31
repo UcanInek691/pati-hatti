@@ -614,7 +614,9 @@ gates skipped; the corrected migration and rollback fixture passed on
 disposable `vetai-test` with all six residue counts at zero; Codex and
 mandatory Claude Opus review passed. Migration history on `vetai-test` remains
 intentionally unaligned because this disposable proof used SQL Editor after
-history drift made a blind push unsafe. Staging and production remain
+history drift made a blind push unsafe. On 2026-08-31 the reviewed migration
+was then applied to `vetai-staging` through the managed migration-history flow;
+the one existing staging clinic backfilled to `active`. Production remains
 untouched; the lifecycle client is not wired to a public/admin route.
 
 Task 042 (clinic-scoped AI usage ledger and monthly reconciliation) is
@@ -629,7 +631,9 @@ and monthly `Europe/Istanbul` aggregation are exposed only through two closed
 `SECURITY DEFINER` RPCs. Local verification passed with 1,800 tests and two
 paid eval gates skipped; the migration and rollback fixture passed only on
 disposable `vetai-test` with zero fixture residue; Codex and mandatory Claude
-Opus review passed. Staging and production remain untouched.
+Opus review passed. On 2026-08-31 the reviewed migration was applied to
+`vetai-staging` before the dependent Worker deploy and both usage RPCs were
+verified present. Production remains untouched.
 
 The ledger is measurement, not billing. It can count AI work whose reply was
 not delivered, and `stale_claim | not_found` can leave a real paid provider
@@ -662,12 +666,18 @@ Local verification passed with 1,857 tests and two opt-in paid eval gates
 skipped. The migration and corrected rollback fixture passed only on disposable
 `vetai-test`, including nested usage-RPC owner equality and zero fixture
 residue; mandatory Claude Opus review passed after the clinic-name and
-documentation corrections. Staging and production remain untouched, and no
-real platform-admin membership exists. Password-only `/admin` access is not
-approved for production until MFA or an equivalent upstream control is
-verified. Membership grant/revoke audit history and pagination remain explicit
-MVP limits; the unsliced view is accepted only for the current 5–20-clinic
-scale.
+documentation corrections. On 2026-08-31 the reviewed Task 041–043 migrations
+were applied in order to `vetai-staging`, the sole existing staging staff Auth
+user was explicitly enabled as the first staging platform admin, and Worker
+version `cdf26bac-3ce6-4141-a461-eb84e1863b55` was deployed. `/health`,
+`/ready`, `/admin`, and `/admin/config.json` returned HTTP 200; the config
+contained exactly the public Supabase URL and anon-key fields, and an
+authenticated-role smoke returned one `reported` overview row without
+printing identity or clinic data. Production remains untouched. Password-only
+`/admin` access is not approved for production until MFA or an equivalent
+upstream control is verified. Membership grant/revoke audit history and
+pagination remain explicit MVP limits; the unsliced view is accepted only for
+the current 5–20-clinic scale.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
