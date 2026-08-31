@@ -262,6 +262,28 @@ Admin paneli, provizyon, faturalama, UI tasarımı ve hatırlatma aynı göreve
 eklenmez. Task 040 tamamlandıktan sonra sıradaki iş paketi güvenli
 provizyon/offboarding olacaktır.
 
+## 10a. Task 041 (uygulandı, staging/production'a henüz uygulanmadı)
+
+Task 041, Faz 2'yi ("Güvenli provizyon/offboarding") uygular:
+
+- `clinics.operational_status` (`suspended | active | offboarding`) ve beş
+  service-role-only RPC (`provision_clinic_v1`, `suspend_clinic_v1`,
+  `resume_clinic_v1`, `prepare_clinic_offboarding_v1`,
+  `finalize_clinic_offboarding_v1`) — elle serbest SQL olmadan tekrarlanabilir
+  açma, askıya alma ve geri dönüşü olmayan kapatma;
+- askıya alınmış/kapatılan bir klinik için çalışma zamanı otomasyon
+  çözümleyicisi ve `claim_outbound_message_v2()` `personal`/aktif-değil
+  sınırını uygular; kabul edilmiş kayıtların durum takibi kesintisiz kalır;
+- offboarding tek yönlü token hash'i içeren, PII taşımayan bir
+  makbuz yazar; ham token hiçbir yerde saklanmaz;
+- implementer tarafından hiçbir veritabanına uygulanmadı; Codex daha sonra
+  yalnız disposable `vetai-test` üzerinde migration + rollback fixture
+  kanıtını tamamladı. Staging/production ve gerçek Meta hesabı değişmedi — bkz.
+  [`docs/clinic-lifecycle.md`](clinic-lifecycle.md).
+
+Admin paneli (Faz 4), faturalama (Faz 3/7) ve UI aynı göreve eklenmez;
+`src/clinicLifecycle.ts` hiçbir public route'a bağlanmaz.
+
 ## 11. Kaynak ve yeniden doğrulama notu
 
 - Cloudflare Worker secret'ları: https://developers.cloudflare.com/workers/configuration/secrets/

@@ -859,3 +859,36 @@ string. See [`docs/inbound-queue.md`](inbound-queue.md) for the consumer-side
 handling of both new result kinds and
 [`docs/ai-behavior-and-safety.md`](ai-behavior-and-safety.md) for the
 burst-safety extraction contract.
+
+## Clinic lifecycle: provisioning, suspension and offboarding (Task 041)
+
+`supabase/migrations/20260831000100_clinic_lifecycle.sql` and
+`supabase/tests/041_clinic_lifecycle.sql`. The implementer did not apply or
+run them. Codex subsequently applied the reviewed migration through the SQL
+Editor on disposable `vetai-test` and the corrected rollback fixture returned
+`PASS` with zero fixture residue; staging and production remain untouched.
+
+`public.clinics` gains `operational_status` (`suspended | active |
+offboarding`, closed `CHECK`, default `suspended`; existing rows backfilled to
+`active`), `suspended_at`, `offboarding_started_at`, and `offboarding_token`.
+A pair of `CHECK` constraints enforces `suspended_at` non-null iff status is
+`suspended`, and `offboarding_started_at`/`offboarding_token` non-null iff
+status is `offboarding`. A new
+`public.clinic_offboarding_receipts` table (`clinic_id`, SHA-256
+`offboarding_token_hash`, fixed `action = 'offboarded'`, `offboarded_at`) has no foreign key to `clinics` —
+so it survives that clinic's own cascade-delete in the same transaction — and
+carries the same RLS-enabled-zero-policies plus service-role-only grant
+pattern as `public.webhook_events`.
+
+Five new `SECURITY INVOKER`, `set search_path = ''`, service-role-only RPCs
+(`provision_clinic_v1`, `suspend_clinic_v1`, `resume_clinic_v1`,
+`prepare_clinic_offboarding_v1`, `finalize_clinic_offboarding_v1`) and one
+forward-only recreate each of `vetai_private.effective_contact_automation_mode`
+(gates on clinic status before route/default lookup) and
+`public.claim_outbound_message_v2()` (adds an `operational_status = 'active'`
+join filter) implement the full lifecycle and its runtime suspension
+boundary. The resolver holds a clinic `FOR KEY SHARE` lock through its caller
+transaction so lifecycle `FOR UPDATE` transitions cannot race a stale active
+decision. See [`docs/clinic-lifecycle.md`](clinic-lifecycle.md) for the
+closed result sets, the runtime boundary, and the pilot activation/offboarding
+order.

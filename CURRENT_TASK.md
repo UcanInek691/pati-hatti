@@ -1,6 +1,6 @@
 # Current task — 041 Safe clinic provisioning and offboarding
 
-Status: `READY`
+Status: `COMPLETE`
 
 Opened by Codex on 2026-08-31 after Task 040 passed repository,
 disposable-database, mandatory Opus and real staging activation gates. The
@@ -176,11 +176,234 @@ change model behavior.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence only.
+- `rtk` (the user's global token-optimized command wrapper) is not installed
+  in this environment; native `pnpm`/`git`/`Read`/`Grep`/`Edit`/`Write` were
+  used for every step, per `AGENTS.md`'s documented fallback.
+- Task 034 (`supabase/migrations/20260822000100_strict_ai_allowlist.sql`)
+  hard-locks `whatsapp_accounts.automation_default` to exactly `'personal'`
+  via a `CHECK`. Because of that, `vetai_private.effective_contact_automation_mode`
+  already resolves `'personal'` for any contact with no explicit
+  `whatsapp_contact_routes` row, and `ingest_whatsapp_text_message`
+  (`supabase/migrations/20260814000300_selective_automation.sql:351-356`)
+  short-circuits such contacts to `'ignored'` before writing anything. This
+  pre-dates Task 041 and appears to already affect `supabase/tests/
+  019_outbound_status_tracking.sql`, which builds outbox rows without ever
+  inserting an explicit route. It is out of scope here (no already-applied
+  migration or unrelated fixture file may be edited beyond the required
+  active-clinic seed), so `supabase/tests/041_clinic_lifecycle.sql`'s own
+  `pg_temp` outbox-row helpers explicitly provision an `'ai'` route before
+  calling `ingest_whatsapp_text_message`, and this pre-existing regression is
+  flagged below for Codex/Opus awareness rather than fixed.
+- `clinic_staff.user_id references auth.users(id)` (`supabase/migrations/
+  20260806000000_core_tenant_schema.sql`), so `provision_clinic_v1`'s
+  missing-Auth-user rejection relies on the natural FK violation
+  (`23503`/`foreign_key_violation`) rather than an explicit existence check —
+  matching the contract's "raises and rolls back" requirement with no new
+  code path.
+- `docs/saas-urunlestirme-yol-haritasi.md` section 9's phased-delivery table
+  lists "2. Güvenli provizyon/offboarding" as Faz 2, and section 10 (Task
+  040) states that safe provisioning/offboarding is the next work package —
+  confirming Task 041 is exactly that next package.
 
 ## Delivery record
 
-To be filled by the implementing agent. Do not change `Status`.
+**Files changed** (all within the Allowed changes list):
+
+- New: `supabase/migrations/20260831000100_clinic_lifecycle.sql`,
+  `supabase/tests/041_clinic_lifecycle.sql`, `src/clinicLifecycle.ts`,
+  `test/clinicLifecycle.test.ts`, `docs/clinic-lifecycle.md`.
+- Narrow doc updates: `docs/database-schema.md`,
+  `docs/saas-urunlestirme-yol-haritasi.md`, `docs/staging-runbook.md`,
+  `docs/production-readiness.md`.
+- Existing SQL fixtures given an explicit `update public.clinics set
+  operational_status = 'active';` seed after their last clinic insert (18
+  files, required because the migration now defaults new clinics to
+  `suspended`): `supabase/tests/005_ingest_whatsapp_text_message.sql`,
+  `010_ingest_whatsapp_conversation_locator.sql`, `012_intake_job_lease.sql`,
+  `013_finalize_intake_queue_job.sql`, `017_intake_reply_outbox.sql`,
+  `018_outbound_delivery.sql`, `019_outbound_status_tracking.sql`,
+  `020_staff_work_items.sql`, `023_whatsapp_appointment_flow.sql`,
+  `024_intake_dead_letter_handoff.sql`, `032_staff_assignment_and_alerts.sql`,
+  `033_selective_automation.sql`, `034_strict_ai_allowlist.sql`,
+  `035_pet_registration.sql`, `037_second_pet_registration_atomicity.sql`,
+  `039_inbound_message_bursts.sql`,
+  `039_pet_appointment_guard_and_cancellation.sql`,
+  `040_per_account_whatsapp_credentials.sql`.
+- `src/index.ts`, `src/env.ts`, Worker configuration, prompts, clinical copy,
+  package/lock files and `PROJECT_CONTEXT.md` are untouched.
+- The user's pre-existing `.gitignore` working-tree change is untouched by
+  this task (still present as the sole other outstanding change).
+
+**Acceptance criteria satisfied** (A–D, cross-referenced to the fixture):
+
+- A.1–A.3: `operational_status` closed enum with `active` backfill /
+  `suspended` default; null-coherent `offboarding_started_at`/
+  `offboarding_token` CHECK; `suspended_at` intentionally left without a DB
+  CHECK (documented in the migration header) so bare legacy `insert into
+  clinics (id, name)` fixtures keep working — proved in fixture Section 1.
+- B.1–B.4 (all five RPCs): `SECURITY INVOKER`, `set search_path = ''`, no
+  dynamic SQL, `revoke ... from public, anon, authenticated; grant ... to
+  service_role` — proved for `authenticated`/`anon` denial in fixture Section
+  6. Closed result sets, replay/conflict/missing-user handling, outbox
+  cleanup scoped to the clinic's own pending/processing rows, and the
+  two-step offboarding token/receipt/cascade workflow are proved in fixture
+  Sections 2, 3 and 5.
+- C.1–C.4: shared-resolver `personal` gate, `claim_outbound_message_v2()`
+  active-only claim, status-callback availability during
+  suspension/offboarding, and staff RLS visibility during suspension are
+  proved in fixture Sections 3 and 3b.
+- D.1: `src/clinicLifecycle.ts` is a server-only native-`fetch` client with
+  strict input/response validation, not wired to a public route — confirmed
+  by the wrangler dry-run showing no new bindings/routes beyond the
+  pre-existing `INTAKE_QUEUE`/`APP_TIMEZONE`/`WHATSAPP_GRAPH_API_VERSION`.
+- D.2–D.4: pilot activation order, reverse offboarding order, and the
+  explicit Auth-user prerequisite are documented verbatim in
+  `docs/clinic-lifecycle.md`.
+
+**Verification commands** (run to completion this session, in order, after
+every code change; last full re-run today, 2026-08-31):
+
+```
+pnpm install --frozen-lockfile   → "Already up to date" (no lockfile change)
+pnpm typecheck                   → tsc --noEmit, zero errors
+pnpm test                        → Test Files 35 passed (35); Tests 1691 passed | 2 skipped (1693)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → succeeds; bindings unchanged (INTAKE_QUEUE,
+                                    APP_TIMEZONE, WHATSAPP_GRAPH_API_VERSION only)
+git diff --check                 → exit 0, no whitespace/conflict-marker errors
+```
+
+**Explicitly NOT run** (per contract, both remain the implementer's
+responsibility to leave undone): the new migration
+(`20260831000100_clinic_lifecycle.sql`) was never applied to any database,
+local or remote, and `supabase/tests/041_clinic_lifecycle.sql` was never
+executed against any database — both were only authored/read as text.
+`pnpm test` is Vitest-only (confirmed via `package.json`'s `test` script) and
+never touches Postgres. No real Supabase, Cloudflare, Meta, or OpenAI service
+was called. No paid OpenAI eval was run (not required — this task cannot
+change model behavior). Nothing was committed, pushed, or deployed.
+
+**Risks for Codex/Opus to specifically review:**
+
+1. **Destructive offboarding correctness** — `finalize_clinic_offboarding_v1`
+   deletes the clinic row and relies entirely on existing cascade FKs to
+   remove staff, WhatsApp account, owners, conversations, messages and
+   outbox. The fixture proves zero residue for the exact tables it knows
+   about; a schema drift adding a new clinic-scoped table without a cascading
+   FK would silently leak rows past this proof.
+2. **Receipt/token one-wayness** — `clinic_offboarding_receipts` stores only
+   `md5(offboarding_token)`; confirm `md5` is judged sufficient (not a
+   cryptographic secret, just a replay/audit correlator) and that no code
+   path anywhere logs or returns the raw token after finalize succeeds
+   (`test/clinicLifecycle.test.ts` asserts no console logging of it, but that
+   only covers the TS client, not the RPC/SQL layer).
+3. **Lifecycle locking** — `suspend_clinic_v1`/`prepare_clinic_offboarding_v1`
+   use `select ... for update` row locks on `clinics`; verify this is
+   sufficient under concurrent pilot operator actions (e.g., simultaneous
+   suspend + prepare-offboarding calls) and that no code path outside these
+   RPCs can flip `operational_status` without holding the same lock.
+4. **Pre-existing regression** (see Observed context) — `automation_default`
+   being hard-locked to `'personal'` since Task 034 means any clinic/contact
+   pair with no explicit `whatsapp_contact_routes` row is already silently
+   `'ignored'` in production-shaped data, independent of this task. Worth a
+   deliberate decision on whether `019_outbound_status_tracking.sql` and any
+   real pilot clinic need explicit routes going forward.
+5. **RLS/tenant isolation** — fixture Section 6 proves `authenticated`/`anon`
+   denial on the five RPCs and receipt table read; it does not (and cannot,
+   without a live database) prove behavior under the actual Supabase Auth
+   JWT issuance path — recommend exercising this against disposable
+   `vetai-test` as planned.
+6. **Migration apply and fixture run** — both are `NOT RUN` here by design;
+   Codex's disposable-`vetai-test` gate is the first point at which this
+   migration and its rollback-only proof actually execute against a real
+   database.
+
+## Codex review record (in progress) — 2026-08-31
+
+Codex reviewed the lifecycle call paths and applied three targeted fixes
+inside the authorized scope:
+
+1. `suspended_at` is now structurally null-coherent with
+   `operational_status`: new suspended rows receive a timestamp by default,
+   activation clears it, and a named database `CHECK` enforces both
+   directions. The affected rollback fixtures explicitly clear the timestamp
+   when activating their synthetic clinics.
+2. `src/clinicLifecycle.ts` now validates canonical UUIDs, clinic/profile
+   text, E.164, staff role and Meta phone-number ID before any fetch. Invalid,
+   extra-key and hostile input objects fail closed without network work, and
+   failure results are fresh objects rather than shared mutable sentinels.
+3. `vetai_private.effective_contact_automation_mode` is now `VOLATILE` and
+   takes `FOR KEY SHARE` on the clinic row. That transaction-scoped lock
+   serializes every automation decision against lifecycle `FOR UPDATE`, so a
+   caller cannot read `active`, lose the race to suspension, and then mutate
+   tenant data from a stale decision. The SQL fixture pins the volatility and
+   lock clause.
+
+Post-fix local verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+pnpm test                        -> PASS; 35 files, 1,711 passed, 2 skipped
+production Wrangler dry-run      -> PASS; bindings unchanged
+git diff --check                 -> PASS; line-ending notices only
+```
+
+The disposable database gate passed on `vetai-test` after explicit approval.
+Supabase CLI target inspection first proved the selected project was
+`vetai-test`, but its migration history had four remote-only Task 039 records
+and lacked the Task 040 history record, so Codex correctly refused a blind
+`db push`. The reviewed Task 041 migration was instead applied alone through
+that disposable project's SQL Editor; because this was an Editor execution,
+it is not represented in Supabase migration history.
+
+The first real fixture runs exposed three fixture-only defects that static
+inspection had missed: non-hex SHA-256 seed characters, a global claim helper
+that could select an unrelated older outbox row, and custom setting names
+whose `041` component was not a valid PostgreSQL identifier. Codex replaced
+the seeds with hex characters, made processing/accepted setup target the
+fixture's exact outbox UUID, and renamed settings to `vetai.task041.*`.
+Each failed run stopped inside the fixture transaction and rolled back. The
+corrected rollback fixture then returned `PASS` with zero remaining test
+clinics, WhatsApp accounts, owners, outbox rows, offboarding receipts, and
+test users. Staging and production remained untouched. Mandatory read-only
+Claude Opus review then returned `CHANGES_REQUIRED` with three narrow
+blockers. Codex closed them as follows:
+
+1. The lifecycle runbook now states that clinic deletion removes staff links
+   but not Supabase Auth users, identities, or sessions, and requires a
+   separate post-finalize identity review/deletion step.
+2. The remaining global second-claim assertion in the Task 041 fixture was
+   replaced with a direct assertion that the exact suspended-clinic row stays
+   pending.
+3. The 18 compatibility fixtures now activate only currently suspended
+   clinics rather than updating every clinic row, so offboarding clinics and
+   unrelated tenant locks are untouched.
+
+The same correction pass also made the outbound claim race wording explicit,
+documented the narrow finalize/intake deadlock-and-retry boundary, added the
+contract-required fixed `action = 'offboarded'` receipt column, replaced MD5
+with built-in SHA-256, snapshotted getter-backed provision input once before
+validation/sending, pinned the exact 10-second timeout in a unit test, and
+updated stale disposable-database wording. The forward-only receipt/function
+correction was applied only to `vetai-test`; the updated rollback fixture again
+returned `PASS` with all six residue counts at zero.
+
+Post-correction verification:
+
+```text
+pnpm install --frozen-lockfile   -> PASS; already up to date
+pnpm typecheck                   -> PASS; zero errors
+pnpm test                        -> PASS; 35 files, 1,712 passed, 2 skipped
+production Wrangler dry-run      -> PASS; bindings unchanged
+git diff --check                 -> PASS; line-ending notices only
+vetai-test rollback fixture      -> PASS; six residue counts = 0
+```
+
+Staging and production remain untouched. Claude Opus's narrow read-only
+re-check returned `PASS`: all three blockers and the reviewed documentation,
+receipt/hash, input-snapshot and timeout corrections are closed. Its remaining
+notes are non-blocking fixture/schema-drift hardening for a future task.
 
 ---
 

@@ -25,6 +25,11 @@ values
   ('99800000-0000-0000-0000-000000000001', 'Staff Assignment Test Clinic A'),
   ('99800000-0000-0000-0000-000000000002', 'Staff Assignment Test Clinic B');
 
+-- Task 041: clinics default to suspended; activate this fixture's clinics so
+-- the existing AI/ingest/outbound assertions below stay unchanged.
+update public.clinics set operational_status = 'active', suspended_at = null
+where operational_status = 'suspended';
+
 insert into auth.users (id, aud, role, email, created_at, updated_at)
 values
   ('99810000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'saa-a1@example.invalid', now(), now()),

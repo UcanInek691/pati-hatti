@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-30 by Codex.
+Last verified: 2026-08-31 by Codex.
 
 ## Product
 
@@ -598,6 +598,24 @@ the per-account registry remained, and `/ready` still returned HTTP 200. A
 Task 039 Worker rollback now requires explicitly restoring a valid legacy
 secret first; the unused V1 RPC remains available. Production remains
 untouched.
+
+Task 041 (safe clinic provisioning, suspension, resumption and offboarding)
+is `COMPLETE` at the repository and disposable-database gates as of
+2026-08-31. New clinics start suspended; service-role-only, closed-result RPCs
+provision the clinic/staff/account tuple, suspend or resume it, and perform a
+two-step token-authorized offboarding. The shared inbound automation resolver
+serializes its active-clinic decision against lifecycle transitions, while V2
+outbound claim skips non-active clinics. Finalization cascade-deletes current
+tenant data and leaves only a backend-only receipt containing clinic UUID,
+fixed `offboarded` action, SHA-256 token hash and timestamp; it does not delete
+Supabase Auth users, identities or sessions, which require a separate reviewed
+operator step. Local verification passed with 1,712 tests and two paid eval
+gates skipped; the corrected migration and rollback fixture passed on
+disposable `vetai-test` with all six residue counts at zero; Codex and
+mandatory Claude Opus review passed. Migration history on `vetai-test` remains
+intentionally unaligned because this disposable proof used SQL Editor after
+history drift made a blind push unsafe. Staging and production remain
+untouched; the lifecycle client is not wired to a public/admin route.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:

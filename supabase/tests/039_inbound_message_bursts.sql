@@ -75,6 +75,11 @@ insert into public.clinics (id, name) values
   ('39900000-0000-0000-0000-000000000002', '039C Clinic B (cross-tenant)'),
   ('39900000-0000-0000-0000-000000000003', '039C Clinic C (manual mode)');
 
+-- Task 041: clinics default to suspended; activate this fixture's clinics so
+-- the existing AI/ingest/outbound assertions below stay unchanged.
+update public.clinics set operational_status = 'active', suspended_at = null
+where operational_status = 'suspended';
+
 insert into public.whatsapp_accounts (id, clinic_id, phone_number_id) values
   ('39900000-0000-0000-0000-000000000011', '39900000-0000-0000-0000-000000000001', '939900001'),
   ('39900000-0000-0000-0000-000000000012', '39900000-0000-0000-0000-000000000002', '939900002'),

@@ -10,6 +10,11 @@ values
   ('02400000-0000-0000-0000-000000000001', 'DLQ Test Clinic A'),
   ('02400000-0000-0000-0000-000000000002', 'DLQ Test Clinic B');
 
+-- Task 041: clinics default to suspended; activate this fixture's clinics so
+-- the existing AI/ingest/outbound assertions below stay unchanged.
+update public.clinics set operational_status = 'active', suspended_at = null
+where operational_status = 'suspended';
+
 insert into public.owners (id, clinic_id, full_name, phone_e164)
 values
   ('02400000-0000-0000-0000-000000000011', '02400000-0000-0000-0000-000000000001', 'DLQ Owner X', '+15550240001'),

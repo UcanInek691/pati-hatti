@@ -87,6 +87,12 @@ Sapma kaydı: rollback-only SQL fixture'ları runbook'un ilk sürümündeki
 SQL Editor'de bir kez çalıştırıldı. Tüm dosyalar `rollback;` ile bitti,
 17/17 geçti ve sıfır fixture kalıntısı doğrulandı. Bu tekrar edilmez.
 
+Not (Görev 041): `20260831000100_clinic_lifecycle.sql` ve
+`supabase/tests/041_clinic_lifecycle.sql` bu runbook'un kapsamı dışında
+eklendi — implementer tarafından hiçbir veritabanına uygulanmadı ve
+`vetai-staging`'e karşı çalıştırılmadı. Bu dosya bu migration'ı kapsamaz;
+bkz. [`docs/clinic-lifecycle.md`](clinic-lifecycle.md).
+
 ## 4. Cloudflare
 
 - [x] Üç staging Queue'sunu oluştur:

@@ -18,6 +18,11 @@ values ('33000000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-0000000
 insert into public.clinics (id, name)
 values ('33000000-0000-0000-0000-000000000003', 'Selective Automation Test Clinic B');
 
+-- Task 041: clinics default to suspended; activate this fixture's clinics so
+-- the existing AI/ingest/outbound assertions below stay unchanged.
+update public.clinics set operational_status = 'active', suspended_at = null
+where operational_status = 'suspended';
+
 insert into public.whatsapp_accounts (id, clinic_id, phone_number_id)
 values ('33000000-0000-0000-0000-000000000004', '33000000-0000-0000-0000-000000000003', '933000002');
 

@@ -129,7 +129,13 @@ every box in this section is checked.
       authorized administrative process against production. **No general
       admin provisioning UI exists in this codebase** — this is a manual,
       privileged, service-role operation performed by whoever owns the
-      production database, not a self-serve flow.
+      production database, not a self-serve flow. The reviewed mechanism is
+      the five service-role-only RPCs from Task 041
+      (`provision_clinic_v1`/`suspend_clinic_v1`/`resume_clinic_v1`/
+      `prepare_clinic_offboarding_v1`/`finalize_clinic_offboarding_v1`, not
+      wired to any public route) — see
+      [`docs/clinic-lifecycle.md`](clinic-lifecycle.md) for the exact pilot
+      activation and offboarding order.
 - [ ] Seed at least one future appointment slot through the same authorized
       process before the smoke journey in §5 needs an `EVET`/`HAYIR`
       appointment decision.
