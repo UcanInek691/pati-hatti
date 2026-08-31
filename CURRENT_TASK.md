@@ -520,6 +520,44 @@ Opus gates. Staging/production activation, secret upload/rotation, migration,
 deploy, and real Meta smoke remain separately authorized work and were not
 performed here.
 
+### Staging activation record — 2026-08-31
+
+Maya separately authorized the expand-first staging activation after the
+verified Task 040 commit. Production was not touched.
+
+- The linked target was rechecked as `vetai-staging`. `supabase db push
+  --dry-run` listed only
+  `20260830000100_per_account_whatsapp_credentials.sql`; that migration then
+  applied successfully. A post-apply catalog query proved the V2 RPC exists,
+  grants execution only to `service_role`, and denies `anon` and
+  `authenticated`.
+- Meta required Maya's own SMS two-factor confirmation before issuing the new
+  permanent token. The value was never printed, logged, pasted into chat or
+  written to a repository/local file. One complete registry entry was built
+  from the staging database's exact account UUID/phone-number-ID pair and
+  saved only as Cloudflare's encrypted
+  `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` secret.
+- Cloudflare secret-name inspection confirmed both the new registry and the
+  legacy `WHATSAPP_ACCESS_TOKEN`. The latter is not read by the Task 040
+  Worker and is retained only for a bounded Worker-first rollback window
+  ending **2026-09-01 03:15 Europe/Istanbul**. If no rollback is needed, it
+  must then be removed from `vetai-staging`; the V1 RPC may remain unused.
+- The new Worker was first uploaded as an unpublished preview. Its `/health`
+  and `/ready` endpoints both returned HTTP 200. The reviewed build was then
+  deployed only to `vetai-staging`; the Cron, producer, primary consumer and
+  dead-letter consumer bindings were present and the new version received
+  100% of staging traffic.
+- A real user-initiated WhatsApp smoke after deployment produced exactly one
+  new inbound message and one new outbox row. The row was accepted on attempt
+  1, the Meta callback advanced it to `read`, and no `pending | processing`
+  outbox work remained. This proves the active staging claim → exact registry
+  match → Meta send → status callback path for the single configured pilot
+  account.
+
+No production migration, production secret, production Worker, payment,
+business-initiated template send, paid OpenAI eval or repository code change
+occurred during activation.
+
 ---
 
 # Previous task — 039 Per-pet appointment lifecycle and burst-safe messaging

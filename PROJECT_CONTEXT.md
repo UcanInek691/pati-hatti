@@ -586,10 +586,14 @@ the bounded existing release/exhaustion/staff-item path. Local verification
 the migration and rollback fixture on disposable `vetai-test` with zero
 residue, catalog ACL/lock checks, and mandatory Claude Opus review all passed.
 The V1 RPC remains only as the Task 039 Worker rollback target. Task 040 has
-not uploaded a registry secret, migrated or deployed staging/production, or
-called Meta. Activation remains a separately approved expand-first staging
-gate with a bounded legacy-secret rollback window and per-account synthetic
-outbound/status smokes.
+also passed its separately authorized expand-first `vetai-staging` activation:
+the V2 migration applied, the exact one-account registry was stored only as an
+encrypted Cloudflare secret, preview `/health` and `/ready` returned 200, the
+Worker deployed with its Queue/Cron bindings, and one real user-initiated
+WhatsApp smoke reached Meta `read` on attempt 1 with no outstanding outbox
+work. The old global secret is unused by the active Worker and is retained
+only through the bounded rollback window ending 2026-09-01 03:15
+`Europe/Istanbul`; production remains untouched.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
