@@ -1,3 +1,331 @@
+# Current task — 045 Platform-admin TOTP MFA boundary
+
+Status: `READY`
+
+Created by Codex on 2026-09-01 after Task 044 was reviewed, committed,
+activated on `vetai-staging`, and exercised through the live tenant-scoped
+schedule smoke. This is the smallest productionization prerequisite before
+custom domains, custom SMTP, invitations, or password-recovery UI: protect
+the cross-clinic `/admin` overview with a Supabase TOTP second factor and
+enforce that assurance again inside the database RPC.
+
+## Goal
+
+Require an authenticated, allowlisted platform administrator to complete a
+verified TOTP challenge before `/admin` may read any cross-clinic metadata.
+The browser must guide first-time enrollment and later challenges without a
+new dependency, while `get_platform_admin_overview_v1` independently rejects
+every session whose JWT assurance level is not `aal2`.
+
+This task does **not** add MFA to `/staff`, create invitations or password
+recovery, configure SMTP, attach a custom domain, add platform mutations, or
+change clinic RLS. Those remain separate steps in the order documented below.
+
+## Fixed product and security decisions
+
+1. **Only `/admin` is in scope.** This task protects Maya's cross-clinic,
+   metadata-only platform view. `/staff` remains the tenant-scoped clinic
+   surface and must not be edited. Staff-wide MFA requires its own permission
+   and recovery design; it is not silently bundled here.
+2. **TOTP is mandatory, not optional UI.** A platform-admin password session
+   at `aal1` may enroll or challenge a TOTP factor, but it may not receive
+   `reported` or `empty` overview data. Only a valid `aal2` JWT may cross the
+   database boundary.
+3. **The database is authoritative.** Recreate
+   `get_platform_admin_overview_v1(date)` in a new forward migration. It must
+   check both `auth.uid()` membership in `platform_admins` and the JWT `aal`
+   claim inside the same `SECURITY DEFINER` function. Browser state, decoded
+   JWT contents, hidden HTML, or a prior frontend check are never authority.
+4. **No response-shape expansion.** Keep the existing 20-column RPC return
+   shape and all existing data minimization. `aal1`, missing/malformed `aal`,
+   a non-member, null `auth.uid()`, anon, and every other unauthorized case
+   return the existing single `forbidden` sentinel with all clinic/usage
+   fields null. Do not add a new cross-tenant information-bearing status.
+5. **Native Supabase Auth REST only.** Reuse `fetch`, the existing public
+   Supabase URL and anon key, and the existing access-token-only
+   `sessionStorage` model. Add no SDK, QR package, Worker binding, server-side
+   session store, cookie, service-role key, refresh-token persistence, or
+   custom authentication backend.
+6. **Fail closed at every Auth boundary.** Validate HTTP status and the
+   required response fields for password login, current-user/factor lookup,
+   enrollment, challenge, and verification. Missing, duplicate, malformed,
+   unsupported, or ambiguous factor state must show fixed Turkish copy and
+   reveal no overview. Provider response bodies and error strings must never
+   be logged or rendered.
+7. **TOTP secret handling is ephemeral.** A first enrollment may display the
+   validated Supabase-provided QR image plus a text secret fallback. The QR,
+   secret, challenge id, and one-time code live only in the current DOM or
+   function state; they must never enter `sessionStorage`, `localStorage`, a
+   URL, logs, the repository, Supabase public tables, or an outbox.
+8. **No self-service factor removal.** The MVP may enroll a first verified
+   TOTP factor and challenge an existing verified TOTP factor. It must not
+   expose unenroll/reset/recovery controls that could weaken the account or
+   create an unreviewed lockout path. Lost-device recovery remains a manual
+   Supabase Auth operator procedure and must be documented.
+9. **One verified TOTP factor is the supported shape.** Zero verified TOTP
+   factors enters enrollment. Exactly one enters challenge. More than one
+   verified TOTP factor, a verified non-TOTP factor without exactly one TOTP,
+   or contradictory status is unsupported in this narrow UI and fails closed
+   with operator guidance; do not guess a factor.
+10. **The elevated token replaces the password token.** After successful
+    challenge verification, store only the returned non-empty access token
+    under the existing `vetai_admin_access_token` key, discard/ignore the
+    refresh token, clear password and one-time-code inputs, remove enrollment
+    material from the DOM/state, and only then load the overview.
+11. **A stale session re-enters assurance.** On page load, an existing access
+    token must be validated through Supabase Auth and routed through the same
+    factor/AAL flow before the overview becomes visible. A stored `aal1` token
+    must never briefly render cached overview data. A 401/403 clears the
+    session as today.
+12. **Enrollment is not membership.** TOTP enrollment never grants
+    `platform_admins` membership. Conversely, allowlist membership without
+    `aal2` never grants overview access. The existing service-role-only
+    membership RPC remains unchanged and is never called by the browser.
+13. **No custom-domain or email fiction.** This task sends no invitation or
+    recovery email and changes no Auth redirect/Site URL setting. Custom
+    domains come next; custom SMTP and invite/recovery flows come only after
+    those redirect URLs exist. The Supabase dashboard remains the temporary
+    staging user/factor recovery tool.
+14. **No production activation in implementation.** The implementer authors
+    code, migration, fixture, tests, and docs only. It must not apply SQL,
+    enroll a real factor, mutate Auth settings/users, deploy, or call a real
+    Supabase/Cloudflare/Meta/OpenAI service. Codex performs separate review
+    gates and asks for explicit user approval before any staging mutation.
+
+## Required database implementation
+
+Create
+`supabase/migrations/20260901000200_platform_admin_totp_mfa.sql`. Do not edit
+the already-applied Task 043 migration.
+
+- Recreate `public.get_platform_admin_overview_v1(date)` with the exact
+  existing signature, 20 OUT columns, query, sort order, `stable` volatility,
+  `SECURITY DEFINER`, and `set search_path = ''`.
+- Preserve its existing owner relationship with
+  `get_clinic_monthly_usage_v1(uuid,date)` and its exact grants: revoke from
+  `PUBLIC`, `anon`, and `service_role`; grant only to `authenticated`.
+- Read the authenticated JWT assurance claim using PostgreSQL/Supabase Auth
+  primitives inside the function. Authorization succeeds only when the claim
+  is exactly the string `aal2` and `auth.uid()` is an existing
+  `platform_admins.user_id`.
+- Treat a missing claim, null, array/object/number/boolean, `aal1`, an unknown
+  string, null caller, or absent membership as unauthorized. Do not cast an
+  untrusted claim through a type that can raise before the closed sentinel is
+  returned.
+- Preserve month-input validation. An invalid month continues to raise before
+  data access, as in Task 043.
+- Do not change `platform_admins`, clinic RLS, the membership bootstrap RPC,
+  table grants, usage metering, or the returned data set.
+
+## Required rollback-only SQL proof
+
+Create `supabase/tests/045_platform_admin_totp_mfa.sql`, wrapped in explicit
+`begin; ... rollback;`. The implementer leaves it `NOT RUN`. It must seed only
+synthetic identifiers and prove at least:
+
+1. an allowlisted `authenticated` caller with JWT claims containing
+   `aal = aal2` receives the same valid `reported`/`empty` behavior as Task
+   043;
+2. the same allowlisted caller at `aal1` receives exactly one `forbidden`
+   sentinel and no clinic/usage metadata;
+3. missing `aal`, null/non-string/unknown `aal`, and null caller all fail
+   closed without throwing or leaking a clinic row;
+4. a non-allowlisted caller at `aal2` is still forbidden;
+5. anon and `service_role` cannot execute the RPC, while authenticated retains
+   only the intended execute grant;
+6. the OUT-column projection, null/count coherence, security mode, stable
+   volatility, empty search path, and function-owner relationship remain
+   unchanged;
+7. no fixture residue remains after rollback and no unrelated clinic/admin
+   row is deleted or rewritten.
+
+Use `set_config('request.jwt.claims', <synthetic JSON>, true)` (or the exact
+Supabase/PostgreSQL equivalent already supported by the test database) so the
+proof exercises the function's real JWT-claim read, not a test-only branch or
+text search of the function definition.
+
+## Required `/admin` implementation
+
+Edit `src/adminPage.ts` only; routes remain unchanged.
+
+### UI states
+
+The page must have mutually exclusive, accessible states for:
+
+- email/password sign-in;
+- first-time TOTP enrollment (QR + text secret fallback + six-digit code);
+- existing-factor TOTP challenge (six-digit code);
+- verified overview;
+- fixed fail-closed error/operator guidance.
+
+Do not render the overview section until the assurance flow succeeds.
+Duplicate submissions must be disabled while an Auth request is in flight.
+The code input must accept exactly six ASCII digits after trimming; do not
+send any other shape.
+
+### Supabase Auth calls
+
+Use only the documented Auth endpoints needed for the flow:
+
+- password token grant;
+- authenticated current-user lookup to obtain factor state;
+- enroll a `totp` factor with a fixed, non-sensitive friendly name;
+- create a challenge for the selected factor;
+- verify the challenge with the six-digit code.
+
+All requests use the public anon key and, after login, the bearer access
+token. Never send or expose the service-role key. Never call factor removal,
+admin user management, invite, recovery, phone/SMS MFA, or an arbitrary URL.
+
+The implementation may trust neither JWT payload decoding nor factor data for
+authorization. If JWT decoding is used only to select UI, it must be strict,
+size-bounded and followed by the Auth/database gates; the simpler preferred
+path is to derive factor state from the authenticated user response and let
+the overview RPC prove `aal2`.
+
+### Provider response validation and rendering
+
+- Accept only canonical lower-case UUID factor/challenge ids, factor type
+  `totp`, supported verified/unverified status, a bounded TOTP secret, and a
+  Supabase-provided QR data URL with the exact expected image MIME/prefix and
+  a conservative maximum length.
+- Permit `img-src data:` in the `/admin` CSP only as narrowly as required for
+  that validated QR. Preserve `default-src 'none'`, self-only script,
+  Supabase-only connect origin, no forms, no frames, no referrer, and no-store.
+- Write dynamic text via `textContent` and the QR through the dedicated image
+  `src` property only after validation. No `innerHTML`, provider HTML, remote
+  image URL, script URL, or raw error body.
+- Never retain the password, TOTP code, enrollment secret, QR, factor id, or
+  challenge id across logout/reload. `clearSession()` clears all privileged
+  UI state as well as the access token.
+- Preserve the existing strict overview-response validation and data fields.
+
+## Required TypeScript tests
+
+Extend `test/adminPage.test.ts` without adding browser-test dependencies.
+Tests must cover at least:
+
+- semantic presence and mutual visibility of login, enrollment, challenge,
+  overview, status, and error regions;
+- exact Auth endpoint allowlist and absence of invite/recovery/unenroll/admin
+  endpoints;
+- access-token-only storage before and after verify; no refresh token, secret,
+  QR, password, challenge id, or code persistence;
+- strict six-digit code validation and duplicate-submit guard;
+- zero factors -> enrollment; exactly one verified TOTP -> challenge; multiple
+  or malformed/unsupported factors -> fixed fail-closed state;
+- malformed/non-2xx current-user, enroll, challenge, and verify responses;
+- QR prefix/length validation and CSP `img-src data:` with all existing
+  security directives preserved;
+- overview cannot load before successful verification, page-load sessions
+  traverse assurance first, and 401/403 clears all state;
+- no console logging, dynamic HTML sink, service-role reference, lifecycle
+  mutation, membership mutation, invitation, recovery, or factor removal;
+- existing 20-field overview validation and all current Task 043 tests remain
+  behaviorally intact, except the obsolete “MFA not implemented” copy test is
+  replaced with exact truthful MFA copy.
+
+Tests may execute exported pure validator snippets as Task 043 already does,
+but must not contact Supabase or another external service.
+
+## Required documentation
+
+Make narrow, consistent updates to:
+
+- `docs/platform-admin-overview.md` — TOTP enrollment/challenge flow,
+  database `aal2` gate, secret handling, lockout/manual recovery boundary,
+  and the fact that MFA does not grant platform membership;
+- `docs/database-schema.md` — forward recreation of the overview RPC and its
+  two independent authorization predicates;
+- `docs/production-readiness.md` — keep the MFA checkbox unchecked during
+  implementation; spell out the staging evidence needed before it can be
+  checked and retain every unrelated production blocker;
+- `docs/staging-runbook.md` — migration-before-Worker order and a synthetic
+  staging smoke that proves password-only denial, TOTP enrollment/challenge,
+  overview success after `aal2`, logout, and re-login challenge, without
+  recording QR/secret/code;
+- `docs/kvkk-inceleme-paketi.md` — Supabase Auth owns factor metadata/secret;
+  no public application table, log, usage ledger, or outbox receives it;
+  manual lost-device recovery and Auth retention/revocation remain external
+  legal/operational review items;
+- `docs/saas-urunlestirme-yol-haritasi.md` — Task 045 implementation status
+  only; do not claim staging/production activation before it occurs.
+
+Document the next sequence explicitly:
+
+1. finish and verify this platform-admin MFA boundary;
+2. attach custom domains and register exact Supabase Auth redirect/Site URLs;
+3. configure production-grade custom SMTP;
+4. add staff invitation, password recovery/change, and the later staff MFA /
+   delegated-permission model;
+5. then perform visual branding/polish of `/staff` and `/admin`.
+
+## Allowed changes
+
+Only these files may change during implementation:
+
+- `supabase/migrations/20260901000200_platform_admin_totp_mfa.sql` (new)
+- `supabase/tests/045_platform_admin_totp_mfa.sql` (new)
+- `src/adminPage.ts`
+- `test/adminPage.test.ts`
+- `docs/platform-admin-overview.md`
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/kvkk-inceleme-paketi.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` — implementer may fill only this Task 045 **Observed
+  context** and **Delivery record**
+
+Do not edit `.gitignore`, `docs/043-opus-inceleme.md`, applied migrations,
+staff pages/tests, Worker routes, environment/config files, dependencies,
+lockfiles, prompts, evals, Meta/WhatsApp code, or any other file.
+
+## Required verification by the implementer
+
+Run and record exactly:
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm typecheck`
+3. `pnpm test`
+4. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run`
+5. `git diff --check`
+
+The migration and rollback fixture remain `NOT RUN` unless Codex later has an
+explicitly authorized disposable database. No paid AI eval is required: this
+task changes no prompt, model, extraction, triage, reply, appointment, or
+WhatsApp behavior.
+
+## Review and activation gates
+
+Before this task can become `COMPLETE`:
+
+1. Codex reviews the entire diff and all authentication/database call paths,
+   reruns the required local checks, and applies targeted fixes if needed.
+2. With explicit user authorization, Codex applies the forward migration and
+   runs the rollback-only fixture on disposable `vetai-test`; zero residue is
+   required.
+3. Claude Opus performs a mandatory salt-okunur authentication/RLS/tenant/
+   secret/KVKK review. Every blocking finding is corrected and narrowly
+   rechecked.
+4. Codex updates `PROJECT_CONTEXT.md`, stages only reviewed task files, and
+   commits the verified implementation. No push or deploy is implied.
+5. Staging migration, Worker deploy, real test-admin TOTP enrollment, and the
+   password-only/`aal2` smoke require a second explicit user approval. Never
+   print, paste, screenshot, store, or narrate the TOTP secret or code.
+6. The production-readiness MFA checkbox remains unchecked until that staging
+   smoke passes. Production remains untouched.
+
+## Observed context
+
+To be filled by the implementer from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementer from repository evidence only.
+
+---
+
 # Current task — 044 Clinic schedule and appointment-slot self-service
 
 Status: `COMPLETE`
