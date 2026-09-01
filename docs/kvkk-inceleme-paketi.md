@@ -94,6 +94,7 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Personel iş kaydı | Konuşma/outbox kimliği, neden, normal/acil öncelik, açık/çözüldü durumu | İnsan müdahalesi gereken işi görünür kılma | Supabase; telefon ve mesaj içeriği içermez |
 | Randevu | Başlangıç/bitiş zamanı, durum, konuşma/sahip/hayvan bağlantısı, geçici token ve süre | Geçici ayırma ve açık `EVET` sonrası onay | Supabase; klinik bazında ayrılmış |
 | Kimlik doğrulama | Supabase Auth kullanıcı hesabı ve oturum verileri | Personel girişi | Supabase Auth; uygulama tabloları yalnız kullanıcı UUID'sini referanslar |
+| Platform-admin TOTP MFA faktörü (Task 045) | TOTP sırrı, faktör/challenge durumu ve kimlikleri | `/admin` panelinde `platform_admins` üyeliğine ek, veritabanı düzeyinde zorunlu ikinci faktör (aal2) | Yalnız Supabase Auth'un kendi MFA faktör deposunda; VetAI veritabanı tablolarında veya `/admin` istemci kalıcı deposunda hiç tutulmaz — bkz. aşağıdaki not |
 | Queue/DLQ | Konuşma ve sağlayıcı mesaj kimliği | Dayanıklı arka plan işleme ve hata kurtarma | Cloudflare Queues; ham mesaj metni yok |
 | Teknik secret'lar | API anahtarları ve webhook secret'ları | Servisler arası kimlik doğrulama | Yalnız Cloudflare şifreli Worker binding'leri; veritabanı/istemci kodunda yok |
 | WhatsApp hesap kimlik bilgisi kaydı | Klinik başına `whatsapp_account_id`, `phone_number_id`, WhatsApp erişim token'ı (Task 040) | Giden mesajı doğru klinik WhatsApp hesabından, doğru kimlik bilgisiyle göndermek | Veritabanında değil; yalnız Cloudflare'ın şifreli `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` Worker secret binding'i içinde, en fazla 10 girişlik sabit bir dizi olarak |
@@ -254,6 +255,7 @@ etmez.
 | Talep sonucu ve yapılan işlemlerin ispat kaydı | |
 | Bot tarafından oluşturulmuş bir hayvan kaydının, sahibin kendisi tarafından "bunu ben istemedim" denilerek sildirilmesi (Task 035) | |
 | İhracatta bir hayvan kaydının **kim tarafından** oluşturulduğunun (personel mi, sahibin onayıyla bot mu) gösterilip gösterilmeyeceği | |
+| Platform-admin TOTP faktörü kayıp/değişen cihaz kurtarması (Task 045) — kendi kendine kurtarma akışı yok; Supabase Auth panelinden operatör tarafından elle faktör silme/sıfırlama gerekir. Bu manuel sürecin sorumlusu, kimlik doğrulama adımı ve Supabase Auth'taki MFA sırrının saklama/imha süresi hukuk/operasyon tarafından ayrıca netleştirilmelidir | |
 
 Mevcut veritabanı tenant bazlı silme zincirleri owner/clinic bağlantılı birçok
 kaydı birlikte kaldırır. Ancak üretim için yetkili bir başvuru/doğrulama ve

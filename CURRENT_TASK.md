@@ -1,6 +1,6 @@
 # Current task — 045 Platform-admin TOTP MFA boundary
 
-Status: `READY`
+Status: `COMPLETE`
 
 Created by Codex on 2026-09-01 after Task 044 was reviewed, committed,
 activated on `vetai-staging`, and exercised through the live tenant-scoped
@@ -62,11 +62,12 @@ change clinic RLS. Those remain separate steps in the order documented below.
    expose unenroll/reset/recovery controls that could weaken the account or
    create an unreviewed lockout path. Lost-device recovery remains a manual
    Supabase Auth operator procedure and must be documented.
-9. **One verified TOTP factor is the supported shape.** Zero verified TOTP
-   factors enters enrollment. Exactly one enters challenge. More than one
-   verified TOTP factor, a verified non-TOTP factor without exactly one TOTP,
-   or contradictory status is unsupported in this narrow UI and fails closed
-   with operator guidance; do not guess a factor.
+9. **One verified TOTP factor is the supported shape.** An empty factor list
+   enters enrollment. Exactly one verified TOTP factor enters challenge. A
+   pre-existing unverified factor (for example after reloading during setup),
+   more than one factor, a non-TOTP factor, or contradictory status is
+   unsupported in this narrow UI and fails closed with operator guidance; do
+   not create duplicates or guess a factor.
 10. **The elevated token replaces the password token.** After successful
     challenge verification, store only the returned non-empty access token
     under the existing `vetai_admin_access_token` key, discard/ignore the
@@ -318,11 +319,252 @@ Before this task can become `COMPLETE`:
 
 ## Observed context
 
-To be filled by the implementer from repository evidence only.
+- Task 043's migration (`supabase/migrations/20260831000300_platform_admin_overview.sql`)
+  was already applied to `vetai-staging` and is the direct predecessor this
+  task's migration recreates via `create or replace function` — confirmed by
+  reading that file in full and reproducing its exact 20-column OUT
+  signature, query, `stable`/`security definer`/`search_path = ''`
+  properties, and grant/revoke statements byte-for-byte except for the added
+  `aal2` predicate.
+- `PROJECT_CONTEXT.md` records Task 043 as `COMPLETE` at repository/
+  disposable-database gates and applied to staging, with the explicit note
+  that password-only `/admin` access is not approved for production until
+  MFA or an equivalent upstream control is verified — this is the gap Task
+  045 closes.
+- `src/adminPage.ts` (pre-change) implemented only a password-grant login,
+  a single `overview-section`/`login-section` view toggle, and
+  session-storage of the raw password-grant `access_token`; there was no
+  factor/AAL state, no `img-src` CSP directive, and the page copy stated MFA
+  was not yet implemented.
+- `test/adminPage.test.ts` (pre-change) asserted the exact prior CSP string
+  (no `img-src`) and covered only the password-grant/overview flow; no
+  factor/enroll/challenge coverage existed.
+- `supabase/tests/043_platform_admin_overview.sql` was read as the house
+  style for rollback-only proofs (guarded empty-sentinel pattern,
+  `information_schema.role_routine_grants` and `pg_catalog.pg_proc`
+  structural checks), reused in the new 045 fixture.
 
 ## Delivery record
 
-To be filled by the implementer from repository evidence only.
+**Files changed** (all within the Allowed-changes list):
+
+- `supabase/migrations/20260901000200_platform_admin_totp_mfa.sql` (new) —
+  recreates `get_platform_admin_overview_v1(date)` unchanged except for a
+  second, independent `v_aal is not distinct from 'aal2'` predicate ANDed
+  with the existing `platform_admins` membership check. `is not distinct
+  from` is used deliberately, not `=`: a null `aal` (missing claim or JSON
+  `null`) would make `=` evaluate to `NULL`, and PL/pgSQL's
+  `if not <null-condition>` is skipped rather than treated as true, which
+  would have silently bypassed the closed `forbidden` sentinel for any
+  malformed `aal` claim. This was self-identified and fixed before
+  finalizing the file, not left for downstream review to catch first.
+- `supabase/tests/045_platform_admin_totp_mfa.sql` (new) — rollback-only
+  (`begin; ... rollback;`) proof covering: guarded empty-sentinel check,
+  aal2+admin → `reported`, aal1+admin → `forbidden`, a 9-variant
+  `foreach` loop over malformed/missing/wrong-typed `aal` claims (all
+  asserting a bare `forbidden` row), aal2+non-member → `forbidden`,
+  anon/service_role execution denial, structural checks (OUT-column list,
+  `prosecdef`/`provolatile`/`search_path`, owner-equality with
+  `get_clinic_monthly_usage_v1`), an invalid-month-still-raises check, and
+  pre-rollback residue assertions.
+- `src/adminPage.ts` — added three new mutually exclusive UI states
+  (`enroll-section`, `challenge-section`, `unsupported-section`) alongside
+  the existing `login-section`/`overview-section`, all toggled through a
+  single `showView(name)`; added `fetchCurrentUser`, `enrollFactor`,
+  `createChallenge`, `verifyChallenge`, and `afterAuthenticated` (the
+  orchestration that derives enroll-vs-challenge-vs-unsupported from the
+  authenticated user's factor list and is invoked identically after a fresh
+  login and after a stale-session page reload, so a stored `aal1` token is
+  always re-routed through the factor/AAL flow before overview data can
+  render); added strict response validators for the factor list, TOTP
+  enrollment response (QR `data:image/svg+xml;` prefix with a bounded
+  length, and a bounded base32 secret pattern), and challenge response;
+  changed the CSP to add `img-src data:` (the only new directive; all other
+  directives unchanged); the pre-verification access token is held only in
+  the in-memory `pendingAccessToken` and `sessionStorage.setItem` for
+  `vetai_admin_access_token` now happens only inside `verifyChallenge`,
+  after a successful TOTP verification; `clearSession` now also clears the
+  in-memory factor/challenge state and the QR/secret/code/password DOM
+  fields; the Auth endpoint surface is exactly five paths (password grant,
+  `/auth/v1/user`, and the TOTP enroll/challenge/verify triad) with no
+  invite, recovery, admin, or factor-removal call; updated the panel's
+  Turkish notice from "MFA not yet available" to a truthful statement that
+  TOTP MFA is enforced at the database level pending staging verification.
+- `test/adminPage.test.ts` — updated the one CSP-string test to include
+  `img-src data:`, extended the semantic-regions test with the three new
+  section/form/input ids, and added a new "TOTP MFA boundary" describe
+  block (13 tests) covering UI-state presence, the exact endpoint
+  allowlist and absence of forbidden endpoints, that the pre-verification
+  token never reaches `sessionStorage`, six-digit code validation, the
+  zero/one/many factor-count branching (including the fail-closed
+  unsupported state), strict validation of the enroll/challenge/factor
+  responses, QR MIME-prefix/length and secret-shape bounds, `textContent`/
+  `img.src`-only rendering, clearing of enrollment material and password on
+  session clear, that login never shows the overview without first calling
+  `afterAuthenticated`, that a stored token on page load is re-routed
+  through the same flow, and duplicate-submit guarding on all three Auth
+  forms. All pre-existing Task 043 tests were left intact and unmodified
+  except the one CSP-string literal, which the CSP change itself required.
+- `docs/platform-admin-overview.md` — replaced the "MFA henüz yok" section
+  with a "TOTP MFA sınırı (Görev 045)" section describing the two
+  independent authorization predicates, the enroll/challenge/unsupported
+  UI states and their exact Auth endpoints, the QR/secret validation
+  bounds, ephemeral secret handling, the deferred-to-Supabase-Auth
+  factor/secret custody, and that MFA enrollment does not itself grant
+  `platform_admins` membership.
+- `docs/database-schema.md` — added a "Platform-admin TOTP MFA boundary
+  (Task 045)" section (placed after Task 044's section to preserve
+  chronological ordering) documenting the recreated function, the
+  `is not distinct from` null-safety reasoning, and the Auth endpoint
+  surface.
+- `docs/production-readiness.md` — rewrote the still-unchecked MFA
+  checklist item to describe what Task 045 added (database-enforced TOTP
+  `aal2`) and the specific staging evidence still required before it can be
+  checked.
+- `docs/staging-runbook.md` — added new "§15 Platform-admin TOTP MFA smoke
+  (Task 045, planlanmış — henüz çalıştırılmadı)" describing the planned,
+  not-yet-run synthetic staging smoke (migration ordering, password-only
+  denial, first enrollment, logout/re-challenge, membership/aal2
+  independence), explicitly noting no QR/secret/code/token may be recorded.
+- `docs/kvkk-inceleme-paketi.md` — added a data-inventory row noting the
+  TOTP factor/secret lives solely in Supabase Auth's own store, never in
+  VetAI tables or client persistent storage, and an open-question row
+  flagging lost-device manual recovery and MFA-secret retention/revocation
+  as unresolved legal/operational items.
+- `docs/saas-urunlestirme-yol-haritasi.md` — added a narrow "Durum (Task
+  045)" note stating the password-only gap is closed at the repository
+  level only, with staging/production activation still pending Codex's
+  disposable-database run, the mandatory Opus review, and the staging
+  smoke.
+
+**Verification run by the implementer** (all commands from "Required
+verification by the implementer", run in this order after all file changes
+above):
+
+1. `pnpm install --frozen-lockfile` → `Already up to date` (exit 0).
+2. `pnpm typecheck` → `tsc --noEmit` completed with no errors (exit 0).
+3. `pnpm test` → full suite passed: 1892 tests passed, 0 failed, including
+   all 60 tests in `test/adminPage.test.ts` (the pre-existing Task 043
+   tests plus the 13 new TOTP-boundary tests).
+4. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+   succeeded (`wrangler 4.118.0`, Total Upload 234.60 KiB / gzip 48.06 KiB,
+   `--dry-run: exiting now.`).
+5. `git diff --check` → no trailing-whitespace or conflict-marker errors
+   reported (only informational CRLF/LF line-ending notices).
+
+**Checks explicitly NOT run** (per the task contract and explicit user
+instruction): the forward migration
+(`supabase/migrations/20260901000200_platform_admin_totp_mfa.sql`) and the
+rollback-only fixture (`supabase/tests/045_platform_admin_totp_mfa.sql`)
+were never executed against any database — both remain `NOT RUN`. No real
+Supabase, Cloudflare, Meta, or OpenAI call was made. Nothing was committed,
+pushed, or deployed.
+
+**Risks for Codex/Opus review:**
+
+- The `is not distinct from` vs. `=` null-propagation choice in the new
+  migration is the single highest-value line to re-verify: confirm no other
+  boolean guard in the function (or in `045_platform_admin_totp_mfa.sql`'s
+  assertions) reintroduces a bare `=`/`IS NULL` comparison against a JWT
+  claim that could yield an unintended fall-through.
+- The client-side factor-state routing in `afterAuthenticated`
+  (`src/adminPage.ts`) is advisory UI only — the database `aal2` check is
+  the actual security boundary — but Opus should confirm there is no path
+  where `loadOverview` can be reached without first passing through
+  `afterAuthenticated` (i.e., no leftover direct call site), since that is
+  what prevents a stale `aal1` token from briefly rendering cached data.
+- The client still deliberately limits the TOTP secret to bounded uppercase
+  base32. The raw REST QR shape is no longer guessed: Codex verified from the
+  official Supabase Auth source/tests that REST returns SVG text, then added a
+  bounded SVG-to-encoded-data-URL conversion and behavioral tests. The real
+  staging enrollment must still confirm the deployed Supabase version's
+  output before production.
+- The design deliberately re-derives factor/AAL state (and thus asks for a
+  fresh 6-digit code) on every page load with a stored token, even if that
+  token might already carry `aal2` — this trades UX friction for not
+  trusting client-side JWT decoding; confirm this matches the intended
+  product posture before staging.
+- Confirm the "unsupported factor state" fail-closed screen (more than one
+  verified TOTP factor, a verified non-TOTP factor, or a malformed factor
+  list) cannot be reached by a legitimate admin through any ordinary
+  Supabase Auth UI flow outside `/admin`, since there is no self-service
+  recovery from it in this task's scope.
+- At implementer delivery time neither the migration nor the rollback fixture
+  had been executed. Codex subsequently closed this risk on disposable
+  `vetai-test`; the execution record is below. The fixture still simulates
+  PostgREST's JWT GUC rather than minting a malformed signed token, which is
+  the deliberate scope of this database proof.
+
+**Codex targeted review corrections and independent local evidence
+(2026-09-01):**
+
+- The original native-REST client expected an SDK-prepared QR `data:` URL,
+  but Supabase Auth's raw REST enroll response contains SVG text. Codex
+  changed the boundary to accept only a bounded SVG root without active,
+  external-resource, event-handler or stylesheet patterns, percent-encode it
+  under the exact local `data:image/svg+xml;charset=utf-8,` prefix, and render
+  it only as the dedicated image source.
+- The original implementation created one challenge before code entry and
+  cleared the whole session after a wrong code. Official Supabase guidance
+  requires challenge+verify to be repeated. Each submit now creates a fresh
+  challenge; a retryable wrong code preserves the current MFA view and
+  ephemeral setup material. A 401/403 still clears the entire session.
+- Only an empty factor list may start enrollment. A pre-existing unverified
+  factor, multiple factors, a non-TOTP factor, or malformed factor data now
+  enters the fixed unsupported state, preventing duplicate-friendly-name
+  enrollment loops after an interrupted setup.
+- The new pure MFA validator block is executed behaviorally by the unit suite:
+  it proves factor routing, raw-SVG conversion/rejection, REST-style enroll
+  and challenge response validation, access-token validation, and HTTP status
+  classification rather than relying only on source-string assertions.
+- The rollback fixture's `reported` proof now selects/counts its own synthetic
+  clinic row and tolerates unrelated clinics in a shared disposable database;
+  it no longer assumes the fixture owns the whole global overview.
+- Codex independently reran the required local gates after these corrections:
+  frozen install passed; typecheck passed; the full suite passed with 1,896
+  tests and 2 opt-in paid-eval tests skipped; the Worker dry-run passed at
+  235.81 KiB / gzip 48.47 KiB; and `git diff --check` reported no errors.
+  No prompt/model path changed and no paid eval was run.
+- The mandatory Claude Opus read-only security/authentication/RLS/tenant/
+  secret/KVKK review returned `PASS` with no blocking finding. Its three
+  important residual findings were defense-in-depth/availability items, not
+  authorization bypasses.
+- Codex closed the cheap residuals without widening the product surface:
+  every unsupported or interrupted-factor path now clears the access token
+  and ephemeral UI state before showing fixed operator guidance; the staging
+  runbook now includes an interrupted-enrollment recovery drill; and the
+  production gate requires recording the actual Supabase Auth MFA-verify
+  rate limit rather than claiming a browser-side brute-force boundary.
+- The rollback fixture was also hardened so every synthetic JWT-blob block
+  explicitly clears the legacy per-key `request.jwt.claim.sub` GUC and all
+  security-result comparisons use `is distinct from`, preventing a stale
+  claim or hypothetical null result from passing silently.
+- Codex reran the final local gates after these changes: frozen install and
+  typecheck passed; `test/adminPage.test.ts` passed 64/64; the full suite
+  passed with 1,896 tests and 2 opt-in paid-eval tests skipped; the Worker
+  dry-run passed at 236.03 KiB / gzip 48.57 KiB; and `git diff --check`
+  reported no errors.
+- After explicit user approval, Codex visibly verified the linked target as
+  disposable `vetai-test` (`cyjpiapxvalqltcsywam`). Because that project's
+  migration-history table is intentionally behind its already-validated
+  schema, Codex did not use a blind `db push`; it ran only
+  `20260901000200_platform_admin_totp_mfa.sql` through the SQL Editor. The
+  migration returned `Success. No rows returned`.
+- Codex then ran the corrected rollback-only
+  `045_platform_admin_totp_mfa.sql` fixture. It returned
+  `Success. No rows returned`; a separate read-only query confirmed fixture
+  residue `auth.users / clinics / platform_admins = 0 / 0 / 0`.
+- The first fixture submission was not executed because the browser editor
+  had appended it to the migration text and PostgreSQL rejected the combined
+  buffer at parse time. Codex cleared the editor, verified the standalone
+  fixture occupied exactly 376 lines, and the standalone rerun passed. No
+  partial fixture transaction or data mutation occurred from the rejected
+  parse.
+- Task 045 is complete at repository, local-test, disposable-database, Codex
+  and mandatory Opus gates. No Auth factor was created, no Worker was
+  deployed, nothing was applied to `vetai-staging` or production, and the
+  real staging TOTP/rate-limit smoke remains a separately authorized next
+  step.
 
 ---
 

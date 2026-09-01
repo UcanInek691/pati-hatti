@@ -70,17 +70,28 @@ itself.
     reviewing expert; it states verified facts only and deliberately answers
     none of the above.
 
-- [ ] Multi-factor authentication (or an equivalent upstream privileged-access
-      control) is verified for every account enrolled in `platform_admins`
-      before `/admin` (Task 043,
+- [ ] Multi-factor authentication is verified end-to-end, in staging, for
+      every account enrolled in `platform_admins` before `/admin` (Task 043,
       [`platform-admin-overview.md`](platform-admin-overview.md)) is used
-      against real data. The MVP shipped in Task 043 relies solely on
-      Supabase Auth email/password for that page; a leaked or reused password
-      is the only barrier to a read of every clinic's operational metadata
-      and monthly AI-usage summary across tenants. Password-only auth is not
-      an adequate control for that blast radius and this box must stay
-      unchecked until MFA (or an equivalent control, e.g. a network-level
-      restriction plus short-lived sessions) is in place and verified.
+      against real data. Task 045 added a database-enforced TOTP `aal2`
+      requirement (`get_platform_admin_overview_v1` now rejects any caller
+      whose JWT `aal` claim is not exactly `aal2`, independent of
+      `platform_admins` membership) and the corresponding `/admin` TOTP
+      enrollment/challenge UI. The migration and rollback fixture passed only
+      on disposable `vetai-test`; no real Supabase Auth TOTP enrollment/
+      challenge has been exercised end-to-end and staging/production remain
+      unchanged. This box must stay unchecked until staging
+      (`docs/staging-runbook.md`) has confirmed,
+      against a real Supabase project: the migration applies cleanly after
+      the Task 043 one, a password-only session cannot read overview data,
+      a fresh account is forced through TOTP enrollment before it can, an
+      already-enrolled account is forced through a challenge on every new
+      session, and `platform_admins` membership without a verified TOTP
+      factor (and vice versa) is still rejected. Before this box is checked,
+      the Supabase Auth MFA-verify rate limit for the project must also be
+      inspected and its actual configured value recorded in the staging
+      evidence; the browser does not claim to provide its own brute-force
+      boundary.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

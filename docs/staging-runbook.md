@@ -551,3 +551,59 @@ veteriner hekim kopya onayı, Türk hukuku/KVKK onay paketi, hukukçu onaylı
 üretim gizlilik yüzeyi (`/privacy` bunun yerine geçmez), ve Coexistence
 `UNAVAILABLE` olduğu için §13'e göre gereken incelenmiş personel Cloud API
 composer'ı.
+
+## 15. Platform-admin TOTP MFA smoke (Task 045, planlanmış — henüz çalıştırılmadı)
+
+Bu bölüm, Task 045'in `/admin` TOTP MFA sınırını staging'de doğrulamak için
+Codex/Opus incelemesinden sonra izlenecek sırayı tarif eder. Uygulayan hiçbir
+veritabanı adımı çalıştırmadı. Codex migration ve rollback-only fixture'ı
+(`supabase/migrations/20260901000200_platform_admin_totp_mfa.sql`,
+`supabase/tests/045_platform_admin_totp_mfa.sql`) yalnız disposable
+`vetai-test` üzerinde başarıyla doğruladı; staging migration/deploy/TOTP smoke
+hâlâ NOT RUN durumundadır. Sıra §1 (yetki kapısı) ve §3 (Supabase) sonrasını
+varsayar.
+
+1. **Migration sırası.** `20260901000200_platform_admin_totp_mfa.sql`,
+   Task 043'ün `20260831000300_platform_admin_overview.sql` migration'ından
+   *sonra* uygulanmalı; fonksiyon `create or replace function` ile yeniden
+   tanımlanır, tabloyu veya grantları değiştirmez. Worker/`/admin` shell'i
+   migration uygulanmadan önce deploy edilmemeli — deploy edilirse, aal2
+   kontrolü olmayan eski fonksiyon hâlâ çalışıyor demektir.
+2. **Parola-yalnız reddi.** Migration uygulandıktan hemen sonra, TOTP kurulu
+   olmayan bir `platform_admins` hesabıyla `/admin`'e parola ile giriş
+   yapılır; genel bakış verisi görünmeden önce kurulum ekranına
+   yönlendirildiği doğrulanır (parola tek başına asla yetmemeli).
+3. **İlk kurulum.** Aynı oturumda QR kod veya metin anahtarı bir doğrulayıcı
+   uygulamaya (ör. Google Authenticator) eklenir, uygulamanın ürettiği 6
+   haneli kod girilir; genel bakış verisinin ancak bundan sonra göründüğü
+   doğrulanır.
+4. **Yarım kalan kurulum ve operatör kurtarması.** Ayrı bir sentetik
+   platform-admin hesabında kurulum ekranı göründükten sonra kod girmeden
+   sayfa yenilenir. Sonraki girişin genel bakış verisini göstermediği,
+   oturumu temizleyip sabit operatör yönlendirmesinde kapalı kaldığı
+   doğrulanır. Supabase Auth panelinde bu hesabın yarım kalmış `unverified`
+   TOTP faktörü ayrıca silinir; sonra temiz kurulumun yeniden başlayabildiği
+   doğrulanır. Bu işlem gerçek yönetici hesabında denenmez.
+5. **Çıkış ve yeniden challenge.** `Logout` sonrası aynı hesapla tekrar
+   parola girişi yapılır; bu kez doğrudan challenge ekranına düşüldüğü
+   (yeniden kurulum istenmediği) ve yeni bir 6 haneli kodun tekrar istendiği
+   doğrulanır — sayfa yeniden yüklendiğinde de (saklı jeton olsa bile) aynı
+   şekilde bir kod istenmelidir.
+6. **Üyeliksiz/aal1 reddi.** `platform_admins`'te olmayan bir hesap TOTP
+   kurup doğrulasa bile genel bakışın `forbidden` sentinel'iyle reddedildiği;
+   ve `platform_admins` üyesi ama aal2'ye ulaşmamış bir oturumun da aynı
+   `forbidden` sentinel'iyle reddedildiği (iki durumun UI'dan ayırt
+   edilemediği) doğrulanır.
+7. **Sunucu tarafı deneme sınırı.** Supabase Auth'un bu proje için uyguladığı
+   MFA-verify rate-limit ayarı panelden veya sağlayıcının yetkili yönetim
+   yüzeyinden okunur ve yalnız değer/inceleme tarihi kanıt kaydına yazılır.
+   İstemcinin kendi başına brute-force sınırı sağladığı varsayılmaz; ayar
+   doğrulanamıyorsa production MFA kutusu açık bırakılır.
+
+Bu smoke sırasında **hiçbir QR kodu, metin anahtarı, TOTP kodu veya erişim
+jetonu** kanıt şablonuna (§11) veya başka bir kalıcı kayda yazılmaz; yalnızca
+"kurulum ekranı göründü / genel bakış göründü / reddedildi" gibi gözlemlenen
+sonuçlar ve rate-limit'in hassas olmayan yapılandırma değeri not edilir. Bu
+bölüm tamamlanmadan
+[`docs/production-readiness.md`](production-readiness.md) 1. bölümündeki MFA
+maddesi işaretlenemez.

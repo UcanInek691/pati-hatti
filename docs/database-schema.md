@@ -1063,3 +1063,48 @@ and
 [`docs/staff-workflow.md`](staff-workflow.md#clinic-schedule-task-044) for the
 product rules, the grandfathered-hold interaction, and the `/staff` UI these
 RPCs back.
+
+## Platform-admin TOTP MFA boundary (Task 045)
+
+`supabase/migrations/20260901000200_platform_admin_totp_mfa.sql` and
+`supabase/tests/045_platform_admin_totp_mfa.sql`. The implementer did not
+apply or run either against any database. Codex later applied the migration
+only to disposable `vetai-test`; the corrected rollback fixture passed and a
+separate query confirmed zero Auth-user, clinic and platform-admin fixture
+residue. Mandatory Opus review also passed. Staging and production remain
+unchanged pending the real TOTP smoke.
+
+`get_platform_admin_overview_v1(p_month_start)` is recreated with the exact
+Task 043 signature, 20-column shape, query, sort order, `stable` volatility,
+`security definer`, and empty `search_path`. The only behavioral change is a
+second, independent authorization predicate evaluated inside the function
+alongside the existing `platform_admins` membership check: the caller's JWT
+`aal` (assurance level) claim must be exactly `aal2`
+(`auth.jwt() ->> 'aal' is not distinct from 'aal2'`). `is not distinct from`
+is used deliberately instead of `=`, because a null `aal` (a missing claim or
+an explicit JSON `null`) would otherwise make `=` evaluate to `NULL`, and
+PL/pgSQL's `if not <null-condition>` is skipped rather than treated as true —
+silently bypassing the closed `forbidden` sentinel for any malformed `aal`
+claim. Neither predicate alone is sufficient; either one missing still
+returns the single `forbidden` sentinel row used since Task 043, with no new
+distinguishing status — the response shape does not reveal whether the
+caller failed membership, `aal2`, or both.
+
+`platform_admins`, its RLS posture, `set_platform_admin_v1`, the clinic-name
+structural constraint, all downstream tenant RLS policies, and
+`get_clinic_monthly_usage_v1` are unchanged by this migration.
+
+Reaching `aal2` is entirely Supabase Auth's own TOTP factor lifecycle
+(enroll, challenge, verify) — no database object is added or changed to
+support it. `/admin` (`src/adminPage.ts`) calls exactly five Supabase Auth
+endpoints: the password grant, an authenticated current-user lookup (used
+only to read the caller's existing MFA factor list), and the TOTP
+enroll/challenge/verify triad; it never calls an invite, recovery, admin, or
+factor-removal endpoint. No factors routes to enrollment, exactly one
+verified TOTP factor routes to challenge, and every other factor combination
+(including an interrupted `unverified` enrollment) fails closed to a fixed
+operator-guidance state with no self-service recovery. The raw REST enroll
+SVG is validated and encoded into a bounded local `data:` image; it is not
+accepted as provider HTML or a remote image URL. See
+[`docs/platform-admin-overview.md`](platform-admin-overview.md) for the full
+client-side flow and secret-handling boundary.

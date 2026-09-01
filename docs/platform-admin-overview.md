@@ -87,13 +87,64 @@ karşı doğrular ve bozuk/beklenmeyen bir yanıtta önceki durumu temizleyip
 sabit bir Türkçe hata gösterir (fail-closed); tüm değerler yalnızca
 `textContent` ile yazılır, hiçbir zaman `innerHTML` ile değil.
 
-## MFA henüz yok — bu üretimde onaylı bir ayrıcalıklı erişim değildir
+## TOTP MFA sınırı (Görev 045)
 
-`/admin` şu anda yalnız Supabase Auth e-posta/parola girişine dayanır; bu
-sayfanın kendi içindeki Türkçe uyarı da bunu açıkça belirtir. Sızmış veya
-tekrar kullanılan bir parola, tüm kliniklerin operasyonel metadata'sını ve
-aylık AI kullanım özetini okumaya yeten tek engeldir. Bu nedenle
-[`docs/production-readiness.md`](production-readiness.md) 1. bölümüne, MFA
-(veya eşdeğer bir üst-seviye kontrol) doğrulanana kadar işaretlenemeyecek
-ayrı bir madde eklendi; bu madde işaretlenmeden `/admin` gerçek klinik
-verisine karşı kullanılmamalıdır.
+> Bu bölümdeki migration ve rollback-only fixture uygulayan tarafından hiçbir
+> veritabanına karşı çalıştırılmadı. Codex daha sonra migration'ı yalnız
+> disposable `vetai-test` üzerinde uyguladı; düzeltilmiş fixture geçti ve
+> Auth kullanıcısı/klinik/platform-admin kalıntısı `0 / 0 / 0` doğrulandı.
+> Zorunlu Opus incelemesi de `PASS` verdi. Staging ve production değişmedi.
+
+Parola girişi tek başına artık yeterli değildir. `get_platform_admin_overview_v1`
+içinde, `platform_admins` üyelik kontrolüne ek olarak **ikinci ve bağımsız**
+bir yetkilendirme koşulu vardır: çağıranın JWT'sindeki `aal` (assurance
+level) iddiası tam olarak `aal2` olmalıdır (`auth.jwt() ->> 'aal' is not
+distinct from 'aal2'`). İki koşuldan biri eksikse fonksiyon yine tek bir
+`forbidden` satırı döner; yanıt şekli Görev 043'teki ile birebir aynıdır,
+üyelik veya MFA durumunu ayırt eden yeni bir bilgi sızdırmaz.
+
+`aal2`'ye ulaşmanın tek yolu Supabase Auth'un kendi TOTP faktör akışıdır;
+`/admin` bunu veritabanına dokunmadan, yalnızca Supabase Auth uç noktalarını
+çağırarak yürütür:
+
+- **Kurulum (hesapta hiç MFA faktörü yok):** `/auth/v1/factors` ile yeni bir
+  `totp` faktörü açılır. Ham REST yanıtındaki sınırlı boyutlu SVG, aktif
+  içerik/harici kaynak kalıpları reddedildikten sonra istemci tarafından
+  yüzde-kodlanmış sabit bir `data:image/svg+xml;charset=utf-8,` adresine
+  çevrilir; Supabase'in metin anahtarı da yedek kurulum yolu olarak
+  gösterilir. Kullanıcı doğrulayıcı uygulamadan aldığı 6 haneli kodu girer.
+- **Doğrulama (tam olarak bir doğrulanmış TOTP faktörü):** doğrudan
+  `/auth/v1/factors/{id}/challenge` + `/auth/v1/factors/{id}/verify` ile 6
+  haneli kod istenir.
+- **Desteklenmeyen durum** (önceden yarım kalmış `unverified` faktör,
+  birden fazla faktör, TOTP-olmayan faktör, ya da bozuk/beklenmeyen bir yanıt):
+  sayfa erişim jetonunu ve geçici oturum/MFA ekran durumunu temizleyip sabit
+  bir "operatörle iletişime geçin" ekranında kilitli kalır; kendi kendine
+  kurtarma (self-service) veya faktör silme akışı yoktur.
+
+Faktör/challenge/verify sırrı (QR, metin anahtarı, kod, faktör/challenge
+kimliği) yalnızca bellekte tutulur, hiçbir zaman `sessionStorage`'a veya
+başka bir kalıcı depoya yazılmaz. Yanlış kodda aynı kurulum ekranı korunur
+ve her denemede yeni bir challenge üretilir; başarılı doğrulamada, oturum
+süresi dolduğunda veya çıkışta hassas ekran durumu temizlenir. Kurulum
+sırasında sayfa yeniden yüklenip Supabase Auth'ta `unverified` faktör
+kalırsa panel yeni faktör üretmez; operatör yönlendirmesiyle kapalı kalır.
+`sessionStorage`'daki
+`vetai_admin_access_token` yalnızca başarılı bir MFA doğrulamasından **sonra**
+yazılır — parola girişinin döndürdüğü `aal1` erişim jetonu hiçbir zaman
+kalıcı depoya yazılmaz. Sayfa her yeniden yüklendiğinde, saklı jeton varsa
+bile genel bakış verisi göstermeden önce aynı faktör/AAL akışından tekrar
+geçirilir; yani kayıtlı bir `aal1` jetonu asla önbelleğe alınmış veriyi
+kısaca bile göstermez.
+
+TOTP faktörünün kendisi (sır dahil) tamamen Supabase Auth'un sorumluluğunda
+kalır; `platform_admins` üyeliği ile faktör kaydı birbirinden bağımsızdır —
+MFA kurmak tek başına platform yöneticiliği **vermez**, yalnızca zaten üye
+olan bir hesabın ikinci faktörünü doğrular. Cihaz kaybı/manuel kurtarma bu
+görevin kapsamında değildir; operatör bunu Supabase Auth panelinden elle
+çözer.
+
+Bu denetim staging'de uçtan uca (migration → Worker → gerçek TOTP kurulumu/
+doğrulaması) doğrulanana kadar
+[`docs/production-readiness.md`](production-readiness.md) 1. bölümündeki
+madde işaretlenemez; bkz. [`docs/staging-runbook.md`](staging-runbook.md).

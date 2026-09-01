@@ -76,7 +76,7 @@ export const ADMIN_HTML = `<!doctype html>
 <body>
 <header>
   <h1>VetAI Platform Yönetici Paneli</h1>
-  <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Herhangi bir müdahale (askıya alma, kapatma, fiyatlandırma, faturalandırma vb.) yetkisi yoktur. MVP sürümünde çok faktörlü doğrulama (MFA) veya eşdeğer bir üst-seviye erişim kontrolü henüz doğrulanmadığından, bu panel üretimde onaylı ayrıcalıklı erişim olarak kabul edilemez.</p>
+  <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Herhangi bir müdahale (askıya alma, kapatma, fiyatlandırma, faturalandırma vb.) yetkisi yoktur. MVP sürümünde bu panele erişim, şifre girişinin ardından veritabanı düzeyinde zorunlu kılınan TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir; yalnızca ikinci faktörü (aal2) doğrulanmış oturumlar genel bakış verisini görebilir. Bu denetim staging ortamında uçtan uca doğrulanana kadar panel üretimde onaylı ayrıcalıklı erişim olarak kabul edilemez.</p>
   <p id="status-region" role="status" aria-live="polite"></p>
   <p id="error-region" role="alert" aria-live="assertive"></p>
 </header>
@@ -90,6 +90,33 @@ export const ADMIN_HTML = `<!doctype html>
     <input type="password" id="password-input" name="password" required autocomplete="current-password">
     <button type="submit">Giriş yap</button>
   </form>
+</section>
+
+<section id="enroll-section" aria-labelledby="enroll-heading" hidden>
+  <h2 id="enroll-heading">Çok faktörlü doğrulama kurulumu</h2>
+  <p>Bu hesapta doğrulanmış bir TOTP faktörü yok. Bir doğrulayıcı uygulamayla (ör. Google Authenticator, 1Password) aşağıdaki QR kodunu okutun veya metin anahtarını elle girin, ardından uygulamanın gösterdiği 6 haneli kodu girin.</p>
+  <img id="enroll-qr-image" alt="TOTP kurulum QR kodu" width="200" height="200">
+  <p>Metin anahtarı: <code id="enroll-secret-text"></code></p>
+  <form id="enroll-form">
+    <label for="enroll-code-input">6 haneli kod</label>
+    <input type="text" id="enroll-code-input" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" required>
+    <button type="submit">Doğrula</button>
+  </form>
+</section>
+
+<section id="challenge-section" aria-labelledby="challenge-heading" hidden>
+  <h2 id="challenge-heading">Çok faktörlü doğrulama</h2>
+  <p>Doğrulayıcı uygulamanızdaki 6 haneli kodu girin.</p>
+  <form id="challenge-form">
+    <label for="challenge-code-input">6 haneli kod</label>
+    <input type="text" id="challenge-code-input" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" required>
+    <button type="submit">Doğrula</button>
+  </form>
+</section>
+
+<section id="unsupported-section" aria-labelledby="unsupported-heading" hidden>
+  <h2 id="unsupported-heading">Doğrulama durumu desteklenmiyor</h2>
+  <p>Bu hesabın çok faktörlü doğrulama durumu bu panel tarafından desteklenmiyor. Lütfen platform operatörüyle iletişime geçin.</p>
 </section>
 
 <section id="overview-section" aria-labelledby="overview-heading" hidden>
@@ -222,9 +249,90 @@ function validateOverviewRows(rows, monthStart) {
 }
 `;
 
+export const ADMIN_MFA_VALIDATION_JS = `
+const CODE_PATTERN = /^[0-9]{6}$/;
+const TOTP_SECRET_PATTERN = /^[A-Z2-7]{16,128}$/;
+const QR_DATA_URL_PREFIX = "data:image/svg+xml;charset=utf-8,";
+const QR_SVG_MAX_LENGTH = 60000;
+
+function isSupportedFactorStatus(value) {
+  return value === "verified" || value === "unverified";
+}
+
+function validateFactorList(rawFactors) {
+  if (rawFactors === undefined) return [];
+  if (!Array.isArray(rawFactors)) return null;
+  for (const factor of rawFactors) {
+    if (typeof factor !== "object" || factor === null || Array.isArray(factor) ||
+        typeof factor.id !== "string" || !UUID_PATTERN.test(factor.id) ||
+        typeof factor.factor_type !== "string" || !isSupportedFactorStatus(factor.status)) {
+      return null;
+    }
+  }
+  return rawFactors;
+}
+
+function decideFactorRoute(rawFactors) {
+  const factors = validateFactorList(rawFactors);
+  if (factors === null) return { kind: "unsupported" };
+  if (factors.length === 0) return { kind: "enroll" };
+  if (factors.length === 1 && factors[0].factor_type === "totp" && factors[0].status === "verified") {
+    return { kind: "challenge", factorId: factors[0].id };
+  }
+  return { kind: "unsupported" };
+}
+
+function qrSvgToDataUrl(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > QR_SVG_MAX_LENGTH) return null;
+  const svg = value.trim();
+  if (!/^<svg(?:\\s|>)[\\s\\S]*<\\/svg>$/.test(svg)) return null;
+  if (/<(?:script|foreignObject|iframe|object|embed)\\b/i.test(svg) ||
+      /\\bon[a-z]+\\s*=/i.test(svg) ||
+      /(?:href|xlink:href)\\s*=/i.test(svg) ||
+      /url\\s*\\(/i.test(svg) ||
+      /<\\?xml-stylesheet/i.test(svg)) return null;
+  return QR_DATA_URL_PREFIX + encodeURIComponent(svg);
+}
+
+function isValidTotpSecret(value) {
+  return typeof value === "string" && TOTP_SECRET_PATTERN.test(value);
+}
+
+function validateEnrollResponse(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data) ||
+      typeof data.id !== "string" || !UUID_PATTERN.test(data.id) || data.type !== "totp") return null;
+  const totp = data.totp;
+  if (typeof totp !== "object" || totp === null || Array.isArray(totp)) return null;
+  const qrCode = qrSvgToDataUrl(totp.qr_code);
+  if (qrCode === null || !isValidTotpSecret(totp.secret)) return null;
+  return { factorId: data.id, qrCode, secret: totp.secret };
+}
+
+function validateChallengeResponse(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data) ||
+      typeof data.id !== "string" || !UUID_PATTERN.test(data.id)) return null;
+  return { challengeId: data.id };
+}
+
+function validateAccessTokenResponse(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data) ||
+      typeof data.access_token !== "string" || data.access_token.length === 0 ||
+      data.access_token.length > 16384 || /[\\u0000-\\u0020\\u007f]/.test(data.access_token)) return null;
+  return data.access_token;
+}
+
+function classifyAuthStatus(status) {
+  if (status === 401 || status === 403) return "session_expired";
+  if (Number.isInteger(status) && status >= 200 && status <= 299) return "ok";
+  return "failed";
+}
+`;
+
 export const ADMIN_APP_JS = `"use strict";
 
 ${ADMIN_OVERVIEW_VALIDATION_JS}
+
+${ADMIN_MFA_VALIDATION_JS}
 
 const SESSION_STORAGE_KEY = "vetai_admin_access_token";
 const STATUS_LABELS = { active: "Aktif", suspended: "Ask\\u0131ya al\\u0131nd\\u0131", offboarding: "Kapan\\u0131\\u015f s\\u00fcrecinde" };
@@ -232,17 +340,30 @@ const STATUS_LABELS = { active: "Aktif", suspended: "Ask\\u0131ya al\\u0131nd\\u
 const statusRegion = document.getElementById("status-region");
 const errorRegion = document.getElementById("error-region");
 const loginSection = document.getElementById("login-section");
+const enrollSection = document.getElementById("enroll-section");
+const challengeSection = document.getElementById("challenge-section");
+const unsupportedSection = document.getElementById("unsupported-section");
 const overviewSection = document.getElementById("overview-section");
 const loginForm = document.getElementById("login-form");
 const emailInput = document.getElementById("email-input");
 const passwordInput = document.getElementById("password-input");
+const enrollForm = document.getElementById("enroll-form");
+const enrollCodeInput = document.getElementById("enroll-code-input");
+const enrollQrImage = document.getElementById("enroll-qr-image");
+const enrollSecretText = document.getElementById("enroll-secret-text");
+const challengeForm = document.getElementById("challenge-form");
+const challengeCodeInput = document.getElementById("challenge-code-input");
 const monthForm = document.getElementById("month-form");
 const monthInput = document.getElementById("month-input");
 const logoutButton = document.getElementById("logout-button");
 const periodRegion = document.getElementById("period-region");
 const overviewContent = document.getElementById("overview-content");
 
+const FACTOR_FRIENDLY_NAME = "VetAI Admin Paneli";
+
 let config = null;
+let pendingAccessToken = null;
+let pendingFactorId = null;
 
 function showError(message) {
   errorRegion.textContent = message;
@@ -257,22 +378,41 @@ function clearMessages() {
   statusRegion.textContent = "";
 }
 
-function showLoginView() {
-  loginSection.hidden = false;
-  overviewSection.hidden = true;
-}
-
-function showOverviewView() {
-  loginSection.hidden = true;
-  overviewSection.hidden = false;
+function showView(name) {
+  loginSection.hidden = name !== "login";
+  enrollSection.hidden = name !== "enroll";
+  challengeSection.hidden = name !== "challenge";
+  unsupportedSection.hidden = name !== "unsupported";
+  overviewSection.hidden = name !== "overview";
 }
 
 function clearSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  pendingAccessToken = null;
+  pendingFactorId = null;
   overviewContent.textContent = "";
   periodRegion.textContent = "";
+  enrollQrImage.removeAttribute("src");
+  enrollSecretText.textContent = "";
+  enrollCodeInput.value = "";
+  challengeCodeInput.value = "";
+  passwordInput.value = "";
   clearMessages();
-  showLoginView();
+  showView("login");
+}
+
+function showUnsupported() {
+  clearSession();
+  showView("unsupported");
+}
+
+function requireAuthResponse(res, failureMessage) {
+  const result = classifyAuthStatus(res.status);
+  if (result === "session_expired") {
+    clearSession();
+    throw new Error("session expired");
+  }
+  if (result !== "ok") throw new Error(failureMessage);
 }
 
 function istanbulMonthStart() {
@@ -313,10 +453,107 @@ async function login(email, password) {
     throw new Error("login failed");
   }
   const data = await res.json();
-  if (typeof data.access_token !== "string" || data.access_token.length === 0) {
-    throw new Error("malformed login response");
+  const accessToken = validateAccessTokenResponse(data);
+  if (accessToken === null) throw new Error("malformed login response");
+  pendingAccessToken = accessToken;
+}
+
+async function fetchCurrentUser() {
+  const res = await fetch(config.supabaseUrl + "/auth/v1/user", {
+    method: "GET",
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingAccessToken,
+    },
+  });
+  requireAuthResponse(res, "user lookup failed");
+  const data = await res.json();
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new Error("malformed user response");
   }
-  sessionStorage.setItem(SESSION_STORAGE_KEY, data.access_token);
+  return data;
+}
+
+async function enrollFactor() {
+  const res = await fetch(config.supabaseUrl + "/auth/v1/factors", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingAccessToken,
+    },
+    body: JSON.stringify({ factor_type: "totp", friendly_name: FACTOR_FRIENDLY_NAME }),
+  });
+  requireAuthResponse(res, "enroll failed");
+  const data = await res.json();
+  const parsed = validateEnrollResponse(data);
+  if (!parsed) {
+    throw new Error("malformed enroll response");
+  }
+  return parsed;
+}
+
+async function createChallenge(factorId) {
+  const res = await fetch(config.supabaseUrl + "/auth/v1/factors/" + factorId + "/challenge", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingAccessToken,
+    },
+    body: JSON.stringify({}),
+  });
+  requireAuthResponse(res, "challenge failed");
+  const data = await res.json();
+  const parsed = validateChallengeResponse(data);
+  if (!parsed) {
+    throw new Error("malformed challenge response");
+  }
+  return parsed;
+}
+
+async function verifyChallenge(factorId, challengeId, code) {
+  const res = await fetch(config.supabaseUrl + "/auth/v1/factors/" + factorId + "/verify", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingAccessToken,
+    },
+    body: JSON.stringify({ challenge_id: challengeId, code }),
+  });
+  requireAuthResponse(res, "verify failed");
+  const data = await res.json();
+  const accessToken = validateAccessTokenResponse(data);
+  if (accessToken === null) throw new Error("malformed verify response");
+  pendingAccessToken = accessToken;
+  sessionStorage.setItem(SESSION_STORAGE_KEY, accessToken);
+}
+
+async function afterAuthenticated() {
+  const user = await fetchCurrentUser();
+  const route = decideFactorRoute(user.factors);
+  if (route.kind === "unsupported") {
+    showUnsupported();
+    return;
+  }
+  if (route.kind === "enroll") {
+    let enrolled;
+    try {
+      enrolled = await enrollFactor();
+    } catch {
+      if (!pendingAccessToken) throw new Error("session expired");
+      showUnsupported();
+      return;
+    }
+    pendingFactorId = enrolled.factorId;
+    enrollQrImage.src = enrolled.qrCode;
+    enrollSecretText.textContent = enrolled.secret;
+    showView("enroll");
+    return;
+  }
+  pendingFactorId = route.factorId;
+  showView("challenge");
 }
 
 async function authedFetch(path, init) {
@@ -442,16 +679,79 @@ logoutButton.addEventListener("click", () => {
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessages();
+  const button = loginForm.querySelector("button[type=submit]");
+  button.disabled = true;
   try {
     await login(emailInput.value, passwordInput.value);
     passwordInput.value = "";
-    const { inputValue, monthStart } = istanbulMonthStart();
-    monthInput.value = inputValue;
-    showOverviewView();
-    await loadOverview(monthStart);
+    await afterAuthenticated();
   } catch {
     clearSession();
     showError("Giri\\u015f ba\\u015far\\u0131s\\u0131z.");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+enrollForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearMessages();
+  const code = enrollCodeInput.value.trim();
+  if (!CODE_PATTERN.test(code)) {
+    showError("Kod 6 haneli olmal\\u0131.");
+    return;
+  }
+  const button = enrollForm.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const challenge = await createChallenge(pendingFactorId);
+    await verifyChallenge(pendingFactorId, challenge.challengeId, code);
+    pendingFactorId = null;
+    enrollCodeInput.value = "";
+    enrollQrImage.removeAttribute("src");
+    enrollSecretText.textContent = "";
+    const { inputValue, monthStart } = istanbulMonthStart();
+    monthInput.value = inputValue;
+    showView("overview");
+    await loadOverview(monthStart);
+  } catch {
+    if (pendingAccessToken) {
+      showError("Kod do\\u011frulanamad\\u0131. Yeni bir kodla tekrar deneyin.");
+    } else {
+      showError("Oturum sona erdi. L\\u00fctfen yeniden giri\\u015f yap\\u0131n.");
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
+
+challengeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearMessages();
+  const code = challengeCodeInput.value.trim();
+  if (!CODE_PATTERN.test(code)) {
+    showError("Kod 6 haneli olmal\\u0131.");
+    return;
+  }
+  const button = challengeForm.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const challenge = await createChallenge(pendingFactorId);
+    await verifyChallenge(pendingFactorId, challenge.challengeId, code);
+    pendingFactorId = null;
+    challengeCodeInput.value = "";
+    const { inputValue, monthStart } = istanbulMonthStart();
+    monthInput.value = inputValue;
+    showView("overview");
+    await loadOverview(monthStart);
+  } catch {
+    if (pendingAccessToken) {
+      showError("Kod do\\u011frulanamad\\u0131. Yeni bir kodla tekrar deneyin.");
+    } else {
+      showError("Oturum sona erdi. L\\u00fctfen yeniden giri\\u015f yap\\u0131n.");
+    }
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -462,13 +762,17 @@ async function init() {
     showError("Yap\\u0131land\\u0131rma y\\u00fcklenemedi.");
     return;
   }
-  if (sessionStorage.getItem(SESSION_STORAGE_KEY)) {
-    const { inputValue, monthStart } = istanbulMonthStart();
-    monthInput.value = inputValue;
-    showOverviewView();
-    await loadOverview(monthStart);
-  } else {
-    showLoginView();
+  const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+  if (!stored) {
+    showView("login");
+    return;
+  }
+  pendingAccessToken = stored;
+  try {
+    await afterAuthenticated();
+  } catch {
+    clearSession();
+    showError("Oturum do\\u011frulanamad\\u0131.");
   }
 }
 
@@ -481,7 +785,7 @@ export function handleAdminShell(env: Env): Response {
     return serviceUnavailable();
   }
   const origin = new URL(config.supabaseUrl).origin;
-  const csp = `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  const csp = `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
   return new Response(ADMIN_HTML, {
     status: 200,
     headers: {

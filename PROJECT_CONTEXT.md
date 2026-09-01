@@ -923,6 +923,27 @@ occurred.
   closed status. The historical Meta-side token-revocation checkbox and the
   external veterinarian/legal/KVKK production approvals remain open blockers.
 
+- Task 045 (platform-admin TOTP MFA boundary) is `COMPLETE` at repository and
+  disposable-database gates as of 2026-09-01. The read-only cross-clinic
+  overview now requires both explicit `platform_admins` membership and an
+  exact JWT `aal2` claim inside the same closed `SECURITY DEFINER` RPC; either
+  condition alone returns the indistinguishable `forbidden` sentinel. The
+  `/admin` client keeps the password-grant token only in memory, supports one
+  verified TOTP factor, stores an access token only after successful
+  challenge verification, validates raw Supabase SVG/secret responses, and
+  clears session material on unsupported or interrupted-factor paths.
+- Frozen install, typecheck, 1,896 tests (two opt-in paid eval gates skipped),
+  Worker dry-run, Codex review and mandatory Claude Opus security/RLS/tenant/
+  secret/KVKK review passed. Because `vetai-test` migration history remains
+  intentionally behind its validated schema, Codex applied only the Task 045
+  SQL through the disposable project's SQL Editor; the corrected rollback
+  fixture passed and an independent query confirmed Auth-user/clinic/
+  platform-admin residue `0 / 0 / 0`. No Auth factor was created and staging/
+  production remain unchanged. Before staging or production approval, the
+  real TOTP enrollment/challenge, interrupted-enrollment recovery and actual
+  Supabase Auth MFA-verify rate limit must be verified without recording QR,
+  secret, code or access-token material.
+
 ## Context maintenance
 
 After each verified task, Codex updates only durable facts here: completed behavior, verified commands, accepted decisions, known blockers, and the next phase. Verbose implementation notes stay in Git history and completed task records rather than accumulating in this file.

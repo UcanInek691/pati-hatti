@@ -181,6 +181,17 @@ staging personel Auth kullanıcısı ilk staging platform-yöneticisi olarak
 etkinleştirildi ve ilgili Worker sürümü deploy edildi; `/admin` ve
 `/admin/config.json` doğrulandı. Production hâlâ değişmedi.
 
+**Durum (Task 045):** Task 043'ün parola-yalnız erişim sınırı kapatıldı — panel
+artık `platform_admins` üyeliğine ek, veritabanı düzeyinde zorunlu bağımsız bir
+TOTP `aal2` denetimi gerektiriyor (bkz.
+[`platform-admin-overview.md`](platform-admin-overview.md#totp-mfa-sınırı-görev-045)).
+Uygulayan migration ve rollback-only fixture'ı hiçbir veritabanında
+çalıştırmadı. Codex daha sonra ikisini yalnız disposable `vetai-test` üzerinde
+başarıyla doğruladı; sıfır fixture kalıntısı ve zorunlu Opus `PASS` kaydedildi.
+Staging'e henüz uygulanmadı. Planlanan gerçek staging TOTP/rate-limit smoke'u
+(`docs/staging-runbook.md` §15) tamamlanmadan bu panel production'da onaylı
+ayrıcalıklı erişim olarak kabul edilemez.
+
 ## 7. Kullanım, tarife ve faturalama
 
 ### 7.1 Ölçüm birimleri

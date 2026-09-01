@@ -4,6 +4,7 @@ import type { IntakeQueueMessage } from "../src/intakeQueue";
 import {
   ADMIN_APP_JS,
   ADMIN_HTML,
+  ADMIN_MFA_VALIDATION_JS,
   ADMIN_OVERVIEW_VALIDATION_JS,
   handleAdminConfig,
   handleAdminScript,
@@ -43,6 +44,20 @@ function expectSecurityHeaders(res: Response): void {
 type OverviewValidator = (rows: unknown, monthStart: string) => boolean;
 
 const validateOverviewRows = new Function(`${ADMIN_OVERVIEW_VALIDATION_JS}\nreturn validateOverviewRows;`)() as OverviewValidator;
+
+type FactorRoute = { kind: "enroll" | "unsupported" } | { kind: "challenge"; factorId: string };
+type MfaValidators = {
+  decideFactorRoute: (factors: unknown) => FactorRoute;
+  qrSvgToDataUrl: (value: unknown) => string | null;
+  validateEnrollResponse: (value: unknown) => { factorId: string; qrCode: string; secret: string } | null;
+  validateChallengeResponse: (value: unknown) => { challengeId: string } | null;
+  validateAccessTokenResponse: (value: unknown) => string | null;
+  classifyAuthStatus: (status: unknown) => "ok" | "session_expired" | "failed";
+};
+
+const mfaValidators = new Function(
+  `${ADMIN_OVERVIEW_VALIDATION_JS}\n${ADMIN_MFA_VALIDATION_JS}\nreturn { decideFactorRoute, qrSvgToDataUrl, validateEnrollResponse, validateChallengeResponse, validateAccessTokenResponse, classifyAuthStatus };`,
+)() as MfaValidators;
 
 function reportedRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -149,7 +164,7 @@ describe("handleAdminShell", () => {
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expectSecurityHeaders(res);
     const csp = res.headers.get("Content-Security-Policy");
-    expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(await res.text()).toBe(ADMIN_HTML);
   });
 
@@ -166,8 +181,17 @@ describe("handleAdminShell", () => {
   it("HTML declares the required semantic regions and only the self-hosted script, with no inline script", () => {
     for (const id of [
       "login-section",
+      "enroll-section",
+      "challenge-section",
+      "unsupported-section",
       "overview-section",
       "login-form",
+      "enroll-form",
+      "enroll-code-input",
+      "enroll-qr-image",
+      "enroll-secret-text",
+      "challenge-form",
+      "challenge-code-input",
       "month-form",
       "month-input",
       "logout-button",
@@ -210,7 +234,7 @@ describe("handleAdminScript", () => {
   it("uses native fetch and sessionStorage under a distinct admin session key", () => {
     expect(ADMIN_APP_JS).toContain('const SESSION_STORAGE_KEY = "vetai_admin_access_token";');
     expect(ADMIN_APP_JS).toMatch(/fetch\(/);
-    expect(ADMIN_APP_JS).toContain("sessionStorage.setItem(SESSION_STORAGE_KEY, data.access_token)");
+    expect(ADMIN_APP_JS).toContain("sessionStorage.setItem(SESSION_STORAGE_KEY, accessToken)");
     expect(ADMIN_APP_JS).toContain("sessionStorage.getItem(SESSION_STORAGE_KEY)");
     expect(ADMIN_APP_JS).toContain("sessionStorage.removeItem(SESSION_STORAGE_KEY)");
   });
@@ -299,6 +323,158 @@ describe("handleAdminScript", () => {
     expect(ADMIN_APP_JS).toContain("th.textContent = label;");
     expect(ADMIN_APP_JS).toContain("errorRegion.textContent");
     expect(ADMIN_APP_JS).not.toMatch(/\.innerHTML/);
+  });
+});
+
+describe("TOTP MFA boundary", () => {
+  it("declares the five mutually exclusive UI states", () => {
+    for (const id of ["login-section", "enroll-section", "challenge-section", "unsupported-section", "overview-section"]) {
+      expect(ADMIN_HTML).toContain(`id="${id}"`);
+    }
+    expect(ADMIN_APP_JS).toContain("function showView(name) {");
+  });
+
+  it("uses exactly the required Supabase Auth endpoint allowlist and no invite/recovery/unenroll/admin endpoint", () => {
+    for (const path of [
+      '"/auth/v1/token?grant_type=password"',
+      '"/auth/v1/user"',
+      '"/auth/v1/factors"',
+      '"/auth/v1/factors/" + factorId + "/challenge"',
+      '"/auth/v1/factors/" + factorId + "/verify"',
+    ]) {
+      expect(ADMIN_APP_JS).toContain(path);
+    }
+    expect(ADMIN_APP_JS).not.toMatch(/\/auth\/v1\/(invite|recover|admin|logout|sso)/);
+    expect(ADMIN_APP_JS).not.toMatch(/unenroll/i);
+    expect(ADMIN_APP_JS).not.toMatch(/method:\s*"DELETE"/);
+  });
+
+  it("keeps the pre-verification access token out of sessionStorage until the MFA challenge is verified", () => {
+    expect(ADMIN_APP_JS).toContain("pendingAccessToken = accessToken;");
+    expect(ADMIN_APP_JS).not.toContain("sessionStorage.setItem(SESSION_STORAGE_KEY, pendingAccessToken)");
+    expect(ADMIN_APP_JS.match(/sessionStorage\.setItem\(SESSION_STORAGE_KEY,/g)).toHaveLength(1);
+  });
+
+  it("requires exactly six ASCII digits for a one-time code", () => {
+    expect(ADMIN_APP_JS).toContain("const CODE_PATTERN = /^[0-9]{6}$/;");
+    expect(ADMIN_APP_JS.match(/CODE_PATTERN\.test\(code\)/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("routes only no factors to enrollment and one verified TOTP to challenge", () => {
+    const factorId = "43000000-0000-0000-2000-000000000010";
+    expect(mfaValidators.decideFactorRoute(undefined)).toEqual({ kind: "enroll" });
+    expect(mfaValidators.decideFactorRoute([])).toEqual({ kind: "enroll" });
+    expect(mfaValidators.decideFactorRoute([{ id: factorId, factor_type: "totp", status: "verified" }])).toEqual({
+      kind: "challenge",
+      factorId,
+    });
+  });
+
+  it("fails closed for interrupted, multiple, unsupported, and malformed factor states", () => {
+    const factorId = "43000000-0000-0000-2000-000000000010";
+    for (const factors of [
+      null,
+      {},
+      [{ id: factorId, factor_type: "totp", status: "unverified" }],
+      [{ id: factorId, factor_type: "phone", status: "verified" }],
+      [
+        { id: factorId, factor_type: "totp", status: "verified" },
+        { id: "43000000-0000-0000-2000-000000000011", factor_type: "totp", status: "verified" },
+      ],
+      [{ id: "not-a-uuid", factor_type: "totp", status: "verified" }],
+      [{ id: factorId, factor_type: "totp", status: "unknown" }],
+    ]) {
+      expect(mfaValidators.decideFactorRoute(factors)).toEqual({ kind: "unsupported" });
+    }
+    expect(ADMIN_APP_JS).toContain('function showUnsupported() {\n  clearSession();\n  showView("unsupported");\n}');
+    expect(ADMIN_APP_JS).toContain('if (!pendingAccessToken) throw new Error("session expired");\n      showUnsupported();');
+  });
+
+  it("converts the raw Supabase SVG into one bounded encoded data URL", () => {
+    const url = mfaValidators.qrSvgToDataUrl('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>');
+    expect(url).toMatch(/^data:image\/svg\+xml;charset=utf-8,%3Csvg/);
+    for (const invalid of [
+      "data:image/svg+xml;utf-8,<svg></svg>",
+      "<svg><script>alert(1)</script></svg>",
+      '<svg><image href="https://example.test/leak"/></svg>',
+      '<svg onload="alert(1)"></svg>',
+      "<svg>" + "x".repeat(60001) + "</svg>",
+      "not svg",
+    ]) {
+      expect(mfaValidators.qrSvgToDataUrl(invalid)).toBeNull();
+    }
+  });
+
+  it("validates real REST-style enroll and challenge response fields", () => {
+    const factorId = "43000000-0000-0000-2000-000000000010";
+    const enroll = mfaValidators.validateEnrollResponse({
+      id: factorId,
+      type: "totp",
+      totp: { qr_code: "<svg><path/></svg>", secret: "ABCDEFGHIJKLMNOP" },
+    });
+    expect(enroll).toEqual({
+      factorId,
+      qrCode: "data:image/svg+xml;charset=utf-8,%3Csvg%3E%3Cpath%2F%3E%3C%2Fsvg%3E",
+      secret: "ABCDEFGHIJKLMNOP",
+    });
+    expect(mfaValidators.validateEnrollResponse({ id: factorId, type: "totp", totp: { qr_code: "bad", secret: "ABCDEFGHIJKLMNOP" } })).toBeNull();
+    expect(mfaValidators.validateEnrollResponse({ id: factorId, type: "totp", totp: { qr_code: "<svg></svg>", secret: "not-base32!" } })).toBeNull();
+    expect(mfaValidators.validateChallengeResponse({ id: factorId })).toEqual({ challengeId: factorId });
+    expect(mfaValidators.validateChallengeResponse({ id: "bad" })).toBeNull();
+  });
+
+  it("validates access-token responses and classifies every non-success status", () => {
+    expect(mfaValidators.validateAccessTokenResponse({ access_token: "header.payload.signature" })).toBe("header.payload.signature");
+    for (const value of [null, {}, { access_token: "" }, { access_token: "bad token" }, { access_token: "x".repeat(16385) }]) {
+      expect(mfaValidators.validateAccessTokenResponse(value)).toBeNull();
+    }
+    expect(mfaValidators.classifyAuthStatus(200)).toBe("ok");
+    expect(mfaValidators.classifyAuthStatus(299)).toBe("ok");
+    expect(mfaValidators.classifyAuthStatus(401)).toBe("session_expired");
+    expect(mfaValidators.classifyAuthStatus(403)).toBe("session_expired");
+    expect(mfaValidators.classifyAuthStatus(400)).toBe("failed");
+    expect(mfaValidators.classifyAuthStatus(500)).toBe("failed");
+  });
+
+  it("renders the QR code and secret only via image src / textContent, never innerHTML", () => {
+    expect(ADMIN_APP_JS).toContain("enrollQrImage.src = enrolled.qrCode;");
+    expect(ADMIN_APP_JS).toContain("enrollSecretText.textContent = enrolled.secret;");
+  });
+
+  it("clears enrollment material, the password, and one-time codes on session clear", () => {
+    expect(ADMIN_APP_JS).toContain('enrollQrImage.removeAttribute("src");');
+    expect(ADMIN_APP_JS).toContain('enrollSecretText.textContent = "";');
+    expect(ADMIN_APP_JS).toContain('passwordInput.value = "";');
+  });
+
+  it("creates a fresh challenge for every submitted code and keeps retryable failures in the MFA view", () => {
+    expect(ADMIN_APP_JS.match(/const challenge = await createChallenge\(pendingFactorId\);/g)).toHaveLength(2);
+    expect(ADMIN_APP_JS.match(/await verifyChallenge\(pendingFactorId, challenge\.challengeId, code\);/g)).toHaveLength(2);
+    expect(ADMIN_APP_JS).toContain("if (pendingAccessToken) {");
+    expect(ADMIN_APP_JS).toContain("Yeni bir kodla tekrar deneyin.");
+  });
+
+  it("clears every Auth-session failure from the factor endpoints", () => {
+    expect(ADMIN_APP_JS).toContain('if (result === "session_expired") {');
+    expect(ADMIN_APP_JS).toContain("clearSession();");
+  });
+
+  it("never shows the overview directly after a password login without re-deriving factor/AAL state first", () => {
+    expect(ADMIN_APP_JS).toContain('await login(emailInput.value, passwordInput.value);\n    passwordInput.value = "";\n    await afterAuthenticated();');
+  });
+
+  it("re-derives factor/AAL state from a stored token on page load before ever showing the overview", () => {
+    expect(ADMIN_APP_JS).toContain('pendingAccessToken = stored;\n  try {\n    await afterAuthenticated();');
+  });
+
+  it("disables the submit button while an Auth request is in flight, for login and both MFA code forms", () => {
+    expect(ADMIN_APP_JS.match(/button\.disabled = true;/g)?.length).toBe(3);
+    expect(ADMIN_APP_JS.match(/button\.disabled = false;/g)?.length).toBe(3);
+  });
+
+  it("states the truthful MFA-enforced copy instead of the obsolete no-MFA notice", () => {
+    expect(ADMIN_HTML).not.toContain("MFA veya eşdeğer bir üst-seviye erişim kontrolü henüz doğrulanmadığından");
+    expect(ADMIN_HTML).toContain("TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir");
   });
 });
 
