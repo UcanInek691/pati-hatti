@@ -625,9 +625,39 @@ the implementation. No new blocker was found.
 
 Task 044 is therefore complete after local, disposable-database, Codex and
 mandatory Opus gates. No paid eval was required because prompt/model/
-extraction/safety/reply behavior did not change. Staging/production, Meta,
-OpenAI and secrets remain untouched; any staging activation requires a new,
-separate user approval.
+extraction/safety/reply behavior did not change. At repository closure,
+staging/production, Meta, OpenAI and secrets remained untouched; staging still
+required a new, separate user approval.
+
+### Separately approved staging activation — 2026-09-01
+
+After commit `cd94d50`, Maya explicitly approved applying Task 044 to
+`vetai-staging` and deploying the staging Worker. Codex re-linked only after
+verifying project ref `qtgvddejjjiivjwicxdq`; the preflight count showed zero
+Task-044 public RPCs. The reviewed migration was then applied through the
+managed query path. The rollback fixture was deliberately not run on staging.
+
+Post-apply catalog evidence showed all five public RPCs as `SECURITY DEFINER`,
+fixed empty `search_path`, executable only by `authenticated`; the private
+authorization helper is executable only by `service_role`. Applied function
+definitions contained `FOR NO KEY UPDATE`, both materialized cleanup target
+sets and the `24:00` rejection.
+
+The first Cloudflare deploy request timed out and produced no new deployment,
+which was confirmed from the deployment list before retrying. The single retry
+succeeded as staging Worker version
+`1e5d26ae-0b3a-4c6d-982c-55dbad0783d1`. Live checks then returned:
+
+```text
+GET /ready?task044=1   200 {"status":"ready"}
+GET /staff?task044=1   200; Klinik takvimi present; Cache-Control no-store;
+                           Content-Security-Policy present
+```
+
+The local Supabase link was restored to disposable `vetai-test` afterward.
+No staging fixture, authenticated schedule mutation, Meta/OpenAI call, secret
+change or production mutation occurred. The staging Auth/UI mutation smoke is
+the next manual verification step.
 
 ---
 

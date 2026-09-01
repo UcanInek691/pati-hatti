@@ -911,7 +911,13 @@ occurred.
   gates skipped), Worker dry-run, Codex review and mandatory Claude Opus
   architecture/RLS/tenant/time/concurrency/KVKK review. The corrected migration
   and rollback fixture passed only on disposable `vetai-test` with zero
-  clinic/Auth-user/slot residue; staging and production remain unchanged.
+  clinic/Auth-user/slot residue. After the verified commit and separate user
+  approval, the migration was applied to `vetai-staging` and Worker version
+  `1e5d26ae-0b3a-4c6d-982c-55dbad0783d1` was deployed. Live `GET /ready`
+  returned `200 ready`; `GET /staff` returned `200`, contained the Turkish
+  clinic-schedule section, and retained `no-store` plus CSP headers. The SQL
+  rollback fixture was not run on staging, and an authenticated schedule
+  mutation smoke remains open. Production remains unchanged.
 - Task 044 adds no owner, pet, message, telephone, credential, clinical-content
   or retention field. Its slot read RPC returns only slot UUID, timestamps and
   closed status. The historical Meta-side token-revocation checkbox and the
