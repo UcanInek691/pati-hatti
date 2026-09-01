@@ -244,6 +244,44 @@ policy is active only after the account response validates that default; a
 missing migration or malformed response leaves route controls fail-closed
 with an explicit warning.
 
+## Clinic schedule (Task 044)
+
+A fixed "Klinik takvimi" section — independent of the work queue and
+WhatsApp-automation sections above — lets clinic staff see, and a
+`clinic_staff.role = 'admin'` member edit, that clinic's weekly hours,
+full-day closures, and future bookable slots, through the five RPCs
+documented in [`docs/database-schema.md`](database-schema.md) and the
+product rules in
+[`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff).
+It is the same `/staff` page and Supabase Auth session as the rest of this
+document; there is still no second panel and no clinic-schedule route.
+
+- **Clinic selector.** A caller who belongs to more than one clinic (through
+  RLS-visible `clinic_staff` rows) picks which clinic's schedule to view;
+  the selected clinic is never inferred from a WhatsApp account, and every
+  schedule read/write is scoped to that exact clinic ID.
+- **Admin-only edits, fixed Turkish warnings.** `veterinarian` and
+  `receptionist` staff see the same weekly-hours/closure/slot data rendered
+  read-only, with fixed copy explaining only the clinic administrator can
+  change it. An administrator of a suspended/offboarding clinic also sees a
+  read-only schedule with an inactive-clinic explanation; the server-side RPC
+  role/lifecycle check is authoritative regardless of what the page renders.
+  Every mutation surface carries the same fixed
+  warning: changing hours or closures does not cancel a held or confirmed
+  appointment and does not notify its owner — a mutation's returned
+  preserved-active-slot count is shown as that warning, never as a
+  cancellation or contact claim. Any returned removed-available-slot count is
+  also shown, including an idempotent schedule replay that cleans up a stale
+  empty slot.
+- Weekly hours use native `<input type="time" step="1800">` (half-hour
+  aligned, matching the generation ceiling in `docs/clinic-operations.md`);
+  `24:00` is not accepted and the latest supported closing input is `23:30`;
+  closure dates and slot generation use native date controls; the upcoming
+  slot list shows status labels and a delete control only on future
+  `available` rows — a `held`/`confirmed` row has no delete action. All
+  times render with `timeZone: "Europe/Istanbul"` regardless of the
+  operator's browser timezone.
+
 ## Pilot operating procedure
 
 Because there is no reassignment, release, or shared "who's on call" UI yet,

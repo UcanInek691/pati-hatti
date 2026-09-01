@@ -79,7 +79,9 @@ personalization and falls back to the generic copy.
 Each clinic may have at most one weekly opening interval per ISO weekday
 (`clinic_weekly_hours` is keyed on `(clinic_id, iso_weekday)`) and that
 interval may not cross midnight (`opens_at < closes_at` is enforced by a
-table constraint). Split shifts (e.g. a lunch closure), partial-day
+table constraint). The staff mutation RPC also rejects PostgreSQL's special
+`24:00` time value; the latest supported closing input is `23:30`. Split
+shifts (e.g. a lunch closure), partial-day
 exceptions, and overnight hours are out of scope for this task and are not
 represented by the schema.
 
@@ -135,10 +137,39 @@ this task only ever substitutes fixed, server-validated text for an already
 number in the database changes future replies without anyone editing a
 prompt.
 
+## Task 044: self-service hours, closures, and slot inventory (`/staff`)
+
+Task 044 (`supabase/migrations/20260901000100_clinic_schedule_management.sql`)
+lets each clinic's own `admin` staff edit `clinic_weekly_hours` and
+`clinic_closure_dates` — and generate/delete `appointment_slots` rows — from
+the existing `/staff` page, through five new RPCs
+(`list_clinic_appointment_slots_v1`, `set_clinic_weekly_hours_v1`,
+`set_clinic_closure_date_v1`, `generate_clinic_appointment_slots_v1`,
+`delete_clinic_appointment_slot_v1`; see `docs/database-schema.md`). It does
+not add a second clinic panel, widen `/admin`, or change the
+`human_handoff`-personalization logic documented above; it only lets a clinic
+maintain the same weekly-hours/closure-date rows that logic already reads.
+
+- **Half-hour ceiling.** `set_clinic_weekly_hours_v1` still enforces the one
+  interval per weekday, no-overnight rule above, plus `:00`/`:30` alignment on
+  both `opens_at` and `closes_at`, because `generate_clinic_appointment_slots_v1`
+  only ever produces fixed, non-overlapping 30-minute `appointment_slots` rows
+  covering that interval. Split shifts, partial-day exceptions, and any
+  interval not aligned to a half hour remain unsupported.
+- **Preserved active-slot boundary.** Narrowing or disabling a weekday, and
+  adding a closure date, delete only that clinic's affected future `available`
+  slots. A `held` or `confirmed` slot is never deleted, moved, or edited by any
+  schedule change — the mutation instead returns how many active slots were
+  preserved, and `/staff` must show that count as a warning rather than a
+  cancellation notice, since no owner is contacted and no appointment is
+  cancelled by a schedule edit.
+- Removing a closure date does not regenerate slots; an admin must explicitly
+  generate that day's slots again.
+
 ## Not yet built
 
-- No clinic/admin UI exists yet to edit contact details, weekly hours, or
-  closure dates; today that requires a direct `service_role` write.
+- No clinic/admin UI exists yet to edit the clinic's public contact name,
+  phone, or address; Task 044 adds only schedule and slot controls.
 - No appointment is offered to an unregistered/new pet by this task. The
   reviewed appointment engine still refuses to list or hold a slot unless the
   conversation already has a tenant-owned `pet_id` (see

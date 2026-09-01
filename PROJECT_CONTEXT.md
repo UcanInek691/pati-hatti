@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-08-31 by Codex.
+Last verified: 2026-09-01 by Codex.
 
 ## Product
 
@@ -888,6 +888,34 @@ occurred.
   successful rebooking. Task 039 migrations and Worker are on `vetai-staging`
   only; production remains untouched. The comprehensive veterinarian and
   Turkish legal/KVKK packages are still unsigned external approval gates.
+- Task 044 adds tenant-scoped clinic schedule self-service to the existing
+  `/staff` page. Every same-clinic staff role may read weekly hours, full-day
+  closures and a bounded future slot projection; only an `active` clinic's
+  `admin` may mutate them. Suspended/offboarding clinics and non-admin roles
+  remain visibly and server-side read-only, and `/admin` gains no schedule or
+  cross-clinic mutation surface.
+- Schedule inputs and rendering use `Europe/Istanbul`; one weekday has one
+  half-hour-aligned, non-overnight interval and the public mutation boundary
+  rejects PostgreSQL `24:00` (latest supported closing input `23:30`). Slot
+  generation is an explicit, bounded, idempotent admin action; closures do not
+  auto-regenerate inventory. Schedule changes delete only affected future
+  `available` slots and report both removed-available and preserved
+  `held`/`confirmed` counts without claiming cancellation or owner contact.
+- Schedule mutations serialize with `FOR NO KEY UPDATE` on the clinic row and
+  lock affected appointment-slot IDs in ascending order. This remains mutually
+  exclusive with lifecycle `FOR UPDATE`, while avoiding the child-FK
+  `FOR KEY SHARE` edge that formed a cancellation/schedule ABBA deadlock. The
+  rollback proof is single-session and does not claim a true two-session
+  blocking test.
+- Task 044 passed frozen install, typecheck, 1,879 local tests (two paid eval
+  gates skipped), Worker dry-run, Codex review and mandatory Claude Opus
+  architecture/RLS/tenant/time/concurrency/KVKK review. The corrected migration
+  and rollback fixture passed only on disposable `vetai-test` with zero
+  clinic/Auth-user/slot residue; staging and production remain unchanged.
+- Task 044 adds no owner, pet, message, telephone, credential, clinical-content
+  or retention field. Its slot read RPC returns only slot UUID, timestamps and
+  closed status. The historical Meta-side token-revocation checkbox and the
+  external veterinarian/legal/KVKK production approvals remain open blockers.
 
 ## Context maintenance
 

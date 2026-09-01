@@ -397,12 +397,16 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
   it("loads automation accounts and routes right after the queue on both login and resumed-session paths", () => {
     const loginBody = STAFF_APP_JS.slice(
       STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
-      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"') + 400,
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"') + 450,
     );
-    expect(loginBody).toContain("await refreshQueue();\n    await loadAutomationAccounts();\n    startPolling();");
+    expect(loginBody).toContain(
+      "await refreshQueue();\n    await loadAutomationAccounts();\n    await loadClinicSchedule();\n    startPolling();",
+    );
 
     const initBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("async function init() {"));
-    expect(initBody).toContain("await refreshQueue();\n      await loadAutomationAccounts();\n      startPolling();");
+    expect(initBody).toContain(
+      "await refreshQueue();\n      await loadAutomationAccounts();\n      await loadClinicSchedule();\n      startPolling();",
+    );
   });
 
   it("posts a route change to set_whatsapp_contact_route and strictly validates a single-key result", () => {
@@ -454,6 +458,320 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
     expect(clearSessionBody).toContain("selectedAccountId = null;");
     expect(clearSessionBody).toContain('accountSelect.textContent = "";');
     expect(clearSessionBody).toContain('routeList.textContent = "";');
+  });
+});
+
+describe("handleStaffScript: Klinik takvimi (Task 044)", () => {
+  it("renders the schedule section with weekday, closure and slot controls, hidden until login", () => {
+    expect(STAFF_HTML).toContain('<section id="schedule-section" aria-labelledby="schedule-heading" hidden>');
+    expect(STAFF_HTML).toContain('<select id="clinic-select"></select>');
+    expect(STAFF_HTML).toContain('<p id="schedule-readonly-notice" hidden>');
+    expect(STAFF_HTML).toContain(
+      '<input type="date" id="closure-date-input" data-schedule-mutation-control required>',
+    );
+    expect(STAFF_HTML).toContain(
+      '<input type="date" id="generate-date-input" data-schedule-mutation-control required>',
+    );
+    expect(STAFF_HTML).toContain('<tbody id="weekly-hours-body"></tbody>');
+    expect(STAFF_HTML).toContain('<ul id="closure-list"></ul>');
+    expect(STAFF_HTML).toContain('<ul id="slot-list"></ul>');
+  });
+
+  it("toggles the schedule section together with the queue section and hides it elsewhere", () => {
+    const showQueueBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showQueueView() {"),
+      STAFF_APP_JS.indexOf("function showDetailView() {"),
+    );
+    expect(showQueueBody).toContain("scheduleSection.hidden = false;");
+    const showLoginBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showLoginView() {"),
+      STAFF_APP_JS.indexOf("function showQueueView() {"),
+    );
+    expect(showLoginBody).toContain("scheduleSection.hidden = true;");
+    const showDetailBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showDetailView() {"),
+      STAFF_APP_JS.indexOf("function showDetailView() {") + 250,
+    );
+    expect(showDetailBody).toContain("scheduleSection.hidden = true;");
+  });
+
+  it("loads clinic memberships scoped to the current user only, validating exact shape, canonical UUIDs, closed role/status enums, bounded size and uniqueness", () => {
+    expect(STAFF_APP_JS).toContain("async function fetchClinicMemberships() {");
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function fetchClinicMemberships() {"),
+      STAFF_APP_JS.indexOf("function renderClinicSelect("),
+    );
+    expect(body).toContain('"/rest/v1/clinic_staff?user_id=eq." +\n      encodeURIComponent(currentUserId) +');
+    expect(body).toContain('isExactRecord(row, ["clinic_id", "role", "clinics"])');
+    expect(body).toContain("UUID_PATTERN.test(row.clinic_id)");
+    expect(body).toContain("CLINIC_ROLES.indexOf(row.role) === -1");
+    expect(body).toContain('isExactRecord(row.clinics, ["name", "operational_status"])');
+    expect(body).toContain("CLINIC_STATUSES.indexOf(row.clinics.operational_status) === -1");
+    expect(body).toContain("rows.length > 50");
+    expect(body).toContain("seen.has(row.clinic_id)");
+    expect(STAFF_APP_JS).toContain('const CLINIC_ROLES = ["admin", "veterinarian", "receptionist"];');
+    expect(STAFF_APP_JS).toContain('const CLINIC_STATUSES = ["active", "suspended", "offboarding"];');
+  });
+
+  it("selects a clinic from the dropdown, never from a WhatsApp account, and reloads that clinic's schedule on change", () => {
+    expect(STAFF_APP_JS).toContain(
+      'clinicSelect.addEventListener("change", () => {\n  selectedClinicId = clinicSelect.value || null;\n  scheduleStatusRegion.textContent = "";\n  loadScheduleForSelectedClinic();\n});',
+    );
+    expect(STAFF_APP_JS).not.toMatch(/selectedClinicId\s*=\s*selectedAccountId/);
+    expect(STAFF_APP_JS).not.toMatch(/selectedAccountId\s*=\s*selectedClinicId/);
+  });
+
+  it("reads weekly hours, closure dates and slots strictly scoped to the selected clinic, and slots only through the RPC", () => {
+    expect(STAFF_APP_JS).toContain('"/rest/v1/clinic_weekly_hours?clinic_id=eq." +');
+    expect(STAFF_APP_JS).toContain('"&select=iso_weekday,opens_at,closes_at&order=iso_weekday.asc&limit=7"');
+    expect(STAFF_APP_JS).toContain('"/rest/v1/clinic_closure_dates?clinic_id=eq." +');
+    expect(STAFF_APP_JS).toContain('"&select=closed_on&order=closed_on.asc&limit=200"');
+    expect(STAFF_APP_JS).toContain('await authedFetch("/rest/v1/rpc/list_clinic_appointment_slots_v1"');
+    expect(STAFF_APP_JS).not.toMatch(/\/rest\/v1\/appointment_slots/);
+  });
+
+  it("strictly validates unique half-hour weekly rows and real, unique closure dates", () => {
+    const hoursBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function fetchWeeklyHours("),
+      STAFF_APP_JS.indexOf("function renderWeeklyHours("),
+    );
+    expect(hoursBody).toContain('isExactRecord(row, ["iso_weekday", "opens_at", "closes_at"])');
+    expect(hoursBody).toContain('/^([01]\\d|2[0-3]):(00|30):00$/.test(row.opens_at)');
+    expect(hoursBody).toContain('/^([01]\\d|2[0-3]):(00|30):00$/.test(row.closes_at)');
+    expect(hoursBody).toContain("row.opens_at < row.closes_at");
+    expect(hoursBody).toContain("!seen.has(row.iso_weekday)");
+
+    const closureBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function fetchClosureDates("),
+      STAFF_APP_JS.indexOf("function renderClosures("),
+    );
+    expect(closureBody).toContain("isValidIsoDate(row.closed_on)");
+    expect(closureBody).toContain("!seen.has(row.closed_on)");
+    expect(STAFF_APP_JS).toContain('new Date(value + "T00:00:00Z")');
+    expect(STAFF_APP_JS).toContain("date.toISOString().slice(0, 10) === value");
+  });
+
+  it("rejects malformed, negative or incoherent mutation counts before rendering them", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function callScheduleMutationRpc("),
+      STAFF_APP_JS.indexOf("function reportPreservedActiveSlots("),
+    );
+    expect(body).toContain('if (expectedKeys.includes("removed_slots")) {');
+    expect(body).toContain("Number.isInteger(row.removed_slots)");
+    expect(body).toContain("row.removed_slots >= 0");
+    expect(body).toContain("Number.isInteger(row.preserved_active_slots)");
+    expect(body).toContain('if (expectedKeys.includes("candidate_count")) {');
+    expect(body).toContain("row.candidate_count <= 48");
+    expect(body).toContain("row.created_count + row.existing_count === row.candidate_count");
+    expect(body).toContain('(row.result === "generated") !== (row.created_count > 0)');
+  });
+
+  it("strictly validates the slot projection: exact keys, unique canonical UUIDs, timestamps, duration, count and closed status", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function fetchClinicSlots("),
+      STAFF_APP_JS.indexOf("function renderSlots("),
+    );
+    expect(body).toContain('isExactRecord(row, ["slot_id", "starts_at", "ends_at", "status"])');
+    expect(body).toContain("UUID_PATTERN.test(row.slot_id)");
+    expect(body).toContain("ISO_TIMESTAMP_PATTERN.test(row.starts_at)");
+    expect(body).toContain("ISO_TIMESTAMP_PATTERN.test(row.ends_at)");
+    expect(body).toContain("Number.isFinite(startsAt)");
+    expect(body).toContain("Number.isFinite(endsAt)");
+    expect(body).toContain("endsAt - startsAt === 30 * 60 * 1000");
+    expect(body).toContain("!seen.has(row.slot_id)");
+    expect(body).toContain("rows.length > 700");
+    expect(body).toContain('(row.status === "available" || row.status === "held" || row.status === "confirmed")');
+  });
+
+  it("renders slot start/end times with an explicit Europe/Istanbul time zone, independent of browser locale", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function renderSlots("),
+      STAFF_APP_JS.indexOf("async function submitGenerateSlots("),
+    );
+    expect(body).toContain('new Date(row.starts_at).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })');
+    expect(body).toContain('new Date(row.ends_at).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })');
+  });
+
+  it("only offers a delete control for future available slots, never for held or confirmed rows", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function renderSlots("),
+      STAFF_APP_JS.indexOf("async function submitGenerateSlots("),
+    );
+    expect(body).toContain('if (canMutate && row.status === "available") {');
+    expect(body).not.toMatch(/status === "held"[\s\S]{0,80}deleteButton/);
+    expect(body).not.toMatch(/status === "confirmed"[\s\S]{0,80}deleteButton/);
+  });
+
+  it("disables every weekly-hours control and hides all mutation surfaces unless the caller is an active-clinic admin", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function renderWeeklyHours("),
+      STAFF_APP_JS.indexOf("async function submitWeeklyHours("),
+    );
+    expect(body).toContain("enabledInput.disabled = !canMutate || scheduleMutationInFlight;");
+    expect(body).toContain("opensInput.disabled = !canMutate || scheduleMutationInFlight;");
+    expect(body).toContain("closesInput.disabled = !canMutate || scheduleMutationInFlight;");
+    expect(body).toContain("if (canMutate) {");
+    expect(STAFF_APP_JS).toContain(
+      'const canMutate = !!clinic && clinic.role === "admin" && clinic.operationalStatus === "active";',
+    );
+    expect(STAFF_APP_JS).toContain("closureForm.hidden = !canMutate;");
+    expect(STAFF_APP_JS).toContain("generateForm.hidden = !canMutate;");
+    expect(STAFF_HTML).toContain(
+      'id="schedule-readonly-notice" hidden>Bu ayarları yalnızca klinik yöneticisi değiştirebilir.',
+    );
+  });
+
+  it("calls set_clinic_weekly_hours_v1 with the exact body shape and closed result handling", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitWeeklyHours("),
+      STAFF_APP_JS.indexOf("async function fetchClosureDates("),
+    );
+    expect(body).toContain('"set_clinic_weekly_hours_v1",');
+    expect(body).toContain("p_clinic_id: selectedClinicId,");
+    expect(body).toContain("p_iso_weekday: isoWeekday,");
+    expect(body).toContain("p_enabled: enabled,");
+    expect(body).toContain("p_opens_at: opensAt,");
+    expect(body).toContain("p_closes_at: closesAt,");
+    expect(body).toContain('["result", "removed_slots", "preserved_active_slots"],');
+    expect(body).toContain('["updated", "removed", "unchanged", "not_found", "forbidden", "inactive"]');
+  });
+
+  it("validates half-hour alignment and opens<closes locally before ever calling set_clinic_weekly_hours_v1", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitWeeklyHours("),
+      STAFF_APP_JS.indexOf("async function fetchClosureDates("),
+    );
+    const validationIndex = body.indexOf("isHalfHourAligned(opensValue)");
+    const rpcIndex = body.indexOf("callScheduleMutationRpc(");
+    expect(validationIndex).toBeGreaterThan(-1);
+    expect(rpcIndex).toBeGreaterThan(-1);
+    expect(validationIndex).toBeLessThan(rpcIndex);
+    expect(body).toContain("if (opensValue >= closesValue) {");
+    expect(STAFF_APP_JS).toContain('function isHalfHourAligned(timeValue) {\n  return /^([01]\\d|2[0-3]):(00|30)$/.test(timeValue);\n}');
+  });
+
+  it("calls set_clinic_closure_date_v1 and generate_clinic_appointment_slots_v1 with exact bodies, validating the date bound locally first", () => {
+    const closureBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitClosureDate("),
+      STAFF_APP_JS.indexOf("async function fetchClinicSlots("),
+    );
+    expect(closureBody).toContain('"set_clinic_closure_date_v1",');
+    expect(closureBody).toContain("{ p_clinic_id: selectedClinicId, p_closed_on: closedOn, p_closed: closed },");
+    expect(
+      closureBody.indexOf("!isValidIsoDate(closedOn) || closedOn < today || closedOn > addDaysIso(today, 366)"),
+    ).toBeLessThan(
+      closureBody.indexOf("callScheduleMutationRpc("),
+    );
+
+    const generateBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitGenerateSlots("),
+      STAFF_APP_JS.indexOf("async function submitDeleteSlot("),
+    );
+    expect(generateBody).toContain('"generate_clinic_appointment_slots_v1",');
+    expect(generateBody).toContain("{ p_clinic_id: selectedClinicId, p_local_date: localDate },");
+    expect(generateBody).toContain(
+      '["result", "candidate_count", "created_count", "existing_count"],',
+    );
+    expect(
+      generateBody.indexOf("!isValidIsoDate(localDate) || localDate < today || localDate > addDaysIso(today, 366)"),
+    ).toBeLessThan(
+      generateBody.indexOf("callScheduleMutationRpc("),
+    );
+  });
+
+  it("calls delete_clinic_appointment_slot_v1 with the exact body and closed result set", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitDeleteSlot("),
+      STAFF_APP_JS.indexOf("async function loadScheduleForSelectedClinic("),
+    );
+    expect(body).toContain('"delete_clinic_appointment_slot_v1",');
+    expect(body).toContain("{ p_clinic_id: selectedClinicId, p_slot_id: slotId },");
+    expect(body).toContain('["deleted", "not_found", "in_use", "past", "forbidden", "inactive"]');
+  });
+
+  it("routes every schedule mutation through authedFetch, so it always carries the apikey/Authorization headers", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function callScheduleMutationRpc("),
+      STAFF_APP_JS.indexOf("function reportPreservedActiveSlots("),
+    );
+    expect(body).toContain('const res = await authedFetch("/rest/v1/rpc/" + rpcName, {');
+  });
+
+  it("guards every schedule mutation with the shared in-flight flag and clears it in a finally block", () => {
+    for (const fn of ["submitWeeklyHours", "submitClosureDate", "submitGenerateSlots", "submitDeleteSlot"]) {
+      const body = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf(`async function ${fn}(`));
+      const fnBody = body.slice(0, body.indexOf("\nasync function ", 1));
+      expect(fnBody).toContain("if (scheduleMutationInFlight) {\n    return;\n  }");
+      expect(fnBody).toContain("setScheduleMutationInFlight(true);");
+      expect(fnBody).toContain("setScheduleMutationInFlight(false);");
+    }
+    expect(STAFF_APP_JS).toContain(
+      'for (const control of scheduleSection.querySelectorAll("[data-schedule-mutation-control]")) {',
+    );
+    expect(STAFF_APP_JS).toContain("control.disabled = disabled;");
+  });
+
+  it("refreshes authoritative schedule state after every mutation and clears stale data on fetch/parse failure", () => {
+    for (const fn of ["submitWeeklyHours", "submitClosureDate", "submitGenerateSlots", "submitDeleteSlot"]) {
+      const body = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf(`async function ${fn}(`));
+      const fnBody = body.slice(0, body.indexOf("\nasync function ", 1));
+      expect(fnBody).toContain("await loadScheduleForSelectedClinic();");
+    }
+    const loadBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function loadScheduleForSelectedClinic("),
+      STAFF_APP_JS.indexOf("async function loadClinicSchedule("),
+    );
+    expect(loadBody).toContain(
+      'weeklyHoursBody.textContent = "";\n    closureList.textContent = "";\n    slotList.textContent = "";\n    scheduleErrorRegion.textContent = "Takvim y\\u00fcklenemedi.";',
+    );
+    expect(loadBody).toContain("const requestedClinicId = selectedClinicId;");
+    expect(loadBody).toContain("if (selectedClinicId !== requestedClinicId) {");
+  });
+
+  it("shows a truthful preserved-active-slot warning that never claims cancellation or owner contact", () => {
+    expect(STAFF_APP_JS).toContain("function reportPreservedActiveSlots(preservedActiveSlots) {");
+    const body = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("function reportPreservedActiveSlots("));
+    const fnBody = body.slice(0, body.indexOf("\nasync function "));
+    expect(fnBody).toContain("iptal edilmedi ve sahibine bildirim g\\u00f6nderilmedi.");
+    expect(STAFF_APP_JS).not.toMatch(/iptal edildi/);
+    expect(STAFF_APP_JS).not.toMatch(/bildirim g\\u00f6nderildi/);
+  });
+
+  it("reports removed available slots even when the schedule row itself was unchanged", () => {
+    expect(STAFF_APP_JS).toContain("function reportRemovedAvailableSlots(removedSlots) {");
+    expect(STAFF_APP_JS).toContain("bo\\u015f randevu saati kald\\u0131r\\u0131ld\\u0131.");
+
+    const weeklyBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitWeeklyHours("),
+      STAFF_APP_JS.indexOf("async function fetchClosureDates("),
+    );
+    expect(weeklyBody).toContain("reportRemovedAvailableSlots(row.removed_slots);");
+    expect(weeklyBody).toContain("Saat ayar\\u0131 de\\u011fi\\u015fmedi.");
+
+    const closureBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitClosureDate("),
+      STAFF_APP_JS.indexOf("async function fetchClinicSlots("),
+    );
+    expect(closureBody).toContain("reportRemovedAvailableSlots(row.removed_slots);");
+    expect(closureBody).toContain("Kapan\\u0131\\u015f kayd\\u0131 zaten vard\\u0131.");
+  });
+
+  it("clears every clinic/schedule field and hides the readonly notice on logout", () => {
+    const clearSessionStart = STAFF_APP_JS.indexOf("function clearSession() {");
+    const clearSessionBody = STAFF_APP_JS.slice(clearSessionStart, STAFF_APP_JS.indexOf("\nfunction ", clearSessionStart));
+    expect(clearSessionBody).toContain("clinics = [];");
+    expect(clearSessionBody).toContain("selectedClinicId = null;");
+    expect(clearSessionBody).toContain('clinicSelect.textContent = "";');
+    expect(clearSessionBody).toContain('weeklyHoursBody.textContent = "";');
+    expect(clearSessionBody).toContain('closureList.textContent = "";');
+    expect(clearSessionBody).toContain('slotList.textContent = "";');
+    expect(clearSessionBody).toContain("scheduleReadonlyNotice.hidden = true;");
+  });
+
+  it("routes every dynamic schedule value to the DOM only through textContent, never innerHTML", () => {
+    expect(STAFF_APP_JS).toContain("dayTd.textContent = WEEKDAY_LABELS[weekday];");
+    expect(STAFF_APP_JS).toContain("span.textContent = row.closed_on;");
+    expect(STAFF_APP_JS).not.toMatch(/schedule\w*\.innerHTML/);
   });
 });
 

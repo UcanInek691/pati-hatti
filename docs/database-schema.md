@@ -983,3 +983,83 @@ invoicing, quota, CSV export, chart, or message-sending UI — and its own
 notice states it is not a production-approved privileged-access surface
 until MFA or an equivalent upstream control is verified (see
 [`docs/production-readiness.md`](production-readiness.md)).
+
+## Clinic schedule and appointment-slot self-service (Task 044)
+
+`supabase/migrations/20260901000100_clinic_schedule_management.sql` and
+`supabase/tests/044_clinic_schedule_management.sql`. The implementer did not
+apply or run either against any database. Codex later applied the migration
+only to disposable `vetai-test`, ran the rollback fixture successfully,
+and confirmed zero fixture residue on 2026-09-01. Staging and production
+remain unchanged; mandatory Opus review is still pending.
+
+Five new `SECURITY DEFINER`, `set search_path = ''` RPCs, all revoked from
+`PUBLIC`/`anon`/`service_role`. A shared, `service_role`-only private helper,
+`vetai_private.authorize_clinic_schedule_mutation(p_clinic_id)`, is called by
+every mutation RPC before it touches `clinic_weekly_hours`,
+`clinic_closure_dates` or `appointment_slots`: it `select ... for no key update`-locks
+the target `clinics` row, resolves `auth.uid()`'s `clinic_staff` role for that
+exact clinic, and returns a closed `ok | not_found | forbidden |
+inactive` outcome — an absent clinic, a non-staff caller and a cross-tenant
+caller are all `not_found`; a non-`admin` staff member is `forbidden`; a
+`clinics.operational_status <> 'active'` clinic is `inactive` regardless of
+role. `FOR NO KEY UPDATE` still serializes schedule mutations and conflicts
+with lifecycle `FOR UPDATE`, without blocking child-table FK checks that take
+`FOR KEY SHARE`. No mutation RPC below performs its own ad hoc tenant/role
+check.
+
+- `list_clinic_appointment_slots_v1(p_clinic_id, p_from, p_to)` — granted to
+  `authenticated` only. Any same-clinic `clinic_staff` role (not only
+  `admin`) may call it; it does not check `operational_status`, so a
+  suspended/offboarding clinic's own staff can still read its schedule.
+  Requires `p_from <= p_to` and at most an inclusive 62-day window. Returns
+  ordered `slot_id, starts_at, ends_at, status` rows only
+  (`status` one of `available | held | confirmed`) for that exact clinic and
+  window, and zero rows for an absent/cross-tenant/non-staff caller. Direct
+  authenticated table access to `appointment_slots` remains revoked and
+  policy-free, as it was before this task.
+- `set_clinic_weekly_hours_v1(p_clinic_id, p_iso_weekday, p_enabled,
+  p_opens_at, p_closes_at)` — `admin`-only mutation. Enabling a weekday
+  requires both times non-null, whole-minute, `:00`/`:30` half-hour aligned
+  and strictly `opens_at < closes_at`; PostgreSQL's special `24:00` value is
+  rejected, so the latest supported closing input is `23:30`. Disabling
+  requires both times null and
+  deletes that weekday's row; malformed input raises before any mutation.
+  After upsert/delete, deletes only this clinic's future `available` slots on
+  that `Europe/Istanbul` weekday that no longer fit the (possibly now absent)
+  interval; every `held`/`confirmed` slot is preserved untouched. Returns a
+  closed `updated | removed | unchanged | not_found | forbidden | inactive` result plus
+  `removed_slots`/`preserved_active_slots` counts, computed on every call
+  (including a no-op replay); `/staff` displays both removed-available and
+  preserved-active counts even when the schedule row itself was unchanged.
+- `set_clinic_closure_date_v1(p_clinic_id, p_closed_on, p_closed)` —
+  `admin`-only mutation. Rejects a `p_closed_on` date in the past or more than 366
+  days ahead. `true` idempotently inserts a `clinic_closure_dates` row and
+  deletes only that clinic-local date's future `available` slots (preserving
+  and counting `held`/`confirmed` rows); `false` idempotently deletes the row
+  and creates no slots. Same closed-result/count shape as the weekly-hours
+  RPC.
+- `generate_clinic_appointment_slots_v1(p_clinic_id, p_local_date)` —
+  `admin`-only mutation for a `p_local_date` from today through 366 days
+  ahead (a past date is authorized input, not a shape violation, and returns
+  `past` rather than raising). Requires one configured, half-hour-aligned
+  weekly interval for that ISO weekday and no matching closure; converts the
+  `Europe/Istanbul` local interval to absolute instants and inserts up to 48
+  candidate fixed 30-minute `available` slots via `on conflict (clinic_id,
+  starts_at) do nothing`, never modifying an existing row. Returns `generated
+  | unchanged | closed | unconfigured | past | not_found | forbidden |
+  inactive` plus coherent `candidate_count`/`created_count`/`existing_count`.
+- `delete_clinic_appointment_slot_v1(p_clinic_id, p_slot_id)` — `admin`-only
+  mutation. Locks the exact tenant-scoped slot row; deletes only a future
+  `available` slot (`deleted`); a `held`/`confirmed` row returns `in_use`, a
+  past/started row returns `past`, and an absent/cross-tenant row returns
+  `not_found` — all three without mutating anything or touching any
+  `conversations`/`owners`/`pets` row.
+
+See
+[`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff),
+[`docs/appointment-booking-engine.md`](appointment-booking-engine.md#staff-side-generation-and-deletion-task-044)
+and
+[`docs/staff-workflow.md`](staff-workflow.md#clinic-schedule-task-044) for the
+product rules, the grandfathered-hold interaction, and the `/staff` UI these
+RPCs back.

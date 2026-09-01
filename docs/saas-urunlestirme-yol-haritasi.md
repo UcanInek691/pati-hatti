@@ -174,9 +174,12 @@ kullanım toplamları
 fiyat metadata'sı ile provizyon, askıya alma ve offboarding adımları bu
 panele henüz eklenmedi; klinik yaşam döngüsü mutasyonları hâlâ ayrı bir
 operatör akışından yürütülüyor ([`clinic-lifecycle.md`](clinic-lifecycle.md)).
-Migration ve rollback kanıtı yalnız disposable `vetai-test` üzerinde geçti;
-staging/production etkinleştirmesi ve ilk gerçek platform-yönetici üyeliği
-henüz yapılmadı. Zorunlu Opus incelemesi dar düzeltmelerden sonra `PASS` verdi.
+Migration ve rollback kanıtı önce yalnız disposable `vetai-test` üzerinde geçti;
+zorunlu Opus incelemesi dar düzeltmelerden sonra `PASS` verdi. 2026-08-31'de
+Task 041–043 migration'ları sırayla `vetai-staging`'e uygulandı, mevcut tek
+staging personel Auth kullanıcısı ilk staging platform-yöneticisi olarak
+etkinleştirildi ve ilgili Worker sürümü deploy edildi; `/admin` ve
+`/admin/config.json` doğrulandı. Production hâlâ değişmedi.
 
 ## 7. Kullanım, tarife ve faturalama
 
@@ -274,7 +277,7 @@ Admin paneli, provizyon, faturalama, UI tasarımı ve hatırlatma aynı göreve
 eklenmez. Task 040 tamamlandıktan sonra sıradaki iş paketi güvenli
 provizyon/offboarding olacaktır.
 
-## 10a. Task 041 (uygulandı, staging/production'a henüz uygulanmadı)
+## 10a. Task 041 (uygulandı, staging'e uygulandı, production'a henüz uygulanmadı)
 
 Task 041, Faz 2'yi ("Güvenli provizyon/offboarding") uygular:
 
@@ -289,14 +292,16 @@ Task 041, Faz 2'yi ("Güvenli provizyon/offboarding") uygular:
 - offboarding tek yönlü token hash'i içeren, PII taşımayan bir
   makbuz yazar; ham token hiçbir yerde saklanmaz;
 - implementer tarafından hiçbir veritabanına uygulanmadı; Codex daha sonra
-  yalnız disposable `vetai-test` üzerinde migration + rollback fixture
-  kanıtını tamamladı. Staging/production ve gerçek Meta hesabı değişmedi — bkz.
-  [`docs/clinic-lifecycle.md`](clinic-lifecycle.md).
+  önce yalnız disposable `vetai-test` üzerinde migration + rollback fixture
+  kanıtını tamamladı, sonra 2026-08-31'de bu migration'ı Task 042/043 ile
+  birlikte sırayla `vetai-staging`'e uyguladı (mevcut tek staging klinik
+  `active`'e backfill edildi). Production ve gerçek Meta hesabı hâlâ değişmedi
+  — bkz. [`docs/clinic-lifecycle.md`](clinic-lifecycle.md).
 
 Admin paneli (Faz 4), faturalama (Faz 3/7) ve UI aynı göreve eklenmez;
 `src/clinicLifecycle.ts` hiçbir public route'a bağlanmaz.
 
-## 10b. Task 042 (uygulandı, disposable veritabanında doğrulandı)
+## 10b. Task 042 (uygulandı, disposable veritabanında doğrulandı, staging'e uygulandı)
 
 Task 042, Faz 3'ü ("Ölçüm") uygular:
 
@@ -310,13 +315,38 @@ Task 042, Faz 3'ü ("Ölçüm") uygular:
 - faturalama, tarife, kota veya admin/personel arayüzü eklemez — sadece
   ölçüm ve manuel pilot mutabakatı için kanıt üretir;
 - implementer tarafından migration ve fixture hiçbir veritabanında
-  çalıştırılmadı; Codex daha sonra yalnız disposable `vetai-test` üzerinde
+  çalıştırılmadı; Codex daha sonra önce yalnız disposable `vetai-test` üzerinde
   migration'ı uyguladı, rollback fixture'ı PASS verdi ve sıfır artık
-  doğrulandı. Staging/production değişmedi; zorunlu salt-okunur Opus incelemesi
-  PASS verdi — bkz. [`docs/usage-metering.md`](usage-metering.md).
+  doğrulandı; zorunlu salt-okunur Opus incelemesi PASS verdi. 2026-08-31'de bu
+  migration bağımlı Worker deploy'undan önce `vetai-staging`'e uygulandı ve her
+  iki kullanım RPC'sinin varlığı doğrulandı. Production değişmedi — bkz.
+  [`docs/usage-metering.md`](usage-metering.md).
 
 Admin paneli (Faz 4), gerçek faturalama (Faz 3/7'nin geri kalanı) ve kota
 aynı göreve eklenmez; `src/usageMetering.ts` hiçbir public route'a bağlanmaz.
+
+## 10c. Task 044 (uygulandı, disposable veritabanında doğrulandı)
+
+Task 044, Faz 4'ün ("Operasyon yüzeyleri") tek dar dilimini uygular: `/staff`
+üzerinde klinik kendi haftalık saatlerini, tam gün kapanışlarını ve gelecekteki
+randevu slot envanterini kendi kendine yönetir
+([`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff)).
+
+- beş yeni `SECURITY DEFINER` RPC (`list_clinic_appointment_slots_v1` ve dört
+  mutasyon) — tenant/rol yetkilendirmesi tamamen veritabanında, tarayıcı-taraflı
+  kontrole bırakılmadan; yalnız klinik `admin`'i saat/kapanış/slot değiştirebilir,
+  diğer roller salt-okunur ([`docs/database-schema.md`](database-schema.md#clinic-schedule-and-appointment-slot-self-service-task-044));
+- askıda/offboarding klinik mutasyonları kapalı-başarısız olur; `held`/`confirmed`
+  hiçbir randevu hiçbir saat/kapanış değişikliğiyle silinmez, taşınmaz ya da
+  düzenlenmez — yalnız korunan aktif slot sayısı döner;
+  ([`docs/appointment-booking-engine.md`](appointment-booking-engine.md#staff-side-generation-and-deletion-task-044));
+- `/admin`, ikinci bir klinik paneli, faturalama, hatırlatma veya dış takvim
+  senkronu eklemez; `/staff` aynı sayfa, aynı Supabase Auth oturumu kalır;
+- implementer tarafından migration ve `supabase/tests/044_clinic_schedule_management.sql`
+  hiçbir veritabanına uygulanmadı/çalıştırılmadı. Codex daha sonra migration'ı
+  yalnız disposable `vetai-test` üzerinde uyguladı, rollback fixture'ı PASS
+  verdi ve sıfır artık doğrulandı. Zorunlu salt-okunur Opus incelemesi henüz
+  yapılmadı; staging/production değişmedi.
 
 ## 11. Kaynak ve yeniden doğrulama notu
 

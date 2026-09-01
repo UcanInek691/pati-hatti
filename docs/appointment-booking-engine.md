@@ -211,6 +211,46 @@ for the full contract and
 conversational flow. `src/appointmentEngine.ts` is unmodified and remains
 unwired into any runtime path.
 
+## Staff-side generation and deletion (Task 044)
+
+Task 044 (`supabase/migrations/20260901000100_clinic_schedule_management.sql`)
+adds the only two ways an `appointment_slots` row can now come from
+`/staff` rather than from a WhatsApp conversation:
+
+- `generate_clinic_appointment_slots_v1(p_clinic_id, p_local_date)` converts
+  that clinic-local weekday's configured `clinic_weekly_hours` interval (see
+  [`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff))
+  into fixed 30-minute `available` candidates for the given local date, and
+  inserts them with `on conflict (clinic_id, starts_at) do nothing` — the same
+  uniqueness this table already enforced. It never overwrites an existing
+  `available`, `held`, or `confirmed` row, so a slot this engine's
+  `hold_appointment_slot` already holds is untouched by regeneration.
+- `delete_clinic_appointment_slot_v1(p_clinic_id, p_slot_id)` removes only a
+  future `available` row; a `held`/`confirmed` row returns `in_use` and is
+  left completely alone. A simultaneous hold, confirmation, or cancellation
+  may make the staff RPC wait on that slot row; after the wait it evaluates
+  the current status and returns `in_use` instead of deleting active work.
+
+Both RPCs are `admin`-only, active-clinic-only, and share the authorization
+helper described in `docs/database-schema.md`. Neither reads or writes
+`conversations`, `owners`, `pets`, or any hold/confirm column, and neither
+sends a WhatsApp message — this file's hold/confirm/cancel flow and its
+per-pet guard are unmodified.
+
+**Grandfathered hold race.** Because a schedule change deletes only
+`available` slots, a hold that already won `hold_appointment_slot`'s row lock
+before an admin narrows hours or closes the date is preserved and may still
+be confirmed through its existing ten-minute `hold_until` lease — the
+narrowing/closure RPC returns how many such active slots it preserved, but
+`/staff` never claims that appointment was cancelled or that the owner was
+contacted.
+
+Schedule mutation RPCs serialize on the clinic row with `FOR NO KEY UPDATE`,
+then lock affected slot IDs in ascending order. The weaker clinic lock is
+intentional: it still conflicts with lifecycle `FOR UPDATE` transitions and
+other schedule mutations, but not with the `FOR KEY SHARE` locks taken by
+foreign-key checks when existing cancellation/intake flows insert child rows.
+
 ## Verification
 
 Proof lives in `supabase/tests/022_appointment_booking_engine.sql`, a single

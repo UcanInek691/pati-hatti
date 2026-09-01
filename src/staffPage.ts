@@ -111,6 +111,40 @@ export const STAFF_HTML = `<!doctype html>
   <p>Modu insan veya kişisel olarak değiştirmek önceki kayıtları silmez. Daha önce işlenmek üzere alınmış bir yanıtın süresi dolarsa kalan sınırlı denemeleri yapılabilir ve yanıt ulaşabilir; Meta'ya verilmiş bir istek geri çağrılamaz. Bu işlem hiçbir personeli bilgilendirmez ve otomatik bir insan yanıtı oluşturmaz.</p>
 </section>
 
+<section id="schedule-section" aria-labelledby="schedule-heading" hidden>
+  <h2 id="schedule-heading">Klinik takvimi</h2>
+  <label for="clinic-select">Klinik</label>
+  <select id="clinic-select"></select>
+  <p id="schedule-readonly-notice" hidden>Bu ayarları yalnızca klinik yöneticisi değiştirebilir.</p>
+  <p id="schedule-status-region" role="status" aria-live="polite"></p>
+  <p id="schedule-error-region" role="alert" aria-live="assertive"></p>
+  <p>Saat ve kapanış değişiklikleri onaylı veya tutulan randevuları iptal etmez, taşımaz ve sahiplerine bildirim göndermez.</p>
+
+  <table>
+    <caption>Haftalık çalışma saatleri</caption>
+    <thead>
+      <tr><th>Gün</th><th>Açık</th><th>Açılış</th><th>Kapanış</th><th></th></tr>
+    </thead>
+    <tbody id="weekly-hours-body"></tbody>
+  </table>
+
+  <h3>Kapanış günleri</h3>
+  <form id="closure-form" hidden>
+    <label for="closure-date-input">Tarih</label>
+    <input type="date" id="closure-date-input" data-schedule-mutation-control required>
+    <button type="submit" data-schedule-mutation-control>Ekle</button>
+  </form>
+  <ul id="closure-list"></ul>
+
+  <h3>Randevu slotları</h3>
+  <form id="generate-form" hidden>
+    <label for="generate-date-input">Slot üretilecek tarih</label>
+    <input type="date" id="generate-date-input" data-schedule-mutation-control required>
+    <button type="submit" data-schedule-mutation-control>Slotları üret</button>
+  </form>
+  <ul id="slot-list"></ul>
+</section>
+
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
   <h2 id="detail-heading">Detay</h2>
   <p id="workitem-status-region"></p>
@@ -158,6 +192,18 @@ const detailContent = document.getElementById("detail-content");
 const claimButton = document.getElementById("claim-button");
 const resolveButton = document.getElementById("resolve-button");
 const backButton = document.getElementById("back-button");
+const scheduleSection = document.getElementById("schedule-section");
+const clinicSelect = document.getElementById("clinic-select");
+const scheduleReadonlyNotice = document.getElementById("schedule-readonly-notice");
+const scheduleStatusRegion = document.getElementById("schedule-status-region");
+const scheduleErrorRegion = document.getElementById("schedule-error-region");
+const weeklyHoursBody = document.getElementById("weekly-hours-body");
+const closureForm = document.getElementById("closure-form");
+const closureDateInput = document.getElementById("closure-date-input");
+const closureList = document.getElementById("closure-list");
+const generateForm = document.getElementById("generate-form");
+const generateDateInput = document.getElementById("generate-date-input");
+const slotList = document.getElementById("slot-list");
 
 const KIND_LABELS = { human_handoff: "\\u0130nsan devri", delivery_failure: "Teslimat hatas\\u0131" };
 const REASON_LABELS = {
@@ -168,6 +214,19 @@ const REASON_LABELS = {
 };
 const STATUS_LABELS = { open: "A\\u00e7\\u0131k", seen: "G\\u00f6r\\u00fcld\\u00fc", in_progress: "\\u0130\\u015fleniyor" };
 const MODE_LABELS = { ai: "AI a\\u00e7\\u0131k", manual: "Sadece insan", personal: "Ki\\u015fisel / yok say" };
+const WEEKDAY_LABELS = {
+  1: "Pazartesi",
+  2: "Sal\\u0131",
+  3: "\\u00c7ar\\u015famba",
+  4: "Per\\u015fembe",
+  5: "Cuma",
+  6: "Cumartesi",
+  7: "Pazar",
+};
+const SLOT_STATUS_LABELS = { available: "Bo\\u015f", held: "Tutuluyor", confirmed: "Onayl\\u0131" };
+const CLINIC_ROLES = ["admin", "veterinarian", "receptionist"];
+const CLINIC_STATUSES = ["active", "suspended", "offboarding"];
+const ISO_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
 
 let config = null;
 let currentUserId = null;
@@ -177,6 +236,9 @@ let knownWorkItemIds = null;
 let pollIntervalId = null;
 let selectedAccountId = null;
 let routeSubmitInFlight = false;
+let clinics = [];
+let selectedClinicId = null;
+let scheduleMutationInFlight = false;
 
 function isExactRecord(value, keys) {
   try {
@@ -211,6 +273,7 @@ function showLoginView() {
   queueSection.hidden = true;
   detailSection.hidden = true;
   automationSection.hidden = true;
+  scheduleSection.hidden = true;
 }
 
 function showQueueView() {
@@ -218,6 +281,7 @@ function showQueueView() {
   queueSection.hidden = false;
   detailSection.hidden = true;
   automationSection.hidden = false;
+  scheduleSection.hidden = false;
 }
 
 function showDetailView() {
@@ -225,6 +289,7 @@ function showDetailView() {
   queueSection.hidden = true;
   detailSection.hidden = false;
   automationSection.hidden = true;
+  scheduleSection.hidden = true;
 }
 
 function stopPolling() {
@@ -252,6 +317,15 @@ function clearSession() {
   automationPolicyRegion.hidden = true;
   automationStatusRegion.textContent = "";
   automationErrorRegion.textContent = "";
+  clinics = [];
+  selectedClinicId = null;
+  clinicSelect.textContent = "";
+  weeklyHoursBody.textContent = "";
+  closureList.textContent = "";
+  slotList.textContent = "";
+  scheduleReadonlyNotice.hidden = true;
+  scheduleStatusRegion.textContent = "";
+  scheduleErrorRegion.textContent = "";
   stopPolling();
   clearMessages();
   showLoginView();
@@ -764,6 +838,641 @@ async function submitContactRoute(accountId, contactE164, mode) {
   return rows[0].result;
 }
 
+function istanbulTodayIso() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" });
+}
+
+function addDaysIso(isoDate, days) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function isHalfHourAligned(timeValue) {
+  return /^([01]\\d|2[0-3]):(00|30)$/.test(timeValue);
+}
+
+function isValidIsoDate(value) {
+  if (typeof value !== "string" || !/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) {
+    return false;
+  }
+  const date = new Date(value + "T00:00:00Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function canMutateSelectedClinic() {
+  const clinic = clinics.find((item) => item.clinicId === selectedClinicId);
+  return !!clinic && clinic.role === "admin" && clinic.operationalStatus === "active";
+}
+
+function syncScheduleMutationControls() {
+  const disabled = scheduleMutationInFlight || !canMutateSelectedClinic();
+  clinicSelect.disabled = scheduleMutationInFlight;
+  for (const control of scheduleSection.querySelectorAll("[data-schedule-mutation-control]")) {
+    control.disabled = disabled;
+  }
+}
+
+function setScheduleMutationInFlight(value) {
+  scheduleMutationInFlight = value;
+  syncScheduleMutationControls();
+}
+
+function scheduleAuthMessage(result) {
+  if (result === "not_found") {
+    return "Klinik bulunamad\\u0131.";
+  }
+  if (result === "forbidden") {
+    return "Bu klinik i\\u00e7in yetkiniz yok.";
+  }
+  if (result === "inactive") {
+    return "Klinik aktif de\\u011fil; de\\u011fi\\u015fiklik yap\\u0131lamaz.";
+  }
+  return null;
+}
+
+async function callScheduleMutationRpc(rpcName, body, expectedKeys, allowedResults) {
+  const res = await authedFetch("/rest/v1/rpc/" + rpcName, {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error("schedule rpc failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length !== 1 ||
+    typeof rows[0] !== "object" ||
+    rows[0] === null ||
+    Array.isArray(rows[0]) ||
+    !isExactRecord(rows[0], expectedKeys) ||
+    typeof rows[0].result !== "string" ||
+    allowedResults.indexOf(rows[0].result) === -1
+  ) {
+    throw new Error("malformed schedule rpc response");
+  }
+  const row = rows[0];
+  const isClosedAuthResult = row.result === "not_found" || row.result === "forbidden" || row.result === "inactive";
+  if (expectedKeys.includes("removed_slots")) {
+    const countsAreNull = row.removed_slots === null && row.preserved_active_slots === null;
+    const countsAreValid =
+      Number.isInteger(row.removed_slots) &&
+      row.removed_slots >= 0 &&
+      Number.isInteger(row.preserved_active_slots) &&
+      row.preserved_active_slots >= 0;
+    if ((isClosedAuthResult && !countsAreNull) || (!isClosedAuthResult && !countsAreValid)) {
+      throw new Error("malformed schedule rpc counts");
+    }
+  }
+  if (expectedKeys.includes("candidate_count")) {
+    const countsAreNull = row.candidate_count === null && row.created_count === null && row.existing_count === null;
+    const countsAreValid =
+      Number.isInteger(row.candidate_count) &&
+      row.candidate_count >= 0 &&
+      row.candidate_count <= 48 &&
+      Number.isInteger(row.created_count) &&
+      row.created_count >= 0 &&
+      Number.isInteger(row.existing_count) &&
+      row.existing_count >= 0 &&
+      row.created_count + row.existing_count === row.candidate_count;
+    const hasCounts = row.result === "generated" || row.result === "unchanged";
+    if ((hasCounts && !countsAreValid) || (!hasCounts && !countsAreNull)) {
+      throw new Error("malformed schedule rpc counts");
+    }
+    if ((row.result === "generated") !== (row.created_count > 0)) {
+      throw new Error("incoherent schedule rpc result");
+    }
+  }
+  return row;
+}
+
+function reportPreservedActiveSlots(preservedActiveSlots) {
+  if (preservedActiveSlots) {
+    scheduleStatusRegion.textContent +=
+      " " +
+      preservedActiveSlots +
+      " onayl\\u0131/tutulan randevu bu de\\u011fi\\u015fiklikten etkilenmedi; iptal edilmedi ve sahibine bildirim g\\u00f6nderilmedi.";
+  }
+}
+
+function reportRemovedAvailableSlots(removedSlots) {
+  if (removedSlots) {
+    scheduleStatusRegion.textContent +=
+      " " + removedSlots + " bo\\u015f randevu saati kald\\u0131r\\u0131ld\\u0131.";
+  }
+}
+
+async function fetchClinicMemberships() {
+  const res = await authedFetch(
+    "/rest/v1/clinic_staff?user_id=eq." +
+      encodeURIComponent(currentUserId) +
+      "&select=clinic_id,role,clinics(name,operational_status)&order=clinic_id.asc&limit=50",
+    { headers: { Accept: "application/json" } }
+  );
+  if (!res.ok) {
+    throw new Error("clinic list fetch failed");
+  }
+  const rows = await res.json();
+  const seen = new Set();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 50 ||
+    !rows.every((row) => {
+      if (
+        !isExactRecord(row, ["clinic_id", "role", "clinics"]) ||
+        typeof row.clinic_id !== "string" ||
+        !UUID_PATTERN.test(row.clinic_id) ||
+        CLINIC_ROLES.indexOf(row.role) === -1 ||
+        !isExactRecord(row.clinics, ["name", "operational_status"]) ||
+        typeof row.clinics.name !== "string" ||
+        row.clinics.name.length < 1 ||
+        row.clinics.name.length > 200 ||
+        CLINIC_STATUSES.indexOf(row.clinics.operational_status) === -1
+      ) {
+        return false;
+      }
+      if (seen.has(row.clinic_id)) {
+        return false;
+      }
+      seen.add(row.clinic_id);
+      return true;
+    })
+  ) {
+    throw new Error("malformed clinic list response");
+  }
+  return rows.map((row) => ({
+    clinicId: row.clinic_id,
+    role: row.role,
+    name: row.clinics.name,
+    operationalStatus: row.clinics.operational_status,
+  }));
+}
+
+function renderClinicSelect(items) {
+  clinicSelect.textContent = "";
+  for (const clinic of items) {
+    const option = document.createElement("option");
+    option.value = clinic.clinicId;
+    option.textContent = clinic.name;
+    clinicSelect.appendChild(option);
+  }
+}
+
+async function fetchWeeklyHours(clinicId) {
+  const res = await authedFetch(
+    "/rest/v1/clinic_weekly_hours?clinic_id=eq." +
+      encodeURIComponent(clinicId) +
+      "&select=iso_weekday,opens_at,closes_at&order=iso_weekday.asc&limit=7",
+    { headers: { Accept: "application/json" } }
+  );
+  if (!res.ok) {
+    throw new Error("weekly hours fetch failed");
+  }
+  const rows = await res.json();
+  const seen = new Set();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 7 ||
+    !rows.every((row) => {
+      if (!isExactRecord(row, ["iso_weekday", "opens_at", "closes_at"])) {
+        return false;
+      }
+      const valid =
+        Number.isInteger(row.iso_weekday) &&
+        row.iso_weekday >= 1 &&
+        row.iso_weekday <= 7 &&
+        typeof row.opens_at === "string" &&
+        /^([01]\\d|2[0-3]):(00|30):00$/.test(row.opens_at) &&
+        typeof row.closes_at === "string" &&
+        /^([01]\\d|2[0-3]):(00|30):00$/.test(row.closes_at) &&
+        row.opens_at < row.closes_at &&
+        !seen.has(row.iso_weekday);
+      seen.add(row.iso_weekday);
+      return valid;
+    })
+  ) {
+    throw new Error("malformed weekly hours response");
+  }
+  return rows;
+}
+
+function renderWeeklyHours(rows, canMutate) {
+  weeklyHoursBody.textContent = "";
+  const byWeekday = new Map();
+  for (const row of rows) {
+    byWeekday.set(row.iso_weekday, row);
+  }
+  for (let weekday = 1; weekday <= 7; weekday++) {
+    const row = byWeekday.get(weekday);
+    const tr = document.createElement("tr");
+
+    const dayTd = document.createElement("td");
+    dayTd.textContent = WEEKDAY_LABELS[weekday];
+    tr.appendChild(dayTd);
+
+    const enabledTd = document.createElement("td");
+    const enabledInput = document.createElement("input");
+    enabledInput.type = "checkbox";
+    enabledInput.checked = !!row;
+    enabledInput.disabled = !canMutate || scheduleMutationInFlight;
+    enabledInput.dataset.scheduleMutationControl = "";
+    enabledTd.appendChild(enabledInput);
+    tr.appendChild(enabledTd);
+
+    const opensTd = document.createElement("td");
+    const opensInput = document.createElement("input");
+    opensInput.type = "time";
+    opensInput.step = "1800";
+    opensInput.value = row ? row.opens_at.slice(0, 5) : "";
+    opensInput.disabled = !canMutate || scheduleMutationInFlight;
+    opensInput.dataset.scheduleMutationControl = "";
+    opensTd.appendChild(opensInput);
+    tr.appendChild(opensTd);
+
+    const closesTd = document.createElement("td");
+    const closesInput = document.createElement("input");
+    closesInput.type = "time";
+    closesInput.step = "1800";
+    closesInput.value = row ? row.closes_at.slice(0, 5) : "";
+    closesInput.disabled = !canMutate || scheduleMutationInFlight;
+    closesInput.dataset.scheduleMutationControl = "";
+    closesTd.appendChild(closesInput);
+    tr.appendChild(closesTd);
+
+    const actionTd = document.createElement("td");
+    if (canMutate) {
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.textContent = "Kaydet";
+      saveButton.disabled = scheduleMutationInFlight;
+      saveButton.dataset.scheduleMutationControl = "";
+      saveButton.addEventListener("click", () => {
+        submitWeeklyHours(weekday, enabledInput.checked, opensInput.value, closesInput.value);
+      });
+      actionTd.appendChild(saveButton);
+    }
+    tr.appendChild(actionTd);
+
+    weeklyHoursBody.appendChild(tr);
+  }
+}
+
+async function submitWeeklyHours(isoWeekday, enabled, opensValue, closesValue) {
+  scheduleErrorRegion.textContent = "";
+  scheduleStatusRegion.textContent = "";
+  if (scheduleMutationInFlight) {
+    return;
+  }
+  let opensAt = null;
+  let closesAt = null;
+  if (enabled) {
+    if (!isHalfHourAligned(opensValue) || !isHalfHourAligned(closesValue)) {
+      scheduleErrorRegion.textContent = "Saatler yar\\u0131m saate hizal\\u0131 olmal\\u0131 (\\u00f6r. 09:00, 09:30).";
+      return;
+    }
+    if (opensValue >= closesValue) {
+      scheduleErrorRegion.textContent = "A\\u00e7\\u0131l\\u0131\\u015f kapan\\u0131\\u015ftan \\u00f6nce olmal\\u0131.";
+      return;
+    }
+    opensAt = opensValue;
+    closesAt = closesValue;
+  }
+  setScheduleMutationInFlight(true);
+  try {
+    const row = await callScheduleMutationRpc(
+      "set_clinic_weekly_hours_v1",
+      {
+        p_clinic_id: selectedClinicId,
+        p_iso_weekday: isoWeekday,
+        p_enabled: enabled,
+        p_opens_at: opensAt,
+        p_closes_at: closesAt,
+      },
+      ["result", "removed_slots", "preserved_active_slots"],
+      ["updated", "removed", "unchanged", "not_found", "forbidden", "inactive"]
+    );
+    const authMsg = scheduleAuthMessage(row.result);
+    if (authMsg) {
+      scheduleErrorRegion.textContent = authMsg;
+    } else {
+      scheduleStatusRegion.textContent = row.result === "unchanged" ? "Saat ayar\\u0131 de\\u011fi\\u015fmedi." : "Saatler kaydedildi.";
+      reportRemovedAvailableSlots(row.removed_slots);
+      reportPreservedActiveSlots(row.preserved_active_slots);
+    }
+    await loadScheduleForSelectedClinic();
+  } catch {
+    scheduleErrorRegion.textContent = "Saatler kaydedilemedi.";
+  } finally {
+    setScheduleMutationInFlight(false);
+  }
+}
+
+async function fetchClosureDates(clinicId) {
+  const res = await authedFetch(
+    "/rest/v1/clinic_closure_dates?clinic_id=eq." +
+      encodeURIComponent(clinicId) +
+      "&select=closed_on&order=closed_on.asc&limit=200",
+    { headers: { Accept: "application/json" } }
+  );
+  if (!res.ok) {
+    throw new Error("closure list fetch failed");
+  }
+  const rows = await res.json();
+  const seen = new Set();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 200 ||
+    !rows.every((row) => {
+      if (!isExactRecord(row, ["closed_on"])) {
+        return false;
+      }
+      const valid = isValidIsoDate(row.closed_on) && !seen.has(row.closed_on);
+      seen.add(row.closed_on);
+      return valid;
+    })
+  ) {
+    throw new Error("malformed closure list response");
+  }
+  return rows;
+}
+
+function renderClosures(rows, canMutate) {
+  closureList.textContent = "";
+  for (const row of rows) {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = row.closed_on;
+    li.appendChild(span);
+    if (canMutate) {
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.textContent = "Kald\\u0131r";
+      removeButton.disabled = scheduleMutationInFlight;
+      removeButton.dataset.scheduleMutationControl = "";
+      removeButton.addEventListener("click", () => {
+        submitClosureDate(row.closed_on, false);
+      });
+      li.appendChild(removeButton);
+    }
+    closureList.appendChild(li);
+  }
+}
+
+async function submitClosureDate(closedOn, closed) {
+  scheduleErrorRegion.textContent = "";
+  scheduleStatusRegion.textContent = "";
+  if (scheduleMutationInFlight) {
+    return;
+  }
+  const today = istanbulTodayIso();
+  if (!isValidIsoDate(closedOn) || closedOn < today || closedOn > addDaysIso(today, 366)) {
+    scheduleErrorRegion.textContent = "Ge\\u00e7ersiz tarih.";
+    return;
+  }
+  setScheduleMutationInFlight(true);
+  try {
+    const row = await callScheduleMutationRpc(
+      "set_clinic_closure_date_v1",
+      { p_clinic_id: selectedClinicId, p_closed_on: closedOn, p_closed: closed },
+      ["result", "removed_slots", "preserved_active_slots"],
+      ["updated", "removed", "unchanged", "not_found", "forbidden", "inactive"]
+    );
+    const authMsg = scheduleAuthMessage(row.result);
+    if (authMsg) {
+      scheduleErrorRegion.textContent = authMsg;
+    } else if (closed) {
+      scheduleStatusRegion.textContent = row.result === "unchanged" ? "Kapan\\u0131\\u015f kayd\\u0131 zaten vard\\u0131." : "Kapan\\u0131\\u015f eklendi.";
+      reportRemovedAvailableSlots(row.removed_slots);
+      reportPreservedActiveSlots(row.preserved_active_slots);
+    } else {
+      scheduleStatusRegion.textContent = row.result === "unchanged" ? "De\\u011fi\\u015fiklik yoktu." : "Kapan\\u0131\\u015f kald\\u0131r\\u0131ld\\u0131.";
+    }
+    closureDateInput.value = "";
+    await loadScheduleForSelectedClinic();
+  } catch {
+    scheduleErrorRegion.textContent = "Kapan\\u0131\\u015f g\\u00fcncellenemedi.";
+  } finally {
+    setScheduleMutationInFlight(false);
+  }
+}
+
+async function fetchClinicSlots(clinicId) {
+  const from = istanbulTodayIso();
+  const to = addDaysIso(from, 13);
+  const res = await authedFetch("/rest/v1/rpc/list_clinic_appointment_slots_v1", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ p_clinic_id: clinicId, p_from: from, p_to: to }),
+  });
+  if (!res.ok) {
+    throw new Error("slot list fetch failed");
+  }
+  const rows = await res.json();
+  const seen = new Set();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 700 ||
+    !rows.every((row) => {
+      if (!isExactRecord(row, ["slot_id", "starts_at", "ends_at", "status"])) {
+        return false;
+      }
+      const startsAt =
+        typeof row.starts_at === "string" && ISO_TIMESTAMP_PATTERN.test(row.starts_at) ? Date.parse(row.starts_at) : NaN;
+      const endsAt =
+        typeof row.ends_at === "string" && ISO_TIMESTAMP_PATTERN.test(row.ends_at) ? Date.parse(row.ends_at) : NaN;
+      const valid =
+        typeof row.slot_id === "string" &&
+        UUID_PATTERN.test(row.slot_id) &&
+        Number.isFinite(startsAt) &&
+        Number.isFinite(endsAt) &&
+        endsAt - startsAt === 30 * 60 * 1000 &&
+        (row.status === "available" || row.status === "held" || row.status === "confirmed") &&
+        !seen.has(row.slot_id);
+      seen.add(row.slot_id);
+      return valid;
+    })
+  ) {
+    throw new Error("malformed slot list response");
+  }
+  return rows;
+}
+
+function renderSlots(rows, canMutate) {
+  slotList.textContent = "";
+  for (const row of rows) {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    const start = new Date(row.starts_at).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
+    const end = new Date(row.ends_at).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
+    span.textContent = start + " \\u2013 " + end + " \\u2014 " + SLOT_STATUS_LABELS[row.status];
+    li.appendChild(span);
+    if (canMutate && row.status === "available") {
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.textContent = "Sil";
+      deleteButton.disabled = scheduleMutationInFlight;
+      deleteButton.dataset.scheduleMutationControl = "";
+      deleteButton.addEventListener("click", () => {
+        submitDeleteSlot(row.slot_id);
+      });
+      li.appendChild(deleteButton);
+    }
+    slotList.appendChild(li);
+  }
+}
+
+async function submitGenerateSlots(localDate) {
+  scheduleErrorRegion.textContent = "";
+  scheduleStatusRegion.textContent = "";
+  if (scheduleMutationInFlight) {
+    return;
+  }
+  const today = istanbulTodayIso();
+  if (!isValidIsoDate(localDate) || localDate < today || localDate > addDaysIso(today, 366)) {
+    scheduleErrorRegion.textContent = "Ge\\u00e7ersiz tarih.";
+    return;
+  }
+  setScheduleMutationInFlight(true);
+  try {
+    const row = await callScheduleMutationRpc(
+      "generate_clinic_appointment_slots_v1",
+      { p_clinic_id: selectedClinicId, p_local_date: localDate },
+      ["result", "candidate_count", "created_count", "existing_count"],
+      ["generated", "unchanged", "closed", "unconfigured", "past", "not_found", "forbidden", "inactive"]
+    );
+    const authMsg = scheduleAuthMessage(row.result);
+    if (authMsg) {
+      scheduleErrorRegion.textContent = authMsg;
+    } else if (row.result === "closed") {
+      scheduleErrorRegion.textContent = "Bu tarihte klinik kapal\\u0131.";
+    } else if (row.result === "unconfigured") {
+      scheduleErrorRegion.textContent = "Bu g\\u00fcn i\\u00e7in saat tan\\u0131ml\\u0131 de\\u011fil.";
+    } else if (row.result === "past") {
+      scheduleErrorRegion.textContent = "Ge\\u00e7mi\\u015f bir tarih i\\u00e7in slot \\u00fcretilemez.";
+    } else {
+      scheduleStatusRegion.textContent = row.result === "unchanged" ? "De\\u011fi\\u015fiklik yoktu." : "Slotlar \\u00fcretildi.";
+    }
+    generateDateInput.value = "";
+    await loadScheduleForSelectedClinic();
+  } catch {
+    scheduleErrorRegion.textContent = "Slotlar \\u00fcretilemedi.";
+  } finally {
+    setScheduleMutationInFlight(false);
+  }
+}
+
+async function submitDeleteSlot(slotId) {
+  scheduleErrorRegion.textContent = "";
+  scheduleStatusRegion.textContent = "";
+  if (scheduleMutationInFlight) {
+    return;
+  }
+  setScheduleMutationInFlight(true);
+  try {
+    const row = await callScheduleMutationRpc(
+      "delete_clinic_appointment_slot_v1",
+      { p_clinic_id: selectedClinicId, p_slot_id: slotId },
+      ["result"],
+      ["deleted", "not_found", "in_use", "past", "forbidden", "inactive"]
+    );
+    const authMsg = scheduleAuthMessage(row.result);
+    if (authMsg) {
+      scheduleErrorRegion.textContent = authMsg;
+    } else if (row.result === "in_use") {
+      scheduleErrorRegion.textContent = "Bu slot tutulan veya onaylanm\\u0131\\u015f bir randevuya ait; silinemez.";
+    } else if (row.result === "past") {
+      scheduleErrorRegion.textContent = "Bu slot ge\\u00e7mi\\u015fte; silinemez.";
+    } else if (row.result === "not_found") {
+      scheduleErrorRegion.textContent = "Slot bulunamad\\u0131.";
+    } else {
+      scheduleStatusRegion.textContent = "Slot silindi.";
+    }
+    await loadScheduleForSelectedClinic();
+  } catch {
+    scheduleErrorRegion.textContent = "Slot silinemedi.";
+  } finally {
+    setScheduleMutationInFlight(false);
+  }
+}
+
+async function loadScheduleForSelectedClinic() {
+  weeklyHoursBody.textContent = "";
+  closureList.textContent = "";
+  slotList.textContent = "";
+  scheduleErrorRegion.textContent = "";
+  if (!selectedClinicId) {
+    scheduleReadonlyNotice.hidden = true;
+    closureForm.hidden = true;
+    generateForm.hidden = true;
+    syncScheduleMutationControls();
+    return;
+  }
+  const requestedClinicId = selectedClinicId;
+  const clinic = clinics.find((item) => item.clinicId === requestedClinicId);
+  const canMutate = !!clinic && clinic.role === "admin" && clinic.operationalStatus === "active";
+  scheduleReadonlyNotice.hidden = canMutate;
+  scheduleReadonlyNotice.textContent =
+    clinic && clinic.role === "admin"
+      ? "Klinik aktif değil; takvim yalnızca okunabilir."
+      : "Bu ayarları yalnızca klinik yöneticisi değiştirebilir.";
+  closureForm.hidden = !canMutate;
+  generateForm.hidden = !canMutate;
+  syncScheduleMutationControls();
+  try {
+    const [hours, closures, slots] = await Promise.all([
+      fetchWeeklyHours(requestedClinicId),
+      fetchClosureDates(requestedClinicId),
+      fetchClinicSlots(requestedClinicId),
+    ]);
+    if (selectedClinicId !== requestedClinicId) {
+      return;
+    }
+    renderWeeklyHours(hours, canMutate);
+    renderClosures(closures, canMutate);
+    renderSlots(slots, canMutate);
+    syncScheduleMutationControls();
+  } catch {
+    if (selectedClinicId !== requestedClinicId) {
+      return;
+    }
+    weeklyHoursBody.textContent = "";
+    closureList.textContent = "";
+    slotList.textContent = "";
+    scheduleErrorRegion.textContent = "Takvim y\\u00fcklenemedi.";
+  }
+}
+
+async function loadClinicSchedule() {
+  scheduleErrorRegion.textContent = "";
+  scheduleStatusRegion.textContent = "";
+  const today = istanbulTodayIso();
+  const maxDate = addDaysIso(today, 366);
+  closureDateInput.min = today;
+  closureDateInput.max = maxDate;
+  generateDateInput.min = today;
+  generateDateInput.max = maxDate;
+  try {
+    clinics = await fetchClinicMemberships();
+    renderClinicSelect(clinics);
+    selectedClinicId = clinics.length > 0 ? clinics[0].clinicId : null;
+    if (selectedClinicId) {
+      clinicSelect.value = selectedClinicId;
+    }
+    await loadScheduleForSelectedClinic();
+  } catch {
+    clinics = [];
+    selectedClinicId = null;
+    clinicSelect.textContent = "";
+    weeklyHoursBody.textContent = "";
+    closureList.textContent = "";
+    slotList.textContent = "";
+    scheduleErrorRegion.textContent = "Klinik listesi y\\u00fcklenemedi.";
+  }
+}
+
 accountSelect.addEventListener("change", () => {
   selectedAccountId = accountSelect.value || null;
   automationErrorRegion.textContent = "";
@@ -803,6 +1512,30 @@ routeForm.addEventListener("submit", async (event) => {
   }
 });
 
+clinicSelect.addEventListener("change", () => {
+  selectedClinicId = clinicSelect.value || null;
+  scheduleStatusRegion.textContent = "";
+  loadScheduleForSelectedClinic();
+});
+
+closureForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = closureDateInput.value;
+  if (!value) {
+    return;
+  }
+  submitClosureDate(value, true);
+});
+
+generateForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = generateDateInput.value;
+  if (!value) {
+    return;
+  }
+  submitGenerateSlots(value);
+});
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessages();
@@ -813,6 +1546,7 @@ loginForm.addEventListener("submit", async (event) => {
     showQueueView();
     await refreshQueue();
     await loadAutomationAccounts();
+    await loadClinicSchedule();
     startPolling();
   } catch {
     clearSession();
@@ -926,6 +1660,7 @@ async function init() {
       showQueueView();
       await refreshQueue();
       await loadAutomationAccounts();
+      await loadClinicSchedule();
       startPolling();
     } catch {
       clearSession();

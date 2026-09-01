@@ -1,6 +1,6 @@
 # Current task — 044 Clinic schedule and appointment-slot self-service
 
-Status: `READY`
+Status: `COMPLETE`
 
 Created by Codex on 2026-09-01 after Task 043 passed local, disposable-
 database and mandatory Claude Opus gates, was committed as `b1d87db`, and was
@@ -367,12 +367,267 @@ or plugin installation is authorized for the implementer.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence only.
+- `vetai_private.is_clinic_staff(target_clinic_id)`
+  (`supabase/migrations/20260806000000_core_tenant_schema.sql`) checks only
+  `clinic_staff` membership, not `clinics.operational_status`. The existing
+  `clinic_weekly_hours`/`clinic_closure_dates` `_select` RLS policies are
+  built on it, so a suspended/offboarding clinic's own staff could already
+  read hours/closures before this task; the new
+  `list_clinic_appointment_slots_v1` read RPC deliberately matches that
+  existing read behavior rather than introducing a new lifecycle gate on
+  reads.
+- `clinics.operational_status` (`supabase/migrations/20260831000100_clinic_lifecycle.sql`)
+  defaults to `'suspended'`, not `'active'` — any fixture or future code that
+  inserts a `clinics` row must set the column explicitly to reach an active
+  clinic.
+- `appointment_slots` (`supabase/migrations/20260810000100_appointment_booking_engine.sql`)
+  carries a partial unique index,
+  `appointment_slots_active_conversation_uniq (conversation_id) where status
+  in ('held','confirmed')` — at most one held/confirmed slot may reference a
+  given conversation at a time. The rollback fixture uses five distinct
+  `conversations` rows (fixed IDs `44000000-0000-0000-5000-0000000000{01..05}`)
+  to hold/confirm five slots simultaneously without violating it.
+- `PROJECT_CONTEXT.md`'s current text (as amended by commit `0276224`, "docs:
+  record staging admin activation") records that on 2026-08-31 Codex applied
+  the Task 041, 042 and 043 migrations, in order, to `vetai-staging` — not
+  only Task 043 as `docs/saas-urunlestirme-yol-haritasi.md` still stated. That
+  document's Task 041/042/043 status paragraphs were stale on this point and
+  have been corrected as part of this task's documentation pass; production
+  remains untouched per the same source.
+- Two assertions already present in `test/staffPage.test.ts` before this
+  session's writing pass did not match the already-implemented
+  `src/staffPage.ts` query strings: the weekly-hours/closure-dates fetch
+  query strings are built as `"...clinic_id=eq." + encodeURIComponent(id) +
+  "&select=...` (the `&` belongs to the third concatenated literal), and the
+  admin-only schedule notice text lives in the static `STAFF_HTML` template
+  (toggled via `.hidden` from `STAFF_APP_JS`), not inside `STAFF_APP_JS`
+  itself. Both were pre-existing test/implementation mismatches unrelated to
+  this session's own edits; both assertions were corrected to match the
+  actual (correct) implementation, and `pnpm test` was reconfirmed green
+  afterward.
 
 ## Delivery record
 
-To be filled by the implementing agent. Do not commit, push, deploy, apply SQL,
-run paid evals or mutate external services.
+**Changed files** (implementer, this session):
+
+- `supabase/migrations/20260901000100_clinic_schedule_management.sql` (new,
+  488 lines) — five RPCs (`list_clinic_appointment_slots_v1`,
+  `set_clinic_weekly_hours_v1`, `set_clinic_closure_date_v1`,
+  `generate_clinic_appointment_slots_v1`, `delete_clinic_appointment_slot_v1`)
+  plus the shared `vetai_private.authorize_clinic_schedule_mutation` helper.
+  **NOT RUN** against any database.
+- `supabase/tests/044_clinic_schedule_management.sql` (new) — single-session
+  `begin; ... rollback;` fixture with fixed IDs under the `44000000-0000-...`
+  prefix, covering all 10 numbered properties in this file's "SQL rollback
+  fixture" section above. **NOT RUN** against any database.
+- `src/staffPage.ts` — added the "Klinik takvimi" section to the existing
+  `/staff` page (weekly-hours grid, closure-date list, slot generation/
+  deletion, clinic selector, admin-only mutation controls, read-only
+  rendering for non-admin roles).
+- `test/staffPage.test.ts` — added coverage for the new section (response
+  parsing/validation, multi-clinic scoping, admin-vs-read-only rendering, all
+  four mutation RPC call shapes, half-hour/date validation before fetch,
+  `Europe/Istanbul` rendering, in-flight guards, held/confirmed rows having
+  no delete action); also corrected two pre-existing assertions that did not
+  match the already-implemented source (see Observed context above) so the
+  suite is green rather than narrowing what those two tests check.
+- `docs/clinic-operations.md`, `docs/appointment-booking-engine.md`,
+  `docs/staff-workflow.md`, `docs/database-schema.md` — added narrow Task 044
+  sections describing the self-service hours/closures, the half-hour ceiling,
+  the preserved-active-slot boundary, staff-side generation/deletion and the
+  grandfathered hold race, and the `/staff` clinic selector/admin-only UI.
+- `docs/production-readiness.md` — added an explicit, still-unchecked
+  checkbox for Meta-side revocation of the historical exposed
+  `WHATSAPP_ACCESS_TOKEN` value (decision #11); updated the appointment-slot
+  seeding bullet to note Task 044's self-service path; added a numbered smoke
+  step for the clinic-schedule self-service flow (renumbering the two DLQ
+  steps that followed it).
+- `docs/saas-urunlestirme-yol-haritasi.md` — corrected the stale Task
+  041–043 staging-status text (see Observed context) and added a `## 10c.
+  Task 044` entry marking only this Phase-4 slice implemented, migration/
+  fixture **not run** against any database, staging/production unchanged.
+- `docs/product-roadmap.md` — **not changed**. Searched for a directly
+  contradictory "no schedule UI" statement per the contract's conditional
+  instruction; found none, so left untouched.
+- `CURRENT_TASK.md` — this section and Observed context only.
+
+**Verification results** (implementer, this session):
+
+```text
+pnpm install --frozen-lockfile   → PASS (already up to date)
+pnpm typecheck                   → PASS (tsc --noEmit, zero errors)
+pnpm test                        → PASS: 37 test files, 1876 tests passed,
+                                    2 skipped (existing opt-in paid eval
+                                    gates, unrelated to this task)
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                  → PASS (219.74 KiB / gzip 45.23 KiB;
+                                    bindings unchanged: INTAKE_QUEUE,
+                                    APP_TIMEZONE, WHATSAPP_GRAPH_API_VERSION)
+git diff --check                 → PASS (exit 0; only benign CRLF-conversion
+                                    warnings, no whitespace-error lines)
+```
+
+**Migration and SQL fixture: NOT RUN.** Neither
+`supabase/migrations/20260901000100_clinic_schedule_management.sql` nor
+`supabase/tests/044_clinic_schedule_management.sql` was applied or executed
+against any database (local, disposable, staging, or production) by the
+implementer, per the required-verification boundary above.
+
+**Known limitations:**
+
+- The rollback fixture proves lock ordering and revalidation structurally
+  within one session, per the contract's explicit allowance; it does not
+  exercise a real concurrent two-session blocking scenario.
+- `/staff` schedule rendering was verified by reading the generated
+  `STAFF_APP_JS`/`STAFF_HTML` output and by the TypeScript test suite; it was
+  not exercised in a live browser against a real Supabase project in this
+  session (no database access is authorized for the implementer).
+- The fixture's date arithmetic derives a same-week Monday/Tuesday/Thursday
+  from `now()` at apply time with a 7-day forward margin; it has not been run
+  to confirm behavior across a year boundary or during a leap-day edge case.
+
+**Risks Codex/Opus should review:**
+
+- RLS/tenant boundary: confirm `authorize_clinic_schedule_mutation`'s lock
+  order (target `clinics` row before any `clinic_weekly_hours`/
+  `clinic_closure_dates`/`appointment_slots` row) is sufficient against a
+  real concurrent narrowing-hours-vs-hold-a-slot race, not just the
+  single-session structural proof in the fixture.
+- Confirm the five RPCs' grant lists (`authenticated` only, with
+  `vetai_private.authorize_clinic_schedule_mutation` restricted to
+  `service_role`) exactly match what's declared in the migration's `revoke`/
+  `grant` statements — the fixture's Property 9 block re-derives this from
+  `pg_proc`/`information_schema.routine_privileges` rather than trusting the
+  migration text, but a human check of the actual granted role list before
+  applying to `vetai-test` is still worthwhile.
+- Confirm the Meta-side token-revocation checkbox newly added to
+  `docs/production-readiness.md` is tracked to closure before any production
+  go-live decision — this task does not and cannot verify Meta-side state.
+- The `docs/saas-urunlestirme-yol-haritasi.md` staging-status correction is
+  based on reading `PROJECT_CONTEXT.md`'s own text (commit `0276224`); it was
+  not independently re-verified against `vetai-staging` itself in this
+  session (no database/staging access is authorized for the implementer).
+
+## Codex review record
+
+Codex completed the local and disposable-database gate on 2026-09-01. The
+mandatory Claude Opus read-only review remains open, so this task is
+`IN_REVIEW`; it is not committed, deployed, or active on staging/production.
+
+Narrow corrections applied during review:
+
+- corrected the inclusive list window from 63 calendar dates to the contracted
+  62, and added a non-vacuous boundary assertion;
+- replaced the unreliable `date_trunc(..., time)` whole-minute check with
+  `extract(second from ...) = 0`;
+- aligned both multi-slot cleanup paths with
+  `hold_appointment_slot`'s ascending slot-ID lock order, while retaining
+  READ COMMITTED post-wait revalidation of `status = 'available'`;
+- hardened `/staff` against duplicate/invalid hours, closure dates and
+  slot rows, malformed/negative/incoherent RPC counts, stale multi-clinic
+  fetch completion, and valid 14-day schedules above 500 rows;
+- made inactive clinics and non-admin roles visibly read-only, hid their
+  closure/generation forms, and disabled all relevant controls during a
+  schedule mutation;
+- repaired rollback evidence that had vacuously caught its own
+  `raise exception`, omitted `PUBLIC` from grant derivation, incorrectly
+  expected no direct `service_role` table grant, and seeded five
+  same-owner open conversations contrary to the existing unique index.
+
+Verification:
+
+```text
+pnpm install --frozen-lockfile                         PASS
+pnpm typecheck                                         PASS
+pnpm test                                              PASS
+  37 files; 1,878 passed; 2 opt-in paid evals skipped
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                                       PASS; no deploy
+git diff --check                                       PASS
+```
+
+Disposable database evidence:
+
+- verified the linked ref was exactly `cyjpiapxvalqltcsywam`
+  (`vetai-test`); `vetai-staging` and production were not touched;
+- applied `20260901000100_clinic_schedule_management.sql` only to
+  `vetai-test`;
+- ran `supabase/tests/044_clinic_schedule_management.sql` under its
+  own `begin ... rollback`; PASS;
+- independently confirmed zero Task-044 clinic/Auth-user/slot residue after
+  rollback, five SECURITY DEFINER public RPCs with fixed empty search paths,
+  authenticated-only list execution, and no anon/service-role list execution;
+- confirmed both cleanup functions' applied definitions contain ascending
+  slot-ID `FOR UPDATE` locking.
+
+No migration history repair, staging/production mutation, real Meta/OpenAI
+call, secret change, commit, push, or deploy was performed. The historical
+Meta-side token-revocation checkbox remains an explicit production blocker.
+
+### Mandatory Opus review corrections — 2026-09-01
+
+The first mandatory read-only Opus pass returned `CHANGES_REQUIRED`. Its
+blocking/high findings were reproduced from the lock matrix and PostgreSQL
+`time` semantics, then closed narrowly:
+
+- the shared clinic authorization lock is now `FOR NO KEY UPDATE`, which still
+  serializes schedule mutations and conflicts with lifecycle `FOR UPDATE`, but
+  no longer conflicts with the `FOR KEY SHARE` locks taken by child-table FK
+  checks in the existing cancellation/intake paths;
+- `set_clinic_weekly_hours_v1` rejects PostgreSQL's special `24:00` value, and
+  slot cleanup compares full `Europe/Istanbul` local timestamps so a legacy
+  23:30-00:00 available slot cannot survive a later narrowing;
+- weekly-hours and closure cleanup now lock and delete the exact same
+  ascending-ID target set in one materialized CTE statement, avoiding a
+  second-snapshot expansion of the delete set;
+- `/staff` now reports removed available-slot counts even when the schedule
+  row itself was unchanged; the misleading no-op copy, closure RPC parameter
+  name, no-overnight boundary and staff-delete race documentation were
+  corrected.
+
+Regression evidence added to the rollback fixture covers `24:00` rejection,
+legacy 23:30-00:00 cleanup, the applied `FOR NO KEY UPDATE` definition and the
+single-statement ordered cleanup shape. The fixture remains explicit that its
+lock checks are structural rather than a real two-session blocking proof.
+
+Post-correction verification:
+
+```text
+pnpm install --frozen-lockfile                         PASS
+pnpm typecheck                                         PASS
+pnpm test                                              PASS
+  37 files; 1,879 passed; 2 opt-in paid evals skipped
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+                                                       PASS; no deploy
+git diff --check                                       PASS
+```
+
+The linked project ref was re-verified as disposable `vetai-test`; staging was
+listed separately and remained unlinked. Codex replaced only the six Task-044
+function definitions on `vetai-test`, reran the corrected migration and
+rollback fixture successfully, and independently confirmed zero Task-044
+clinic/Auth-user/slot residue. The applied definitions were also confirmed to
+contain `FOR NO KEY UPDATE`, both materialized target-slot CTEs and the
+`24:00` rejection. Staging/production, migration history, Meta/OpenAI, secrets,
+commit/push/deploy remained untouched. A narrow mandatory Opus re-check of
+these corrections was the final remaining repository gate at that point.
+
+### Mandatory Opus re-check and closure — 2026-09-01
+
+Claude Opus performed the required narrow salt-read re-check and returned
+`PASS`. It independently confirmed that `FOR NO KEY UPDATE` closes the
+cancellation/FK ABBA edge without weakening schedule/lifecycle serialization;
+that `24:00` is rejected and legacy midnight-ending slots are cleaned with
+full local timestamps; that both cleanup paths use one materialized,
+ascending-ID locked target set; that `/staff` truthfully reports removed empty
+slots; and that the corrected race/time/RPC-signature documentation matches
+the implementation. No new blocker was found.
+
+Task 044 is therefore complete after local, disposable-database, Codex and
+mandatory Opus gates. No paid eval was required because prompt/model/
+extraction/safety/reply behavior did not change. Staging/production, Meta,
+OpenAI and secrets remain untouched; any staging activation requires a new,
+separate user approval.
 
 ---
 

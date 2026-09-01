@@ -138,6 +138,16 @@ every box in this section is checked.
       by `/ready`) and OpenAI model the code actually calls
       (`src/openaiIntake.ts`); do not widen either without a corresponding
       code review.
+- [ ] Confirm, on the Meta side (not just this repository), that the legacy
+      `WHATSAPP_ACCESS_TOKEN` value pasted into chat before its removal has
+      actually been revoked/rotated in Meta's system. The Cloudflare
+      `WHATSAPP_ACCESS_TOKEN` secret is already deleted and unused (Task 040's
+      per-account credential registry replaced it), but that only proves this
+      repository stopped using the value — it does not prove Meta invalidated
+      it. This checkbox stays unchecked, and production go-live is blocked,
+      until someone with Meta App access confirms revocation and records how.
+
+
 
 ## 4. Seed / admin prerequisites
 
@@ -153,9 +163,13 @@ every box in this section is checked.
       wired to any public route) — see
       [`docs/clinic-lifecycle.md`](clinic-lifecycle.md) for the exact pilot
       activation and offboarding order.
-- [ ] Seed at least one future appointment slot through the same authorized
-      process before the smoke journey in §5 needs an `EVET`/`HAYIR`
-      appointment decision.
+- [ ] Seed at least one future appointment slot before the smoke journey in
+      §5 needs an `EVET`/`HAYIR` appointment decision. Since Task 044, this no
+      longer requires a manual service-role write: the clinic's own `admin`
+      staff can set that weekday's hours and generate the day's slots
+      self-service from `/staff` (see
+      [`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff)),
+      as long as staff membership rows already exist from the process above.
 
 ## 5. Controlled smoke journey
 
@@ -193,14 +207,20 @@ from its expected result.
 8. Walk one synthetic appointment through offer -> `EVET` confirm and,
    separately, offer -> `HAYIR` decline
    ([`docs/whatsapp-appointment-flow.md`](whatsapp-appointment-flow.md)).
-9. In the isolated canary only, **deliberately exhaust the primary consumer's
+9. As the clinic's own `admin` staff on `/staff`, set one weekday's hours,
+   generate that day's slots, add and then remove a closure date, and delete
+   one still-`available` generated slot; confirm a non-`admin` staff member
+   sees the same data read-only and that no held/confirmed slot from step 8
+   is ever affected
+   ([`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff)).
+10. In the isolated canary only, **deliberately exhaust the primary consumer's
    retries** for one synthetic message using a canary-only invalid Supabase
    binding or another reproducible failure that cannot affect production
    traffic. Confirm Cloudflare routes it to `vetai-intake-dlq`, the
    dead-letter consumer picks it up, and the conversation reaches
    `human_handoff` (or the appropriate closed result) via
    `finalize_intake_dead_letter`.
-10. Confirm that recovery step happens **before** the four-day retention
+11. Confirm that recovery step happens **before** the four-day retention
     window on an unconsumed queue elapses — see §6's DLQ monitoring
     requirement. Cloudflare documents that a queue without an active
     consumer, or a dead-letter queue configured on the DLQ itself
