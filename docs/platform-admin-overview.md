@@ -93,7 +93,11 @@ sabit bir Türkçe hata gösterir (fail-closed); tüm değerler yalnızca
 > veritabanına karşı çalıştırılmadı. Codex daha sonra migration'ı yalnız
 > disposable `vetai-test` üzerinde uyguladı; düzeltilmiş fixture geçti ve
 > Auth kullanıcısı/klinik/platform-admin kalıntısı `0 / 0 / 0` doğrulandı.
-> Zorunlu Opus incelemesi de `PASS` verdi. Staging ve production değişmedi.
+> Zorunlu Opus incelemesi de `PASS` verdi. Migration ve Worker daha sonra
+> yalnız `vetai-staging` üzerinde etkinleştirildi; production değişmedi. Gerçek
+> staging parola-kurtarma, yarım kurulum yenileme, TOTP doğrulama ve yetkili
+> genel-bakış akışı 2026-09-02'de geçti. Üretim kapısı diğer açık kontroller
+> nedeniyle hâlâ kapalıdır.
 
 Parola girişi tek başına artık yeterli değildir. `get_platform_admin_overview_v1`
 içinde, `platform_admins` üyelik kontrolüne ek olarak **ikinci ve bağımsız**
@@ -111,24 +115,31 @@ distinct from 'aal2'`). İki koşuldan biri eksikse fonksiyon yine tek bir
   `totp` faktörü açılır. Ham REST yanıtındaki sınırlı boyutlu SVG, aktif
   içerik/harici kaynak kalıpları reddedildikten sonra istemci tarafından
   yüzde-kodlanmış sabit bir `data:image/svg+xml;charset=utf-8,` adresine
-  çevrilir; Supabase'in metin anahtarı da yedek kurulum yolu olarak
-  gösterilir. Kullanıcı doğrulayıcı uygulamadan aldığı 6 haneli kodu girer.
+  çevrilebilirse gösterilir; QR biçimi kabul edilmezse kurulum kapanmaz.
+  Supabase'in doğrulanmış Base32 metin anahtarı bağımsız kurulum yolu olarak
+  gösterilir. Kullanıcı bunu doğrulayıcı uygulamaya elle girip uygulamadan
+  aldığı 6 haneli kodu yazar.
 - **Doğrulama (tam olarak bir doğrulanmış TOTP faktörü):** doğrudan
   `/auth/v1/factors/{id}/challenge` + `/auth/v1/factors/{id}/verify` ile 6
   haneli kod istenir.
-- **Desteklenmeyen durum** (önceden yarım kalmış `unverified` faktör,
-  birden fazla faktör, TOTP-olmayan faktör, ya da bozuk/beklenmeyen bir yanıt):
+- **Yarım kalmış kurulum (tam olarak bir doğrulanmamış TOTP faktörü):** parola
+  oturumuna ait o tek ve UUID-doğrulanmış faktör
+  `DELETE /auth/v1/factors/{id}` ile kaldırılır ve hemen tek bir yeni kurulum
+  başlatılır. Doğrulanmış faktörler bu yoldan asla silinmez.
+- **Desteklenmeyen durum** (birden fazla faktör, TOTP-olmayan faktör, ya da
+  bozuk/beklenmeyen bir yanıt):
   sayfa erişim jetonunu ve geçici oturum/MFA ekran durumunu temizleyip sabit
-  bir "operatörle iletişime geçin" ekranında kilitli kalır; kendi kendine
-  kurtarma (self-service) veya faktör silme akışı yoktur.
+  bir "operatörle iletişime geçin" ekranında kilitli kalır.
 
 Faktör/challenge/verify sırrı (QR, metin anahtarı, kod, faktör/challenge
 kimliği) yalnızca bellekte tutulur, hiçbir zaman `sessionStorage`'a veya
 başka bir kalıcı depoya yazılmaz. Yanlış kodda aynı kurulum ekranı korunur
 ve her denemede yeni bir challenge üretilir; başarılı doğrulamada, oturum
 süresi dolduğunda veya çıkışta hassas ekran durumu temizlenir. Kurulum
-sırasında sayfa yeniden yüklenip Supabase Auth'ta `unverified` faktör
-kalırsa panel yeni faktör üretmez; operatör yönlendirmesiyle kapalı kalır.
+sırasında sayfa yeniden yüklenip Supabase Auth'ta tam bir `unverified` TOTP
+faktörü kalırsa, sonraki parola girişi yalnız o yarım kaydı temizleyip yeni
+kurulum üretir; güvenli QR gösterilemezse doğrulanmış metin anahtarı kullanılır.
+Çoklu, doğrulanmış, TOTP-olmayan veya bozuk durumlar tahmin edilmez.
 `sessionStorage`'daki
 `vetai_admin_access_token` yalnızca başarılı bir MFA doğrulamasından **sonra**
 yazılır — parola girişinin döndürdüğü `aal1` erişim jetonu hiçbir zaman
@@ -144,7 +155,33 @@ olan bir hesabın ikinci faktörünü doğrular. Cihaz kaybı/manuel kurtarma bu
 görevin kapsamında değildir; operatör bunu Supabase Auth panelinden elle
 çözer.
 
-Bu denetim staging'de uçtan uca (migration → Worker → gerçek TOTP kurulumu/
-doğrulaması) doğrulanana kadar
-[`docs/production-readiness.md`](production-readiness.md) 1. bölümündeki
-madde işaretlenemez; bkz. [`docs/staging-runbook.md`](staging-runbook.md).
+Bu denetimin gerçek staging kurulumu/doğrulaması 2026-09-02'de geçti. Ancak
+[`docs/production-readiness.md`](production-readiness.md) 1. bölümündeki madde,
+tüm allowlist hesapları ve sunucu tarafı MFA deneme sınırı dahil kalan şartlar
+tamamlanmadan işaretlenemez; bkz. [`docs/staging-runbook.md`](staging-runbook.md).
+
+## Güvenli parola kurtarma (Görev 046)
+
+Supabase parola-kurtarma e-postası `/admin` sayfasına döner. Tarayıcı,
+`#type=recovery&access_token=...` parçasını belleğe alıp adres çubuğundan
+hemen kaldırır; yalnız tam `recovery` türünü ve mevcut sınırlı erişim-jetonu
+doğrulamasından geçen değeri kabul eder. Fragmentteki diğer değerler okunmaz,
+adlandırılmaz veya saklanmaz. Kurtarma jetonu `sessionStorage`, `localStorage`,
+log, DOM metni, Worker isteği, veritabanı ya da outbox'a yazılmaz.
+
+Yeni parola iki kez girilir, 12–128 Unicode kod noktası sınırı ve eşleşme
+istemcide doğrulanır; Supabase'in kendi parola politikası ayrıca yetkilidir.
+Güncelleme yalnız mevcut, kimliği doğrulanmış `PUT /auth/v1/user` çağrısıyla
+yapılır. Başarılı işlem tüm geçici kurtarma/parola durumunu temizleyip normal
+giriş ekranına döner; kullanıcı hâlâ yeni parolasıyla giriş yapmalı ve Görev
+045 TOTP akışını tamamlamalıdır. Kurtarma bağlantısı platform-admin üyeliği
+veya `aal2` vermez, genel bakış RPC'sini çağırmaz.
+
+2026-09-01 staging denemesinde eski Supabase Site URL'inin
+`http://localhost:3000` olduğu görüldü. Bağlantı içeriği yanlışlıkla bir sohbet
+mesajına yapıştırıldığı için ilgili staging Auth hesabının tüm oturumları
+operatör onayıyla iptal edildi ve kalan oturum sayısı `0` doğrulandı. Hiçbir
+bearer değeri bu depoya veya kanıt kaydına alınmadı. Doğru staging
+yönlendirmesi, yeni parola, TOTP zorunluluğu, yarım kurulum yenilemesi ve
+allowlist sonrası salt-okunur genel bakış 2026-09-02'de canlı doğrulandı.
+Production değiştirilmedi ve ayrı üretim kapıları tamamlanmadan onaylı değildir.

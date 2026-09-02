@@ -92,6 +92,18 @@ export const ADMIN_HTML = `<!doctype html>
   </form>
 </section>
 
+<section id="recovery-section" aria-labelledby="recovery-heading" hidden>
+  <h2 id="recovery-heading">Yeni parola belirle</h2>
+  <p>Yeni parolanızı iki kez girin. Bu işlem yönetici paneline giriş yapmaz; parola değiştikten sonra normal giriş ve TOTP doğrulaması yine gereklidir.</p>
+  <form id="recovery-form">
+    <label for="new-password-input">Yeni parola</label>
+    <input type="password" id="new-password-input" name="password" minlength="12" maxlength="128" required autocomplete="new-password">
+    <label for="confirm-password-input">Yeni parolayı tekrar girin</label>
+    <input type="password" id="confirm-password-input" name="password_confirmation" minlength="12" maxlength="128" required autocomplete="new-password">
+    <button type="submit">Parolayı güncelle</button>
+  </form>
+</section>
+
 <section id="enroll-section" aria-labelledby="enroll-heading" hidden>
   <h2 id="enroll-heading">Çok faktörlü doğrulama kurulumu</h2>
   <p>Bu hesapta doğrulanmış bir TOTP faktörü yok. Bir doğrulayıcı uygulamayla (ör. Google Authenticator, 1Password) aşağıdaki QR kodunu okutun veya metin anahtarını elle girin, ardından uygulamanın gösterdiği 6 haneli kodu girin.</p>
@@ -254,6 +266,7 @@ const CODE_PATTERN = /^[0-9]{6}$/;
 const TOTP_SECRET_PATTERN = /^[A-Z2-7]{16,128}$/;
 const QR_DATA_URL_PREFIX = "data:image/svg+xml;charset=utf-8,";
 const QR_SVG_MAX_LENGTH = 60000;
+const RECOVERY_FRAGMENT_MAX_LENGTH = 20000;
 
 function isSupportedFactorStatus(value) {
   return value === "verified" || value === "unverified";
@@ -276,6 +289,9 @@ function decideFactorRoute(rawFactors) {
   const factors = validateFactorList(rawFactors);
   if (factors === null) return { kind: "unsupported" };
   if (factors.length === 0) return { kind: "enroll" };
+  if (factors.length === 1 && factors[0].factor_type === "totp" && factors[0].status === "unverified") {
+    return { kind: "restart", factorId: factors[0].id };
+  }
   if (factors.length === 1 && factors[0].factor_type === "totp" && factors[0].status === "verified") {
     return { kind: "challenge", factorId: factors[0].id };
   }
@@ -284,7 +300,9 @@ function decideFactorRoute(rawFactors) {
 
 function qrSvgToDataUrl(value) {
   if (typeof value !== "string" || value.length === 0 || value.length > QR_SVG_MAX_LENGTH) return null;
-  const svg = value.trim();
+  const svg = value.trim()
+    .replace(/^<\\?xml\\s+version=(?:"1\\.0"|'1\\.0')(?:\\s+encoding=(?:"UTF-8"|'UTF-8'))?\\s*\\?>\\s*/i, "")
+    .replace(/^(?:<!--[\\s\\S]*?-->\\s*)+/, "");
   if (!/^<svg(?:\\s|>)[\\s\\S]*<\\/svg>$/.test(svg)) return null;
   if (/<(?:script|foreignObject|iframe|object|embed)\\b/i.test(svg) ||
       /\\bon[a-z]+\\s*=/i.test(svg) ||
@@ -304,7 +322,7 @@ function validateEnrollResponse(data) {
   const totp = data.totp;
   if (typeof totp !== "object" || totp === null || Array.isArray(totp)) return null;
   const qrCode = qrSvgToDataUrl(totp.qr_code);
-  if (qrCode === null || !isValidTotpSecret(totp.secret)) return null;
+  if (!isValidTotpSecret(totp.secret)) return null;
   return { factorId: data.id, qrCode, secret: totp.secret };
 }
 
@@ -319,6 +337,27 @@ function validateAccessTokenResponse(data) {
       typeof data.access_token !== "string" || data.access_token.length === 0 ||
       data.access_token.length > 16384 || /[\\u0000-\\u0020\\u007f]/.test(data.access_token)) return null;
   return data.access_token;
+}
+
+function parseRecoveryFragment(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > RECOVERY_FRAGMENT_MAX_LENGTH || value[0] !== "#") {
+    return null;
+  }
+  let params;
+  try {
+    params = new URLSearchParams(value.slice(1));
+  } catch {
+    return null;
+  }
+  if (params.get("type") !== "recovery") return null;
+  const accessToken = params.get("access_token");
+  return accessToken === null ? null : validateAccessTokenResponse({ access_token: accessToken });
+}
+
+function isValidNewPassword(value) {
+  if (typeof value !== "string" || /[\\u0000-\\u001f\\u007f]/.test(value)) return false;
+  const length = Array.from(value).length;
+  return length >= 12 && length <= 128;
 }
 
 function classifyAuthStatus(status) {
@@ -340,6 +379,7 @@ const STATUS_LABELS = { active: "Aktif", suspended: "Ask\\u0131ya al\\u0131nd\\u
 const statusRegion = document.getElementById("status-region");
 const errorRegion = document.getElementById("error-region");
 const loginSection = document.getElementById("login-section");
+const recoverySection = document.getElementById("recovery-section");
 const enrollSection = document.getElementById("enroll-section");
 const challengeSection = document.getElementById("challenge-section");
 const unsupportedSection = document.getElementById("unsupported-section");
@@ -347,6 +387,9 @@ const overviewSection = document.getElementById("overview-section");
 const loginForm = document.getElementById("login-form");
 const emailInput = document.getElementById("email-input");
 const passwordInput = document.getElementById("password-input");
+const recoveryForm = document.getElementById("recovery-form");
+const newPasswordInput = document.getElementById("new-password-input");
+const confirmPasswordInput = document.getElementById("confirm-password-input");
 const enrollForm = document.getElementById("enroll-form");
 const enrollCodeInput = document.getElementById("enroll-code-input");
 const enrollQrImage = document.getElementById("enroll-qr-image");
@@ -364,6 +407,7 @@ const FACTOR_FRIENDLY_NAME = "VetAI Admin Paneli";
 let config = null;
 let pendingAccessToken = null;
 let pendingFactorId = null;
+let pendingRecoveryAccessToken = null;
 
 function showError(message) {
   errorRegion.textContent = message;
@@ -380,6 +424,7 @@ function clearMessages() {
 
 function showView(name) {
   loginSection.hidden = name !== "login";
+  recoverySection.hidden = name !== "recovery";
   enrollSection.hidden = name !== "enroll";
   challengeSection.hidden = name !== "challenge";
   unsupportedSection.hidden = name !== "unsupported";
@@ -390,6 +435,7 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
   pendingAccessToken = null;
   pendingFactorId = null;
+  pendingRecoveryAccessToken = null;
   overviewContent.textContent = "";
   periodRegion.textContent = "";
   enrollQrImage.removeAttribute("src");
@@ -397,6 +443,8 @@ function clearSession() {
   enrollCodeInput.value = "";
   challengeCodeInput.value = "";
   passwordInput.value = "";
+  newPasswordInput.value = "";
+  confirmPasswordInput.value = "";
   clearMessages();
   showView("login");
 }
@@ -458,6 +506,25 @@ async function login(email, password) {
   pendingAccessToken = accessToken;
 }
 
+async function updateRecoveredPassword(password) {
+  if (!pendingRecoveryAccessToken) throw new Error("missing recovery session");
+  const res = await fetch(config.supabaseUrl + "/auth/v1/user", {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingRecoveryAccessToken,
+    },
+    body: JSON.stringify({ password }),
+  });
+  requireAuthResponse(res, "password update failed");
+  const data = await res.json();
+  if (typeof data !== "object" || data === null || Array.isArray(data) ||
+      typeof data.id !== "string" || !UUID_PATTERN.test(data.id)) {
+    throw new Error("malformed password update response");
+  }
+}
+
 async function fetchCurrentUser() {
   const res = await fetch(config.supabaseUrl + "/auth/v1/user", {
     method: "GET",
@@ -491,6 +558,17 @@ async function enrollFactor() {
     throw new Error("malformed enroll response");
   }
   return parsed;
+}
+
+async function removeUnverifiedFactor(factorId) {
+  const res = await fetch(config.supabaseUrl + "/auth/v1/factors/" + factorId, {
+    method: "DELETE",
+    headers: {
+      apikey: config.supabaseAnonKey,
+      Authorization: "Bearer " + pendingAccessToken,
+    },
+  });
+  requireAuthResponse(res, "factor cleanup failed");
 }
 
 async function createChallenge(factorId) {
@@ -537,9 +615,13 @@ async function afterAuthenticated() {
     showUnsupported();
     return;
   }
-  if (route.kind === "enroll") {
+  if (route.kind === "enroll" || route.kind === "restart") {
     let enrolled;
     try {
+      if (route.kind === "restart") {
+        await removeUnverifiedFactor(route.factorId);
+        showStatus("Yarım kalan doğrulama kurulumu güvenli biçimde yenilendi.");
+      }
       enrolled = await enrollFactor();
     } catch {
       if (!pendingAccessToken) throw new Error("session expired");
@@ -547,7 +629,13 @@ async function afterAuthenticated() {
       return;
     }
     pendingFactorId = enrolled.factorId;
-    enrollQrImage.src = enrolled.qrCode;
+    if (enrolled.qrCode === null) {
+      enrollQrImage.removeAttribute("src");
+      enrollQrImage.hidden = true;
+    } else {
+      enrollQrImage.src = enrolled.qrCode;
+      enrollQrImage.hidden = false;
+    }
     enrollSecretText.textContent = enrolled.secret;
     showView("enroll");
     return;
@@ -693,6 +781,32 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
+recoveryForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearMessages();
+  const password = newPasswordInput.value;
+  if (!isValidNewPassword(password)) {
+    showError("Parola 12 ile 128 karakter arasında olmalı ve kontrol karakteri içermemeli.");
+    return;
+  }
+  if (password !== confirmPasswordInput.value) {
+    showError("Parolalar eşleşmiyor.");
+    return;
+  }
+  const button = recoveryForm.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await updateRecoveredPassword(password);
+    clearSession();
+    showStatus("Parolanız güncellendi. Yeni parolanızla giriş yapın; TOTP doğrulaması yine gereklidir.");
+  } catch {
+    clearSession();
+    showError("Parola güncellenemedi. Bağlantı geçersiz veya süresi dolmuş olabilir; yeni bir kurtarma e-postası isteyin.");
+  } finally {
+    button.disabled = false;
+  }
+});
+
 enrollForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessages();
@@ -756,10 +870,26 @@ challengeForm.addEventListener("submit", async (event) => {
 });
 
 async function init() {
+  const recoveryFragment = location.hash;
+  if (recoveryFragment) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  const recoveryAccessToken = parseRecoveryFragment(recoveryFragment);
+  if (recoveryFragment && recoveryAccessToken === null) {
+    clearSession();
+    showError("Geçersiz parola kurtarma bağlantısı.");
+    return;
+  }
   try {
     config = await loadConfig();
   } catch {
     showError("Yap\\u0131land\\u0131rma y\\u00fcklenemedi.");
+    return;
+  }
+  if (recoveryAccessToken !== null) {
+    clearSession();
+    pendingRecoveryAccessToken = recoveryAccessToken;
+    showView("recovery");
     return;
   }
   const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);

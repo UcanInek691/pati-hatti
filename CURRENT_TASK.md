@@ -1,4 +1,150 @@
-# Current task — 045 Platform-admin TOTP MFA boundary
+# Current task — 046 Secure platform-admin password recovery
+
+Status: `COMPLETE` (closed 2026-09-02 after local verification and a real
+staging recovery -> password -> interrupted-enrollment restart -> TOTP ->
+allowlisted overview smoke; production remained untouched)
+
+Created by Codex on 2026-09-01 after the first real staging recovery email
+redirected to the stale Supabase default `http://localhost:3000` and the user
+accidentally pasted its bearer material into chat. The exact staging Auth
+account's sessions were immediately revoked with the user's approval and a
+read-only follow-up count proved zero remaining sessions. No token value is
+recorded in this repository.
+
+## Goal
+
+Provide a minimal, dependency-free password-recovery view inside `/admin`,
+configure only `vetai-staging` to redirect recovery emails there, and prove a
+fresh recovery -> new password -> TOTP enrollment path without exposing or
+persisting recovery, refresh, TOTP, password, or one-time-code material.
+
+## Fixed decisions
+
+1. Reuse the existing `/admin` HTML, script, public Supabase config, native
+   `fetch`, CSP, and `PUT /auth/v1/user`; add no SDK, Worker secret, database
+   migration, server session, cookie, dependency, or public route.
+2. Accept only a URL fragment whose `type` is exactly `recovery` and whose
+   `access_token` passes the existing bounded token validator. Ignore all
+   other fragment values and never name, read, store, log, or render a refresh
+   token.
+3. Remove every fragment from the address bar with `history.replaceState`
+   before validation or network work. Recovery tokens remain only in one
+   in-memory variable and never enter `sessionStorage` or `localStorage`.
+4. Show a dedicated new-password/confirmation form only for a valid recovery
+   fragment. Require matching passwords of 12..128 Unicode code points before
+   the request; Supabase remains authoritative for its configured policy.
+5. Update the password only through authenticated `PUT /auth/v1/user`. Any
+   missing token, malformed response, non-2xx response, reload, or reused/
+   expired link fails closed with fixed Turkish copy and no admin overview.
+6. Successful reset clears all password/token state and returns to the normal
+   login view. It does not store the recovery session or bypass TOTP; the next
+   login still follows Task 045's enrollment/challenge and database `aal2`
+   gate.
+7. Staging-only activation is authorized: deploy the verified Worker, set the
+   `vetai-staging` Supabase Site URL/redirect allowlist to the staging `/admin`
+   URL, send one fresh recovery email, and perform a user-driven smoke. Never
+   inspect or record the password, recovery fragment, QR secret, OTP, access
+   token, refresh token, or browser storage. Production remains untouched.
+8. Record the exposed-link incident only as sanitized operational evidence:
+   exact account sessions revoked and zero remaining. Never copy bearer
+   material into source, docs, commands, logs, or task records.
+9. A password-authenticated account with exactly one `unverified` TOTP factor
+   represents an interrupted local enrollment, not an ambiguous factor set.
+   The panel may delete only that exact UUID through Supabase Auth's
+   authenticated factor endpoint and immediately start one fresh enrollment.
+   It must never delete a verified factor, multiple factors, a non-TOTP factor,
+   or malformed state; those continue to fail closed with operator guidance.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `src/adminPage.ts`
+- `test/adminPage.test.ts`
+- `docs/platform-admin-overview.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `PROJECT_CONTEXT.md` only after verification and live staging evidence
+
+The pre-existing `.gitignore` change and untracked
+`docs/043-opus-inceleme.md` are user-owned and must remain untouched.
+
+## Acceptance criteria
+
+- Fragment parsing and immediate scrubbing are bounded and fail closed.
+- Recovery material is memory-only; the sole `sessionStorage.setItem` remains
+  the post-TOTP `aal2` token write.
+- Password update uses only the existing Auth user endpoint, clears state on
+  every terminal path, and cannot render/load the overview.
+- Existing login, MFA, overview, security headers, CSP, and endpoint allowlist
+  remain intact.
+- Exactly one interrupted `unverified` TOTP enrollment can restart without an
+  operator; every verified, multiple, non-TOTP, or malformed factor state keeps
+  the existing fail-closed boundary.
+- Focused and full tests, typecheck, frozen install, Worker dry-run, and
+  `git diff --check` pass.
+- Staging recovery link lands on `/admin`, a user-selected password succeeds,
+  and the following login still requires TOTP. Production is unchanged.
+
+## Observed context
+
+- The repository already exposed `/admin`, its public Supabase config, the
+  password-grant login, TOTP factor flow and the database-enforced `aal2` plus
+  `platform_admins` boundary. It had no recovery view and the staging Supabase
+  Site URL still sent recovery links to `http://localhost:3000`.
+- The first live recovery link was pasted into chat. With explicit approval,
+  all sessions for that exact staging Auth account were revoked; a read-only
+  follow-up proved zero remaining sessions. No bearer, password, OTP or TOTP
+  secret was copied into the repository or evidence records.
+- A real interrupted enrollment exposed two provider-shape facts that the
+  static tests had not established: Supabase returned an SVG with a standard
+  XML prolog/comment, and a safe QR image is not required when a validated
+  Base32 setup key is available. The parser now accepts only that bounded
+  standard prolog/comment shape and treats QR rendering as optional while the
+  validated text key remains mandatory.
+- Live Auth logs showed the exact single `unverified` TOTP factor DELETE and
+  replacement enrollment POST both returned success. Multiple, verified,
+  non-TOTP and malformed factor sets retain the fail-closed operator screen.
+- The existing user-owned `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` were present before this task and were not
+  changed.
+
+## Delivery record
+
+- Changed only `src/adminPage.ts`, `test/adminPage.test.ts`,
+  `docs/platform-admin-overview.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`, this Task 046 record, and (after verification)
+  `PROJECT_CONTEXT.md`.
+- Added immediate fragment scrubbing, bounded recovery-fragment parsing,
+  memory-only recovery state, a validated new-password form and the sole
+  authenticated `PUT /auth/v1/user` update. Success returns to normal login;
+  recovery never stores a session or bypasses MFA.
+- Added exact-one interrupted TOTP restart, strict provider SVG handling and
+  the independent manual Base32 setup-key path. The only
+  `sessionStorage.setItem` remains the post-verify `aal2` token write.
+- Verification on 2026-09-02 passed: frozen install; TypeScript; 37 test files,
+  1,899 passed and two opt-in paid-eval tests skipped; production and staging
+  Wrangler dry-runs; and `git diff --check`.
+- Staging-only activation passed. The reviewed Worker version
+  `e1999511-0efd-43f2-aafa-85edbb8343b4` was deployed, the staging Supabase
+  Site URL/redirect was corrected to `/admin`, a fresh recovery email opened
+  the recovery view, the user selected a new password, and the next login
+  required TOTP. One setup key accidentally pasted into chat was abandoned;
+  reload plus the exact-one restart removed that unverified factor, and the
+  replacement key/code stayed user-only.
+- The real `aal2` session was first denied by the single `forbidden` result
+  because the new Auth user was not allowlisted. With explicit approval,
+  `set_platform_admin_v1` returned `enabled`; a read-only refresh then rendered
+  the single staging clinic overview row. No message, phone, owner, pet or
+  clinical content was exposed. Production, production Auth settings and
+  production data were not touched.
+- Still outside this task: verifying the already-enrolled fresh-session
+  challenge UX, inspecting the Supabase MFA verify rate limit, auditing every
+  staging allowlist member, recovery for a lost verified factor, custom SMTP,
+  custom domain and all production activation/human approval gates.
+
+---
+
+# Previous task — 045 Platform-admin TOTP MFA boundary
 
 Status: `COMPLETE`
 

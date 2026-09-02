@@ -45,18 +45,22 @@ type OverviewValidator = (rows: unknown, monthStart: string) => boolean;
 
 const validateOverviewRows = new Function(`${ADMIN_OVERVIEW_VALIDATION_JS}\nreturn validateOverviewRows;`)() as OverviewValidator;
 
-type FactorRoute = { kind: "enroll" | "unsupported" } | { kind: "challenge"; factorId: string };
+type FactorRoute =
+  | { kind: "enroll" | "unsupported" }
+  | { kind: "challenge" | "restart"; factorId: string };
 type MfaValidators = {
   decideFactorRoute: (factors: unknown) => FactorRoute;
   qrSvgToDataUrl: (value: unknown) => string | null;
   validateEnrollResponse: (value: unknown) => { factorId: string; qrCode: string; secret: string } | null;
   validateChallengeResponse: (value: unknown) => { challengeId: string } | null;
   validateAccessTokenResponse: (value: unknown) => string | null;
+  parseRecoveryFragment: (value: unknown) => string | null;
+  isValidNewPassword: (value: unknown) => boolean;
   classifyAuthStatus: (status: unknown) => "ok" | "session_expired" | "failed";
 };
 
 const mfaValidators = new Function(
-  `${ADMIN_OVERVIEW_VALIDATION_JS}\n${ADMIN_MFA_VALIDATION_JS}\nreturn { decideFactorRoute, qrSvgToDataUrl, validateEnrollResponse, validateChallengeResponse, validateAccessTokenResponse, classifyAuthStatus };`,
+  `${ADMIN_OVERVIEW_VALIDATION_JS}\n${ADMIN_MFA_VALIDATION_JS}\nreturn { decideFactorRoute, qrSvgToDataUrl, validateEnrollResponse, validateChallengeResponse, validateAccessTokenResponse, parseRecoveryFragment, isValidNewPassword, classifyAuthStatus };`,
 )() as MfaValidators;
 
 function reportedRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -181,11 +185,15 @@ describe("handleAdminShell", () => {
   it("HTML declares the required semantic regions and only the self-hosted script, with no inline script", () => {
     for (const id of [
       "login-section",
+      "recovery-section",
       "enroll-section",
       "challenge-section",
       "unsupported-section",
       "overview-section",
       "login-form",
+      "recovery-form",
+      "new-password-input",
+      "confirm-password-input",
       "enroll-form",
       "enroll-code-input",
       "enroll-qr-image",
@@ -246,8 +254,7 @@ describe("handleAdminScript", () => {
   it("calls only the overview RPC, never a lifecycle/pricing/messaging endpoint", () => {
     expect(ADMIN_APP_JS).toContain('"/rest/v1/rpc/get_platform_admin_overview_v1"');
     expect(ADMIN_APP_JS).toContain("body: JSON.stringify({ p_month_start: monthStart })");
-    // Only two fetch targets exist: the Supabase Auth password grant and the
-    // overview RPC. STATUS_LABELS legitimately contains the substrings
+    // STATUS_LABELS legitimately contains the substrings
     // "suspend"/"offboard" (it renders the read-only operational_status
     // field), so this checks for an actual call site, not those labels.
     expect(ADMIN_APP_JS.match(/rpc\/[a-z_0-9]+/g)).toEqual(["rpc/get_platform_admin_overview_v1"]);
@@ -327,26 +334,26 @@ describe("handleAdminScript", () => {
 });
 
 describe("TOTP MFA boundary", () => {
-  it("declares the five mutually exclusive UI states", () => {
-    for (const id of ["login-section", "enroll-section", "challenge-section", "unsupported-section", "overview-section"]) {
+  it("declares the six mutually exclusive UI states", () => {
+    for (const id of ["login-section", "recovery-section", "enroll-section", "challenge-section", "unsupported-section", "overview-section"]) {
       expect(ADMIN_HTML).toContain(`id="${id}"`);
     }
     expect(ADMIN_APP_JS).toContain("function showView(name) {");
   });
 
-  it("uses exactly the required Supabase Auth endpoint allowlist and no invite/recovery/unenroll/admin endpoint", () => {
+  it("uses exactly the required Supabase Auth endpoint allowlist and no invite/recovery/admin endpoint", () => {
     for (const path of [
       '"/auth/v1/token?grant_type=password"',
       '"/auth/v1/user"',
       '"/auth/v1/factors"',
+      '"/auth/v1/factors/" + factorId',
       '"/auth/v1/factors/" + factorId + "/challenge"',
       '"/auth/v1/factors/" + factorId + "/verify"',
     ]) {
       expect(ADMIN_APP_JS).toContain(path);
     }
     expect(ADMIN_APP_JS).not.toMatch(/\/auth\/v1\/(invite|recover|admin|logout|sso)/);
-    expect(ADMIN_APP_JS).not.toMatch(/unenroll/i);
-    expect(ADMIN_APP_JS).not.toMatch(/method:\s*"DELETE"/);
+    expect(ADMIN_APP_JS.match(/method:\s*"DELETE"/g)).toHaveLength(1);
   });
 
   it("keeps the pre-verification access token out of sessionStorage until the MFA challenge is verified", () => {
@@ -355,27 +362,62 @@ describe("TOTP MFA boundary", () => {
     expect(ADMIN_APP_JS.match(/sessionStorage\.setItem\(SESSION_STORAGE_KEY,/g)).toHaveLength(1);
   });
 
+  it("accepts only a bounded recovery fragment and never reads or persists other fragment material", () => {
+    const token = "header.payload.signature";
+    expect(mfaValidators.parseRecoveryFragment(`#type=recovery&access_token=${token}&ignored=value`)).toBe(token);
+    for (const invalid of [
+      undefined,
+      "",
+      "type=recovery&access_token=" + token,
+      "#type=signup&access_token=" + token,
+      "#type=recovery",
+      "#type=recovery&access_token=bad%20token",
+      "#" + "x".repeat(20001),
+    ]) {
+      expect(mfaValidators.parseRecoveryFragment(invalid)).toBeNull();
+    }
+    expect(ADMIN_APP_JS).toContain('history.replaceState(null, "", location.pathname + location.search);');
+    expect(ADMIN_APP_JS).toContain("let pendingRecoveryAccessToken = null;");
+    expect(ADMIN_APP_JS.match(/sessionStorage\.setItem\(SESSION_STORAGE_KEY,/g)).toHaveLength(1);
+    expect(ADMIN_APP_JS).not.toMatch(/refresh_token/);
+  });
+
+  it("validates recovery passwords before PUT /auth/v1/user and returns to normal MFA-gated login", () => {
+    expect(mfaValidators.isValidNewPassword("uzun-guvenli-parola")).toBe(true);
+    expect(mfaValidators.isValidNewPassword("🐾".repeat(12))).toBe(true);
+    expect(mfaValidators.isValidNewPassword("kisa")).toBe(false);
+    expect(mfaValidators.isValidNewPassword("x".repeat(129))).toBe(false);
+    expect(mfaValidators.isValidNewPassword("valid-password\n")).toBe(false);
+    expect(ADMIN_APP_JS).toContain('method: "PUT"');
+    expect(ADMIN_APP_JS).toContain('config.supabaseUrl + "/auth/v1/user"');
+    expect(ADMIN_APP_JS).toContain("body: JSON.stringify({ password })");
+    expect(ADMIN_APP_JS).toContain("TOTP doğrulaması yine gereklidir.");
+  });
+
   it("requires exactly six ASCII digits for a one-time code", () => {
     expect(ADMIN_APP_JS).toContain("const CODE_PATTERN = /^[0-9]{6}$/;");
     expect(ADMIN_APP_JS.match(/CODE_PATTERN\.test\(code\)/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("routes only no factors to enrollment and one verified TOTP to challenge", () => {
+  it("routes no factors to enrollment, one interrupted TOTP to restart, and one verified TOTP to challenge", () => {
     const factorId = "43000000-0000-0000-2000-000000000010";
     expect(mfaValidators.decideFactorRoute(undefined)).toEqual({ kind: "enroll" });
     expect(mfaValidators.decideFactorRoute([])).toEqual({ kind: "enroll" });
+    expect(mfaValidators.decideFactorRoute([{ id: factorId, factor_type: "totp", status: "unverified" }])).toEqual({
+      kind: "restart",
+      factorId,
+    });
     expect(mfaValidators.decideFactorRoute([{ id: factorId, factor_type: "totp", status: "verified" }])).toEqual({
       kind: "challenge",
       factorId,
     });
   });
 
-  it("fails closed for interrupted, multiple, unsupported, and malformed factor states", () => {
+  it("fails closed for multiple, unsupported, and malformed factor states", () => {
     const factorId = "43000000-0000-0000-2000-000000000010";
     for (const factors of [
       null,
       {},
-      [{ id: factorId, factor_type: "totp", status: "unverified" }],
       [{ id: factorId, factor_type: "phone", status: "verified" }],
       [
         { id: factorId, factor_type: "totp", status: "verified" },
@@ -390,10 +432,26 @@ describe("TOTP MFA boundary", () => {
     expect(ADMIN_APP_JS).toContain('if (!pendingAccessToken) throw new Error("session expired");\n      showUnsupported();');
   });
 
+  it("removes only the exact UUID of one interrupted TOTP factor before fresh enrollment", () => {
+    expect(ADMIN_APP_JS).toContain('async function removeUnverifiedFactor(factorId) {');
+    expect(ADMIN_APP_JS).toContain('config.supabaseUrl + "/auth/v1/factors/" + factorId');
+    expect(ADMIN_APP_JS).toContain('method: "DELETE"');
+    expect(ADMIN_APP_JS).toContain('if (route.kind === "restart") {\n        await removeUnverifiedFactor(route.factorId);\n        showStatus("Yarım kalan doğrulama kurulumu güvenli biçimde yenilendi.");\n      }\n      enrolled = await enrollFactor();');
+    expect(ADMIN_APP_JS.indexOf("await removeUnverifiedFactor(route.factorId)")).toBeLessThan(
+      ADMIN_APP_JS.indexOf("enrolled = await enrollFactor()"),
+    );
+  });
+
   it("converts the raw Supabase SVG into one bounded encoded data URL", () => {
     const url = mfaValidators.qrSvgToDataUrl('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>');
     expect(url).toMatch(/^data:image\/svg\+xml;charset=utf-8,%3Csvg/);
+    const realSupabaseShape = mfaValidators.qrSvgToDataUrl(
+      '<?xml version="1.0" encoding="UTF-8"?>\n<!-- Generated by SVGo -->\n<svg><path/></svg>',
+    );
+    expect(realSupabaseShape).toBe("data:image/svg+xml;charset=utf-8,%3Csvg%3E%3Cpath%2F%3E%3C%2Fsvg%3E");
     for (const invalid of [
+      '<?xml version="1.1"?><svg></svg>',
+      '<?xml-stylesheet href="https://example.test/leak"?><svg></svg>',
       "data:image/svg+xml;utf-8,<svg></svg>",
       "<svg><script>alert(1)</script></svg>",
       '<svg><image href="https://example.test/leak"/></svg>',
@@ -417,7 +475,11 @@ describe("TOTP MFA boundary", () => {
       qrCode: "data:image/svg+xml;charset=utf-8,%3Csvg%3E%3Cpath%2F%3E%3C%2Fsvg%3E",
       secret: "ABCDEFGHIJKLMNOP",
     });
-    expect(mfaValidators.validateEnrollResponse({ id: factorId, type: "totp", totp: { qr_code: "bad", secret: "ABCDEFGHIJKLMNOP" } })).toBeNull();
+    expect(mfaValidators.validateEnrollResponse({
+      id: factorId,
+      type: "totp",
+      totp: { qr_code: "bad", secret: "ABCDEFGHIJKLMNOP" },
+    })).toEqual({ factorId, qrCode: null, secret: "ABCDEFGHIJKLMNOP" });
     expect(mfaValidators.validateEnrollResponse({ id: factorId, type: "totp", totp: { qr_code: "<svg></svg>", secret: "not-base32!" } })).toBeNull();
     expect(mfaValidators.validateChallengeResponse({ id: factorId })).toEqual({ challengeId: factorId });
     expect(mfaValidators.validateChallengeResponse({ id: "bad" })).toBeNull();
@@ -436,7 +498,8 @@ describe("TOTP MFA boundary", () => {
     expect(mfaValidators.classifyAuthStatus(500)).toBe("failed");
   });
 
-  it("renders the QR code and secret only via image src / textContent, never innerHTML", () => {
+  it("renders an optional QR and the required secret only via image src / textContent, never innerHTML", () => {
+    expect(ADMIN_APP_JS).toContain('if (enrolled.qrCode === null) {');
     expect(ADMIN_APP_JS).toContain("enrollQrImage.src = enrolled.qrCode;");
     expect(ADMIN_APP_JS).toContain("enrollSecretText.textContent = enrolled.secret;");
   });
@@ -467,9 +530,9 @@ describe("TOTP MFA boundary", () => {
     expect(ADMIN_APP_JS).toContain('pendingAccessToken = stored;\n  try {\n    await afterAuthenticated();');
   });
 
-  it("disables the submit button while an Auth request is in flight, for login and both MFA code forms", () => {
-    expect(ADMIN_APP_JS.match(/button\.disabled = true;/g)?.length).toBe(3);
-    expect(ADMIN_APP_JS.match(/button\.disabled = false;/g)?.length).toBe(3);
+  it("disables the submit button while an Auth request is in flight, for login, recovery, and both MFA code forms", () => {
+    expect(ADMIN_APP_JS.match(/button\.disabled = true;/g)?.length).toBe(4);
+    expect(ADMIN_APP_JS.match(/button\.disabled = false;/g)?.length).toBe(4);
   });
 
   it("states the truthful MFA-enforced copy instead of the obsolete no-MFA notice", () => {

@@ -679,6 +679,28 @@ upstream control is verified. Membership grant/revoke audit history and
 pagination remain explicit MVP limits; the unsliced view is accepted only for
 the current 5–20-clinic scale.
 
+Task 045 (database-enforced platform-admin TOTP MFA) and Task 046 (secure
+platform-admin password recovery) are `COMPLETE` as of 2026-09-02 at the
+repository and approved staging-smoke gates. `/admin` scrubs recovery fragments
+before network work, keeps recovery and pre-MFA tokens only in memory, updates
+passwords only through authenticated Supabase Auth, and stores a session token
+only after successful TOTP verification. Exactly one UUID-valid unverified
+TOTP factor may be removed and freshly enrolled after an interrupted local
+setup; verified, multiple, non-TOTP and malformed factor sets remain closed.
+Safe QR rendering is optional, while the bounded validated Base32 setup key is
+mandatory and rendered only as text.
+
+The real staging journey passed: corrected `/admin` recovery redirect,
+user-selected password, MFA-required next login, exact-one interrupted-factor
+restart, fresh TOTP verification, membership denial, explicit backend
+allowlisting and one read-only clinic overview row. No password, bearer, setup
+key or one-time code was recorded; a setup key pasted into chat was abandoned
+before use and its unverified factor was replaced. Worker version
+`e1999511-0efd-43f2-aafa-85edbb8343b4` is staging-only. Production remains
+untouched. Fresh-session challenge UX, the Supabase MFA verify rate limit,
+every allowlist member, lost-device recovery, custom SMTP/domain and human
+production approvals remain open gates.
+
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
 

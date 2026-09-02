@@ -552,16 +552,20 @@ veteriner hekim kopya onayı, Türk hukuku/KVKK onay paketi, hukukçu onaylı
 `UNAVAILABLE` olduğu için §13'e göre gereken incelenmiş personel Cloud API
 composer'ı.
 
-## 15. Platform-admin TOTP MFA smoke (Task 045, planlanmış — henüz çalıştırılmadı)
+## 15. Platform-admin TOTP MFA smoke (Task 045, kısmen canlı doğrulandı)
 
 Bu bölüm, Task 045'in `/admin` TOTP MFA sınırını staging'de doğrulamak için
 Codex/Opus incelemesinden sonra izlenecek sırayı tarif eder. Uygulayan hiçbir
 veritabanı adımı çalıştırmadı. Codex migration ve rollback-only fixture'ı
 (`supabase/migrations/20260901000200_platform_admin_totp_mfa.sql`,
 `supabase/tests/045_platform_admin_totp_mfa.sql`) yalnız disposable
-`vetai-test` üzerinde başarıyla doğruladı; staging migration/deploy/TOTP smoke
-hâlâ NOT RUN durumundadır. Sıra §1 (yetki kapısı) ve §3 (Supabase) sonrasını
-varsayar.
+`vetai-test` üzerinde başarıyla doğruladı. Migration ve Worker 2026-09-01'de
+yalnız `vetai-staging` üzerinde etkinleştirildi; katalog denetimi `aal2`
+yüklemini ve grant sınırlarını doğruladı. Gerçek parola-kurtarma, yarım kurulum
+yenileme, TOTP doğrulama, üyeliksiz reddi ve allowlist sonrası genel bakış
+2026-09-02'de geçti; production değişmemiştir. Tüm allowlist hesaplarının
+denetimi, fresh-session challenge ve rate-limit kanıtı hâlâ açıktır. Sıra §1
+(yetki kapısı) ve §3 (Supabase) sonrasını varsayar.
 
 1. **Migration sırası.** `20260901000200_platform_admin_totp_mfa.sql`,
    Task 043'ün `20260831000300_platform_admin_overview.sql` migration'ından
@@ -577,13 +581,14 @@ varsayar.
    uygulamaya (ör. Google Authenticator) eklenir, uygulamanın ürettiği 6
    haneli kod girilir; genel bakış verisinin ancak bundan sonra göründüğü
    doğrulanır.
-4. **Yarım kalan kurulum ve operatör kurtarması.** Ayrı bir sentetik
+4. **Yarım kalan kurulumun güvenli yenilenmesi.** Ayrı bir sentetik
    platform-admin hesabında kurulum ekranı göründükten sonra kod girmeden
-   sayfa yenilenir. Sonraki girişin genel bakış verisini göstermediği,
-   oturumu temizleyip sabit operatör yönlendirmesinde kapalı kaldığı
-   doğrulanır. Supabase Auth panelinde bu hesabın yarım kalmış `unverified`
-   TOTP faktörü ayrıca silinir; sonra temiz kurulumun yeniden başlayabildiği
-   doğrulanır. Bu işlem gerçek yönetici hesabında denenmez.
+   sayfa yenilenir. Sonraki parola girişinin genel bakış verisini göstermeden
+   yalnız tek `unverified` TOTP faktörünü kaldırdığı, yeni bir kurulumla (güvenli
+   QR veya doğrulanmış metin anahtarı) devam ettiği ve doğrulama tamamlanınca
+   `aal2`'ye ulaştığı doğrulanır.
+   Doğrulanmış faktör silinmez; birden fazla, TOTP-olmayan veya bozuk faktör
+   durumu operatör ekranında kapalı kalmalıdır. QR, sır ve kod kaydedilmez.
 5. **Çıkış ve yeniden challenge.** `Logout` sonrası aynı hesapla tekrar
    parola girişi yapılır; bu kez doğrudan challenge ekranına düşüldüğü
    (yeniden kurulum istenmediği) ve yeni bir 6 haneli kodun tekrar istendiği
@@ -607,3 +612,44 @@ sonuçlar ve rate-limit'in hassas olmayan yapılandırma değeri not edilir. Bu
 bölüm tamamlanmadan
 [`docs/production-readiness.md`](production-readiness.md) 1. bölümündeki MFA
 maddesi işaretlenemez.
+
+## 16. Platform-admin parola kurtarma smoke (Task 046)
+
+1. `vetai-staging` Worker, doğrulanmış Task 046 koduyla deploy edilir.
+2. Supabase Auth URL Configuration içinde Site URL tam olarak
+   `https://vetai-staging.mehmetsait7072.workers.dev/admin` yapılır ve aynı
+   tam adres allowed redirect listesinde bulunur. Production URL'i eklenmez.
+3. Sentetik staging platform-admin hesabına yeni bir recovery e-postası
+   gönderilir. Eski `localhost` bağlantısı veya daha önce paylaşılan bağlantı
+   kullanılmaz.
+4. Bağlantı `/admin` üzerindeki "Yeni parola belirle" görünümünü açmalı ve
+   adres çubuğundaki fragment sayfa yüklenir yüklenmez kaybolmalıdır. Parola,
+   URL, kanıt veya loglara yazılmaz.
+5. Operatörün seçtiği yeni parola iki kez girilir. Başarıdan sonra normal giriş
+   görünmeli; aynı hesapla giriş TOTP kurulum/challenge ekranına gitmeli ve
+   parola kurtarma tek başına genel bakışı göstermemelidir.
+6. Reload, bozuk/yanlış türde fragment ve süresi geçmiş/yeniden kullanılan
+   bağlantı sabit hata metniyle kapanmalıdır. Herhangi bir refresh/recovery/
+   access token, parola, QR sırrı veya OTP kanıta alınmaz.
+
+2026-09-01 olay kaydı: eski Site URL nedeniyle ilk e-posta `localhost:3000`e
+döndü ve bağlantı içeriği yanlışlıkla sohbete yapıştırıldı. İlgili staging
+hesabının `auth.sessions` satırları açık kullanıcı onayıyla silindi; ardından
+salt-okunur sayım `0` kalan oturum gösterdi. Ham bağlantı veya bearer değeri
+hiçbir repo belgesine kaydedilmedi.
+
+### 16.1 Canlı kanıt — 2026-09-02
+
+- Worker yalnız staging'e deploy edildi; production değiştirilmedi.
+- Yeni recovery e-postası staging `/admin` görünümüne ulaştı, kullanıcı yeni
+  parolayı kendisi belirledi ve sonraki parola girişi genel bakış yerine TOTP
+  istedi. Hiçbir parola veya bearer değeri kaydedilmedi.
+- İlk metin anahtarı sohbete yazıldığı için kullanılmadı. Sayfa yenileme ve
+  sonraki giriş, yalnız o tek `unverified` TOTP faktörünü kaldırıp yeni kurulum
+  başlattı. Yeni anahtar ve altı haneli kod kullanıcıda kaldı; doğrulama geçti.
+- `aal2` oturumu allowlist üyeliği yokken tek `forbidden` sonucu gördü. Açık
+  kullanıcı onayıyla backend-only bootstrap RPC'si `enabled` döndürdü; aynı
+  oturumun salt-okunur yenilemesi tek staging klinik satırını gösterdi.
+- §15.5 fresh-session challenge, §15.7 MFA verify rate-limit ve §16.6'nın canlı
+  bozuk/süresi-geçmiş bağlantı denemeleri bu kanıtla kapanmadı. Birim testleri
+  fail-closed dalları kapsasa da üretim maddesi bu yüzden işaretsiz kalır.

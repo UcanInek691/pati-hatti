@@ -77,9 +77,12 @@ itself.
       requirement (`get_platform_admin_overview_v1` now rejects any caller
       whose JWT `aal` claim is not exactly `aal2`, independent of
       `platform_admins` membership) and the corresponding `/admin` TOTP
-      enrollment/challenge UI. The migration and rollback fixture passed only
-      on disposable `vetai-test`; no real Supabase Auth TOTP enrollment/
-      challenge has been exercised end-to-end and staging/production remain
+      enrollment/challenge UI. The migration and rollback fixture passed on
+      disposable `vetai-test`; the migration and Worker were subsequently
+      activated only on `vetai-staging`. On 2026-09-02 one real staging account
+      completed memory-only password recovery, exact-one interrupted TOTP
+      cleanup, fresh text-key enrollment, TOTP verification, the membership
+      rejection, and the allowlisted read-only overview. Production remains
       unchanged. This box must stay unchecked until staging
       (`docs/staging-runbook.md`) has confirmed,
       against a real Supabase project: the migration applies cleanly after
@@ -88,6 +91,11 @@ itself.
       already-enrolled account is forced through a challenge on every new
       session, and `platform_admins` membership without a verified TOTP
       factor (and vice versa) is still rejected. Before this box is checked,
+      an interrupted first enrollment must also be proven to remove only its
+      single unverified TOTP factor and restart with one fresh enrollment
+      (safe QR or the mandatory validated text key) while every
+      verified, multiple, non-TOTP, or malformed factor state remains closed.
+      Before this box is checked,
       the Supabase Auth MFA-verify rate limit for the project must also be
       inspected and its actual configured value recorded in the staging
       evidence; the browser does not claim to provide its own brute-force
