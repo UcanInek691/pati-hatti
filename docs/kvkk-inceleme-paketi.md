@@ -102,6 +102,7 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Klinik kapanış makbuzu | Klinik kimliği, kapanış token'ının hash'i, sabit `'offboarded'` eylemi, kapanış zamanı (Task 041, `clinic_offboarding_receipts`) | Bir kapanışın tek seferlik ve geri döndürülemez biçimde gerçekleştiğinin kaydı | Supabase; RLS açık, politika yok, yalnız `service_role` erişebilir |
 | Klinik AI kullanım defteri | Klinik kimliği, model/istem sürümü, doğrulanmış token sayıları, kaynak olayın hash'i (ham kimlik değil) (Task 042, `clinic_ai_usage_events`) | İç maliyet takibi ve aylık kullanım özetinin hesaplanması — faturalama veya kota değildir, bkz. [`usage-metering.md`](usage-metering.md) | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir |
 | Platform yöneticisi izin listesi | Auth kullanıcı kimliği (Task 043, `platform_admins`) | `/admin` panelindeki klinikler arası salt-okunur özete kimin erişebileceğini belirleme | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir; bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
+| Platform-admin klinik yaşam döngüsü denetim kaydı (Task 047, `platform_admin_clinic_action_events`) | Aktör Auth kullanıcı kimliği, klinik kimliği, sabit eylem adı (`provision`/`suspend`/`resume`), kapalı sonuç, istemci `request_id`'si, zaman ve ham istek yerine SHA-256 girdi parmak izi — ne WhatsApp kimlik bilgisi, ne hayvan sahibi/hayvan verisi, ne de ham istek/yanıt gövdesi | `/admin`'den yapılan her yaşam döngüsü mutasyonunun kim/ne/ne zaman kaydı; hesap veya müşteri içeriği erişimi değildir | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez, ekleme yalnız aynı transaction içindeki `SECURITY DEFINER` sarmalayıcı RPC'ler üzerinden olur, mutasyona uğratılamaz (append-only) — bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
 
 Not: Evcil hayvana ilişkin sağlık anlatımının gerçek kişiyle bağlantılı olduğu
 durumlarda hukuki niteliği ve uygulanacak koruma seviyesi uzman tarafından
@@ -218,6 +219,12 @@ anlamına gelmez. Süreleri aşağıda uzman ve veri sorumlusu doldurmalıdır.
 | Klinik AI kullanım defteri (`clinic_ai_usage_events`) | Klinik silinince kademeli olarak silinir; bağımsız otomatik süre yok | | | | |
 | Klinik kapanış makbuzu (`clinic_offboarding_receipts`) | Klinik kimliğine göre benzersiz; otomatik süre yok | | | | |
 | Platform yöneticisi izin listesi (`platform_admins`) | Auth kullanıcısı silinince kademeli silinir; ayrıca kimin ne zaman/hangi gerekçeyle yönetici yapıldığına dair ayrı bir denetim kaydı **yoktur** — bu, kayıt altyapısı gerektiren ayrı bir karardır | | | | |
+| Platform-admin klinik yaşam döngüsü denetim kaydı (Task 047, `platform_admin_clinic_action_events`) | Append-only; hiçbir sütun tetikleyici veya arka plan işiyle silinmez, klinik/Auth kullanıcı kaydına yabancı anahtarla bağlı değildir, dolayısıyla klinik veya Auth kullanıcısı silindiğinde otomatik silinmez ya da kademelenmez. Bu belge bir saklama süresi **belirlemez veya önermez** — süre, sorumlu ve imha yöntemi ayrı bir hukuki/operasyonel karardır | | | | |
+
+Task 047 denetim kaydındaki SHA-256 girdi parmak izi anonim veri olarak kabul
+edilmez. Özellikle düşük çeşitliliğe sahip ad veya dış kimlik alanları tahmin
+edilerek yeniden eşleştirilebilir; bu nedenle parmak izi de denetim kaydıyla
+aynı erişim, saklama ve imha kararına tabi takma kimlikli veridir.
 
 Saklama şartı ortadan kalktığında silme, yok etme veya anonimleştirme yöntemi;
 periyodik imha süresi; yedeklerde uygulanma yöntemi ve sorumlu unvan ayrıca

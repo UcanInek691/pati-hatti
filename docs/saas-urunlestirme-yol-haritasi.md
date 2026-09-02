@@ -192,6 +192,25 @@ Staging'e henüz uygulanmadı. Planlanan gerçek staging TOTP/rate-limit smoke'u
 (`docs/staging-runbook.md` §15) tamamlanmadan bu panel production'da onaylı
 ayrıcalıklı erişim olarak kabul edilemez.
 
+**Durum (Task 047):** Yukarıdaki hedef listedeki "provizyon, askıya alma"
+kısmı — **offboarding hariç** — bu panele eklendi: `/admin` artık her aal2
+mutasyonunu Task 041'in değişmemiş beş RPC'sinden yalnız üçünü (provision,
+suspend, resume) çağıran ince sarmalayıcı RPC'ler üzerinden yürütür; her
+mutasyon aynı transaction'da minimize edilmiş bir denetim satırına yazılır ve
+istemci `request_id`'si tekrar/uyuşmazlık için sunucu tarafında kontrol edilir
+(bkz. [`platform-admin-overview.md`](platform-admin-overview.md#klinik-yaşam-döngüsü-kontrolleri-görev-047)).
+Offboarding, Auth kullanıcı oluşturma/davet, e-posta, parola, Meta kimlik
+bilgisi ve fiyatlandırma bu panelde hâlâ yok ve bilinçli olarak eklenmedi —
+offboarding hâlâ yalnız [`clinic-lifecycle.md`](clinic-lifecycle.md)'deki elle
+operatör akışından yürütülür. Uygulayan migration ve rollback-only fixture'ı
+hiçbir veritabanında çalıştırmadı. Codex daha sonra migration'ı yalnız
+disposable `vetai-test` üzerinde CLI query yoluyla uyguladı; düzeltilmiş
+rollback fixture'ı PASS verdi ve sıfır fixture artığı doğrulandı. Staging ve
+production değişmedi. Zorunlu Opus incelemesi ve ardından gerçek staging
+smoke'u (`docs/staging-runbook.md` §17)
+tamamlanmadan bu genişletme production'da onaylı bir kapasite olarak kabul
+edilemez.
+
 ## 7. Kullanım, tarife ve faturalama
 
 ### 7.1 Ölçüm birimleri

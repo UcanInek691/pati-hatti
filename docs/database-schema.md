@@ -1108,3 +1108,78 @@ SVG is validated and encoded into a bounded local `data:` image; it is not
 accepted as provider HTML or a remote image URL. See
 [`docs/platform-admin-overview.md`](platform-admin-overview.md) for the full
 client-side flow and secret-handling boundary.
+
+## Platform-admin clinic lifecycle controls (Task 047)
+
+`supabase/migrations/20260902000100_platform_admin_clinic_controls.sql` and
+`supabase/tests/047_platform_admin_clinic_controls.sql`. The implementer did
+not apply or run either against any database. Codex later applied the
+migration only to disposable `vetai-test` through the CLI query path (not
+migration history); the corrected rollback fixture passed and a separate
+query confirmed zero Auth-user, clinic, WhatsApp-account, platform-admin and
+audit fixture residue. Staging and production remain unchanged; mandatory
+Opus architecture/auth/RLS/tenant/idempotency/audit/KVKK/lifecycle-race review
+is still pending.
+Task 041's `20260831000100_clinic_lifecycle.sql` migration and its
+`provision_clinic_v1` / `suspend_clinic_v1` / `resume_clinic_v1` /
+`prepare_clinic_offboarding_v1` / `finalize_clinic_offboarding_v1` functions
+are not modified or recreated by this migration.
+
+Adds a new append-only table, `public.platform_admin_clinic_action_events`
+(RLS enabled, zero grants including to `service_role` — writable only by the
+`SECURITY DEFINER` RPCs below via owner-bypass), and three `vetai_private` /
+`public` functions:
+
+- `vetai_private.platform_admin_authorized_caller_v1()` — the same
+  `platform_admins` membership + null-safe `aal2` predicate as Task 045's
+  `get_platform_admin_overview_v1` (`auth.jwt() ->> 'aal' is not distinct
+  from 'aal2'`). The three Task 047 mutation wrappers share this helper;
+  Task 045's read-only overview function retains its own equivalent inline
+  predicate and is not recreated by this migration. Returns the caller's
+  `uuid` or `null`; never reachable by `anon`/`authenticated` directly.
+- `vetai_private.platform_admin_check_replay_v1(request_id, actor_user_id,
+  clinic_id, action, input_fingerprint)` — takes a transaction-scoped
+  `pg_advisory_xact_lock` keyed by `hashtextextended(request_id::text, 0)`
+  (auto-released at commit/rollback), then returns the previously recorded
+  `result` for an exact tuple match (idempotent replay), `null` for a fresh
+  `request_id`, or raises for a `request_id` reused with a different
+  actor/action/clinic/input fingerprint — with zero mutation in the raise
+  case. A `hashtextextended` collision only serializes two unrelated requests
+  behind the same lock momentarily; it can never merge or authorize them,
+  because the row lookup still compares the full tuple, not just the lock
+  key.
+- `public.platform_provision_clinic_v1(p_request_id, p_clinic_id,
+  p_clinic_name, p_owner_user_id, p_staff_role, p_whatsapp_account_id,
+  p_phone_number_id, p_display_name)` → `table (result text)`, one of
+  `forbidden | provisioned | already_provisioned`. Calls
+  `provision_clinic_v1` with contact phone and public address fixed to SQL
+  `null` (not parameters) — provisioning can never set them from `/admin`.
+- `public.platform_suspend_clinic_v1(p_request_id, p_clinic_id)` →
+  `forbidden | suspended | already_suspended | not_found`. Calls
+  `suspend_clinic_v1` unmodified; an offboarding clinic still raises (full
+  rollback, no row, no audit write), matching Task 041's behavior exactly.
+- `public.platform_resume_clinic_v1(p_request_id, p_clinic_id)` →
+  `forbidden | resumed | already_active | refused_offboarding | not_found`.
+  Calls `resume_clinic_v1` unmodified; an offboarding clinic returns the
+  ordinary `refused_offboarding` row (no raise), and that result is still
+  written to the audit table.
+
+Every wrapper: authorizes first and returns the closed `forbidden` sentinel
+before touching any table when unauthorized; validates `request_id`/
+`clinic_id` are non-null (typed-input casts by PostgREST can raise before
+authorization on a malformed input, but no mutation ever happens before
+authorization); computes a canonical SHA-256 input fingerprint (same
+`sha256(jsonb_build_object(...)::text::bytea)` pattern as Task 041's
+`finalize_clinic_offboarding_v1` token hashing) before checking replay; and,
+on a fresh request, calls the one matching Task 041 function and inserts a
+closed-result audit row in the same transaction. The audit row never
+contains clinic name, `phone_number_id`, display name, email, phone,
+address, token, message, or an owner/pet identifier — only `request_id`,
+`actor_user_id`, `clinic_id`, a closed `action` (`provision | suspend |
+resume`), the closed `result`, the input fingerprint, and a timestamp — and
+carries no foreign key to `clinics` or `auth.users`, so a later clinic or
+Auth-user deletion never cascade-erases audit history. All three RPCs are
+granted only to `authenticated`; `anon` and `service_role` direct execution
+is revoked. See [`docs/platform-admin-overview.md`](platform-admin-overview.md)
+for the `/admin` client behavior and [`docs/clinic-lifecycle.md`](clinic-lifecycle.md)
+for the underlying Task 041 functions these wrap.

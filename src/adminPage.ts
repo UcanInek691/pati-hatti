@@ -76,7 +76,7 @@ export const ADMIN_HTML = `<!doctype html>
 <body>
 <header>
   <h1>VetAI Platform Yönetici Paneli</h1>
-  <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Herhangi bir müdahale (askıya alma, kapatma, fiyatlandırma, faturalandırma vb.) yetkisi yoktur. MVP sürümünde bu panele erişim, şifre girişinin ardından veritabanı düzeyinde zorunlu kılınan TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir; yalnızca ikinci faktörü (aal2) doğrulanmış oturumlar genel bakış verisini görebilir. Bu denetim staging ortamında uçtan uca doğrulanana kadar panel üretimde onaylı ayrıcalıklı erişim olarak kabul edilemez.</p>
+  <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Klinik oluşturma (her zaman askıya alınmış durumda başlar), askıya alma ve devam ettirme dışında müdahale yetkisi yoktur; kapanış, fiyatlandırma, faturalandırma, e-posta/parola/Meta kimlik bilgisi işlemleri ve müşteri içeriğine erişim bu panelden yapılamaz. MVP sürümünde bu panele erişim, şifre girişinin ardından veritabanı düzeyinde zorunlu kılınan TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir; yalnızca ikinci faktörü (aal2) doğrulanmış oturumlar genel bakış verisini görebilir. Bu denetim staging ortamında uçtan uca doğrulanana kadar panel üretimde onaylı ayrıcalıklı erişim olarak kabul edilemez.</p>
   <p id="status-region" role="status" aria-live="polite"></p>
   <p id="error-region" role="alert" aria-live="assertive"></p>
 </header>
@@ -141,6 +141,30 @@ export const ADMIN_HTML = `<!doctype html>
   <button type="button" id="logout-button">Çıkış yap</button>
   <p id="period-region"></p>
   <div id="overview-content"></div>
+
+  <section id="lifecycle-section" aria-labelledby="lifecycle-heading">
+    <h3 id="lifecycle-heading">Klinik yaşam döngüsü</h3>
+    <p>Bu bölüm yalnızca platform sahibi içindir; her klinik günlük operasyonlarını kendi <code>/staff</code> panelinden yürütür. Burada oluşturulan klinik her zaman askıya alınmış durumda başlar ve otomatik olarak etkinleştirilmez.</p>
+    <form id="provision-form">
+      <label for="provision-clinic-name-input">Klinik adı</label>
+      <input type="text" id="provision-clinic-name-input" name="clinic_name" required maxlength="200">
+      <label for="provision-owner-user-id-input">İlk personelin Auth UUID'i</label>
+      <input type="text" id="provision-owner-user-id-input" name="owner_user_id" required>
+      <label for="provision-staff-role-select">Personel rolü</label>
+      <select id="provision-staff-role-select" name="staff_role" required>
+        <option value="admin">Yönetici</option>
+        <option value="veterinarian">Veteriner</option>
+        <option value="receptionist">Resepsiyon</option>
+      </select>
+      <label for="provision-whatsapp-account-id-input">WhatsApp hesap UUID'i (dahili)</label>
+      <input type="text" id="provision-whatsapp-account-id-input" name="whatsapp_account_id" required>
+      <label for="provision-phone-number-id-input">Meta phone_number_id</label>
+      <input type="text" id="provision-phone-number-id-input" name="phone_number_id" required pattern="[0-9]{1,64}">
+      <label for="provision-display-name-input">Görünen ad (opsiyonel)</label>
+      <input type="text" id="provision-display-name-input" name="display_name" maxlength="200">
+      <button type="submit">Klinik oluştur (askıya alınmış olarak)</button>
+    </form>
+  </section>
 </section>
 
 <script src="/admin/app.js"></script>
@@ -401,13 +425,27 @@ const monthInput = document.getElementById("month-input");
 const logoutButton = document.getElementById("logout-button");
 const periodRegion = document.getElementById("period-region");
 const overviewContent = document.getElementById("overview-content");
+const provisionForm = document.getElementById("provision-form");
+const provisionClinicNameInput = document.getElementById("provision-clinic-name-input");
+const provisionOwnerUserIdInput = document.getElementById("provision-owner-user-id-input");
+const provisionStaffRoleSelect = document.getElementById("provision-staff-role-select");
+const provisionWhatsappAccountIdInput = document.getElementById("provision-whatsapp-account-id-input");
+const provisionPhoneNumberIdInput = document.getElementById("provision-phone-number-id-input");
+const provisionDisplayNameInput = document.getElementById("provision-display-name-input");
 
 const FACTOR_FRIENDLY_NAME = "VetAI Admin Paneli";
+const PHONE_NUMBER_ID_PATTERN = /^[0-9]{1,64}$/;
+const PROVISION_RESULTS = ["forbidden", "provisioned", "already_provisioned"];
+const SUSPEND_RESULTS = ["forbidden", "suspended", "already_suspended", "not_found"];
+const RESUME_RESULTS = ["forbidden", "resumed", "already_active", "refused_offboarding", "not_found"];
 
 let config = null;
 let pendingAccessToken = null;
 let pendingFactorId = null;
 let pendingRecoveryAccessToken = null;
+let lifecycleBusy = false;
+let pendingProvisionAttempt = null;
+const pendingClinicActionRequestIds = new Map();
 
 function showError(message) {
   errorRegion.textContent = message;
@@ -445,6 +483,9 @@ function clearSession() {
   passwordInput.value = "";
   newPasswordInput.value = "";
   confirmPasswordInput.value = "";
+  provisionForm.reset();
+  pendingProvisionAttempt = null;
+  pendingClinicActionRequestIds.clear();
   clearMessages();
   showView("login");
 }
@@ -663,6 +704,120 @@ async function authedFetch(path, init) {
   return res;
 }
 
+function generateRequestId() {
+  if (!window.crypto || typeof window.crypto.randomUUID !== "function") return null;
+  const id = window.crypto.randomUUID();
+  return UUID_PATTERN.test(id) ? id : null;
+}
+
+function validateLifecycleResult(rows, allowedResults) {
+  if (!Array.isArray(rows) || rows.length !== 1) return null;
+  const row = rows[0];
+  if (!isExactRecord(row, ["result"]) || typeof row.result !== "string" || !allowedResults.includes(row.result)) {
+    return null;
+  }
+  return row.result;
+}
+
+function getLifecycleRequestId(action, clinicId) {
+  const key = action + ":" + clinicId;
+  const existing = pendingClinicActionRequestIds.get(key);
+  if (existing) return { key, requestId: existing };
+  const requestId = generateRequestId();
+  if (requestId === null) return null;
+  pendingClinicActionRequestIds.set(key, requestId);
+  return { key, requestId };
+}
+
+async function callLifecycleRpc(path, body, allowedResults) {
+  const res = await authedFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("lifecycle rpc failed");
+  const data = await res.json();
+  const result = validateLifecycleResult(data, allowedResults);
+  if (result === null) throw new Error("malformed lifecycle response");
+  return result;
+}
+
+async function handleSuspend(clinicId, button) {
+  if (lifecycleBusy) return;
+  if (!window.confirm("Bu kliniğin WhatsApp otomasyonu durdurulacak ve bekleyen/işleniyor durumundaki gönderimleri silinecek. Personel üyelikleri silinmez. Onaylıyor musunuz?")) {
+    return;
+  }
+  const request = getLifecycleRequestId("suspend", clinicId);
+  if (request === null) {
+    showError("Bu tarayıcı güvenli UUID üretimini desteklemiyor.");
+    return;
+  }
+  clearMessages();
+  lifecycleBusy = true;
+  button.disabled = true;
+  try {
+    const result = await callLifecycleRpc("/rest/v1/rpc/platform_suspend_clinic_v1", { p_request_id: request.requestId, p_clinic_id: clinicId }, SUSPEND_RESULTS);
+    pendingClinicActionRequestIds.delete(request.key);
+    if (result === "forbidden") {
+      showError("Bu hesap platform yöneticisi olarak yetkilendirilmemiş.");
+    } else {
+      const { monthStart } = istanbulMonthStart();
+      await loadOverview(monthStart);
+      if (result === "suspended") {
+        showStatus("Klinik askıya alındı.");
+      } else if (result === "already_suspended") {
+        showStatus("Klinik zaten askıya alınmış durumda.");
+      } else {
+        showError("Klinik bulunamadı; hiçbir değişiklik yapılmadı.");
+      }
+    }
+  } catch {
+    showError("Askıya alma başarısız. Ağ hatası veya oturum sorunu olabilir.");
+  } finally {
+    lifecycleBusy = false;
+    button.disabled = false;
+  }
+}
+
+async function handleResume(clinicId, button) {
+  if (lifecycleBusy) return;
+  if (!window.confirm("Bu klinik devam ettirilecek. Devam ettirmeden önce operatör olarak şunların TAMAMLANDIĞINI doğrulayın (bu onay bunları otomatik olarak DOĞRULAMAZ): doğru WhatsApp hesap ve phone_number_id kimlik bilgisi girişi, Cloudflare gizli anahtarının güncellenmesi, /ready kontrolü, Meta webhook/yapılandırma kontrolleri, klinik çalışma saatleri programı, rota izin listesi ve insan onayı kapıları. Onaylıyor musunuz?")) {
+    return;
+  }
+  const request = getLifecycleRequestId("resume", clinicId);
+  if (request === null) {
+    showError("Bu tarayıcı güvenli UUID üretimini desteklemiyor.");
+    return;
+  }
+  clearMessages();
+  lifecycleBusy = true;
+  button.disabled = true;
+  try {
+    const result = await callLifecycleRpc("/rest/v1/rpc/platform_resume_clinic_v1", { p_request_id: request.requestId, p_clinic_id: clinicId }, RESUME_RESULTS);
+    pendingClinicActionRequestIds.delete(request.key);
+    if (result === "forbidden") {
+      showError("Bu hesap platform yöneticisi olarak yetkilendirilmemiş.");
+    } else {
+      const { monthStart } = istanbulMonthStart();
+      await loadOverview(monthStart);
+      if (result === "resumed") {
+        showStatus("Klinik yeniden etkinleştirildi.");
+      } else if (result === "already_active") {
+        showStatus("Klinik zaten aktif durumda.");
+      } else if (result === "refused_offboarding") {
+        showError("Kapanış sürecindeki klinik yeniden etkinleştirilemez; hiçbir değişiklik yapılmadı.");
+      } else {
+        showError("Klinik bulunamadı; hiçbir değişiklik yapılmadı.");
+      }
+    }
+  } catch {
+    showError("Devam ettirme başarısız. Ağ hatası veya oturum sorunu olabilir.");
+  } finally {
+    lifecycleBusy = false;
+    button.disabled = false;
+  }
+}
+
 function renderOverview(rows) {
   overviewContent.textContent = "";
 
@@ -685,6 +840,7 @@ function renderOverview(rows) {
     "Bekleyen g\\u00f6nderim", "\\u0130\\u015flenen g\\u00f6nderim", "Ba\\u015far\\u0131s\\u0131z g\\u00f6nderim",
     "Son gelen mesaj", "Son giden mesaj",
     "AI tur say\\u0131s\\u0131", "AI'in dokundu\\u011fu konu\\u015fma", "Girdi token", "\\u00c7\\u0131kt\\u0131 token", "Toplam token", "Eksik token kayd\\u0131",
+    "\\u0130\\u015flem",
   ].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
@@ -719,6 +875,21 @@ function renderOverview(rows) {
       td.textContent = value;
       tr.appendChild(td);
     }
+    const actionsTd = document.createElement("td");
+    if (row.operational_status === "active") {
+      const suspendButton = document.createElement("button");
+      suspendButton.type = "button";
+      suspendButton.textContent = "Ask\\u0131ya al";
+      suspendButton.addEventListener("click", () => handleSuspend(row.clinic_id, suspendButton));
+      actionsTd.appendChild(suspendButton);
+    } else if (row.operational_status === "suspended") {
+      const resumeButton = document.createElement("button");
+      resumeButton.type = "button";
+      resumeButton.textContent = "Devam ettir";
+      resumeButton.addEventListener("click", () => handleResume(row.clinic_id, resumeButton));
+      actionsTd.appendChild(resumeButton);
+    }
+    tr.appendChild(actionsTd);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
@@ -762,6 +933,78 @@ monthForm.addEventListener("submit", async (event) => {
 
 logoutButton.addEventListener("click", () => {
   clearSession();
+});
+
+provisionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  clearMessages();
+  if (lifecycleBusy) return;
+  const ownerUserId = provisionOwnerUserIdInput.value.trim();
+  const whatsappAccountId = provisionWhatsappAccountIdInput.value.trim();
+  const phoneNumberId = provisionPhoneNumberIdInput.value.trim();
+  if (!UUID_PATTERN.test(ownerUserId)) {
+    showError("Personel Auth UUID'i geçersiz.");
+    return;
+  }
+  if (!PHONE_NUMBER_ID_PATTERN.test(phoneNumberId)) {
+    showError("Meta phone_number_id geçersiz.");
+    return;
+  }
+  if (!UUID_PATTERN.test(whatsappAccountId)) {
+    showError("WhatsApp hesap UUID'i geçersiz.");
+    return;
+  }
+  const clinicName = provisionClinicNameInput.value.trim();
+  const staffRole = provisionStaffRoleSelect.value;
+  const displayName = provisionDisplayNameInput.value.trim() || null;
+  const inputSignature = JSON.stringify({ clinicName, ownerUserId, staffRole, whatsappAccountId, phoneNumberId, displayName });
+  if (pendingProvisionAttempt === null || pendingProvisionAttempt.inputSignature !== inputSignature) {
+    const requestId = generateRequestId();
+    const clinicId = generateRequestId();
+    if (requestId === null || clinicId === null) {
+      showError("Bu tarayıcı güvenli UUID üretimini desteklemiyor.");
+      return;
+    }
+    pendingProvisionAttempt = { inputSignature, requestId, clinicId };
+  }
+  const { requestId, clinicId } = pendingProvisionAttempt;
+  const button = provisionForm.querySelector("button[type=submit]");
+  lifecycleBusy = true;
+  button.disabled = true;
+  try {
+    const result = await callLifecycleRpc(
+      "/rest/v1/rpc/platform_provision_clinic_v1",
+      {
+        p_request_id: requestId,
+        p_clinic_id: clinicId,
+        p_clinic_name: clinicName,
+        p_owner_user_id: ownerUserId,
+        p_staff_role: staffRole,
+        p_whatsapp_account_id: whatsappAccountId,
+        p_phone_number_id: phoneNumberId,
+        p_display_name: displayName,
+      },
+      PROVISION_RESULTS
+    );
+    pendingProvisionAttempt = null;
+    if (result === "forbidden") {
+      showError("Bu hesap platform yöneticisi olarak yetkilendirilmemiş.");
+    } else {
+      provisionForm.reset();
+      const { monthStart } = istanbulMonthStart();
+      await loadOverview(monthStart);
+      if (result === "provisioned") {
+        showStatus("Klinik oluşturuldu (askıya alınmış durumda). Devam ettirmeden önce WhatsApp kimlik bilgileri, Cloudflare gizli anahtarı, /ready ve Meta doğrulamaları tamamlanmalıdır.");
+      } else {
+        showStatus("Bu oluşturma isteği daha önce tamamlanmıştı; klinik askıya alınmış durumda.");
+      }
+    }
+  } catch {
+    showError("Klinik oluşturma başarısız. Ağ hatası veya oturum sorunu olabilir.");
+  } finally {
+    lifecycleBusy = false;
+    button.disabled = false;
+  }
 });
 
 loginForm.addEventListener("submit", async (event) => {

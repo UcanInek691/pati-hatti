@@ -968,6 +968,30 @@ occurred.
   real TOTP enrollment/challenge, interrupted-enrollment recovery and actual
   Supabase Auth MFA-verify rate limit must be verified without recording QR,
   secret, code or access-token material.
+- Task 047 (platform-admin clinic lifecycle controls) is `COMPLETE` at the
+  repository and disposable-database gates as of 2026-09-02. The existing
+  MFA-gated `/admin` surface can now provision a clinic only in `suspended`
+  state and can suspend or resume an existing clinic through three bounded
+  wrapper RPCs around Task 041. It cannot invite Auth users, write Meta or
+  Cloudflare credentials, access customer content, price usage, or reach
+  prepare/finalize offboarding.
+- Every Task 047 mutation independently requires both `platform_admins`
+  membership and exact null-safe JWT `aal2`, retains stable in-memory request
+  and entity IDs across retryable/lost-response attempts, and writes one
+  minimized same-transaction audit row. Replay is serialized by request ID;
+  exact tuples return the recorded result while mismatched reuse raises before
+  lifecycle mutation. Audit SHA-256 input fingerprints are pseudonymous,
+  potentially guessable data rather than anonymous data; retention and
+  deletion remain an external legal/operational decision.
+- Frozen install, typecheck, 1,911 tests (two opt-in paid eval gates skipped),
+  Worker dry-run, Codex review, and mandatory Claude Opus auth/RLS/tenant/
+  concurrency/audit/KVKK review passed. The corrected migration and rollback
+  fixture passed only on disposable `vetai-test`; a separate query confirmed
+  zero Auth-user, clinic, WhatsApp-account, platform-admin and audit fixture
+  residue plus the expected coherence constraint and three SECURITY DEFINER
+  RPCs. This query-path proof did not add migration history. Task 047 has not
+  been applied to staging or production; staging runbook §17 remains the next
+  separately authorized gate.
 
 ## Context maintenance
 

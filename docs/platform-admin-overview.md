@@ -13,14 +13,16 @@ incelemesi yapan kişi.
 > değiştirilmedi. Zorunlu salt-okunur Opus incelemesi, iki dar düzeltmenin
 > ardından `PASS` verdi; gerçek üyelik ve üretim etkinleştirmesi yapılmadı.
 
-## Bu bir yönetim paneli değil, salt-okunur bir özet ekranıdır
+## Bu bir yönetim paneli değil, sınırlı bir salt-okunur özet + yaşam döngüsü ekranıdır
 
-`/admin` şu anda **hiçbir mutasyon** içermez: klinik askıya alma/kapatma,
-fiyat, paket, fatura, kota, CSV dışa aktarma, grafik veya mesaj gönderme
-yeteneği yoktur ve bu görevin kapsamı bunları eklemez. Sayfa yalnızca
-klinikler arası, salt-okunur operasyonel metadata ile seçilen ayın kullanım
-özetini gösterir. Klinik yaşam döngüsü mutasyonları hâlâ ayrı bir operatör
-akışından yürütülür (bkz. [`docs/clinic-lifecycle.md`](clinic-lifecycle.md)).
+`/admin`, Görev 047'den itibaren yalnızca üç sınırlı mutasyona sahiptir:
+klinik oluşturma (her zaman askıya alınmış durumda başlar), askıya alma ve
+devam ettirme (bkz. [Klinik yaşam döngüsü kontrolleri](#klinik-yaşam-döngüsü-kontrolleri-görev-047)
+aşağıda). Kapanış (offboarding), Auth kullanıcı oluşturma/davet, e-posta,
+parola, Meta token, fiyat, paket, fatura, kota, CSV dışa aktarma, grafik veya
+mesaj gönderme yeteneği yoktur ve bu görevin kapsamı bunları eklemez. Sayfa
+ayrıca klinikler arası, salt-okunur operasyonel metadata ile seçilen ayın
+kullanım özetini gösterir.
 
 Bu MVP sayfalama yapmadan tüm klinikleri tek yanıtta ve tek tabloda gösterir.
 Bu sınır yalnız mevcut yaklaşık 5–20 klinik ölçeği için kabul edilmiştir;
@@ -176,6 +178,69 @@ yapılır. Başarılı işlem tüm geçici kurtarma/parola durumunu temizleyip n
 giriş ekranına döner; kullanıcı hâlâ yeni parolasıyla giriş yapmalı ve Görev
 045 TOTP akışını tamamlamalıdır. Kurtarma bağlantısı platform-admin üyeliği
 veya `aal2` vermez, genel bakış RPC'sini çağırmaz.
+
+## Klinik yaşam döngüsü kontrolleri (Görev 047)
+
+> Bu bölümdeki migration (`supabase/migrations/20260902000100_platform_admin_clinic_controls.sql`)
+> ve rollback-only fixture (`supabase/tests/047_platform_admin_clinic_controls.sql`)
+> uygulayan tarafından hiçbir veritabanına karşı çalıştırılmadı. Codex daha
+> sonra migration'ı yalnız disposable `vetai-test` üzerinde CLI query yoluyla
+> uyguladı (migration-history kaydı oluşturulmadı); düzeltilmiş rollback
+> fixture'ı geçti ve Auth kullanıcısı/klinik/WhatsApp hesabı/platform-admin/
+> audit kalıntısı `0 / 0 / 0 / 0 / 0` doğrulandı. Staging ve production
+> değiştirilmedi. Zorunlu Opus mimari incelemesi tamamlanmadan bu bölüm
+> staging'e alınamaz — bkz.
+> [`docs/staging-runbook.md`](staging-runbook.md).
+
+`/admin`, `platform_admins` üyeliği ve `aal2` doğrulanmış oturumlar için üç
+yeni `authenticated`-only RPC ekler: `platform_provision_clinic_v1`,
+`platform_suspend_clinic_v1`, `platform_resume_clinic_v1`. Her biri, Görev
+041'in mevcut `service_role`-only `provision_clinic_v1` / `suspend_clinic_v1`
+/ `resume_clinic_v1` fonksiyonlarını **değiştirmeden**, sahip-baypas (owner
+bypass) ACL deseniyle çağıran ince bir `SECURITY DEFINER` sarmalayıcıdır —
+Görev 041'in migration dosyası bu görevde dokunulmadan kalır. Kapanış
+(`prepare_clinic_offboarding_v1` / `finalize_clinic_offboarding_v1`) hâlâ
+yalnız mevcut operatör akışından erişilebilir; `/admin`'e yeni bir grant
+verilmez.
+
+Provizyon formu yalnız Görev 047'nin 5. kararındaki sınırlı alanları alır:
+klinik adı, ilk personelin Auth UUID'i ve rolü, dahili WhatsApp-hesap UUID'i,
+Meta `phone_number_id`, opsiyonel görünen ad. İletişim telefonu ve açık adres
+her zaman `null`'a sabitlenir; access token, app secret, webhook secret, WABA
+token, müşteri telefonu, sahip/hayvan/mesaj/klinik içeriği hiçbir zaman
+alınmaz. Yeni klinik her zaman askıya alınmış durumda oluşturulur ve otomatik
+etkinleştirilmez.
+
+İstek kimliği (request id) ve klinik UUID'i tarayıcıda
+`crypto.randomUUID()` ile üretilir; Web Crypto yoksa veya biçim geçersizse
+işlem fail-closed durur. WhatsApp-hesap UUID'i, Cloudflare registry hazırlığıyla
+aynı olması için operatörün girdiği kanonik UUID'dir ve ayrıca doğrulanır. Bu
+kimlikler hiçbir zaman URL'e veya kalıcı depoya yazılmaz. Yanıtın kaybolduğu
+yeniden denemede form girdileri değişmediyse aynı request/clinic UUID'leri
+bellekten tekrar kullanılır; girdiler değiştiyse yeni bir girişim başlar. Aynı istek
+kimliğiyle aynı aktör/işlem/klinik/girdi tekrar gönderilirse (`platform_admin_check_replay_v1`
+üzerinden, işlem-kapsamlı bir advisory lock ile serileştirilir), veritabanı
+mutasyonu tekrarlanmadan kayıtlı sonucu döner; aynı istek kimliği farklı bir
+girdiyle geldiğinde ise hiçbir mutasyon yapılmadan hata fırlatılır.
+
+Denetim izi (`public.platform_admin_clinic_action_events`), Görev 047'nin
+8. kararındaki minimize alan setiyle sınırlıdır: yalnızca istek kimliği,
+aktörün Auth UUID'i, hedef klinik UUID'i, kapalı bir eylem/sonuç değeri ve
+girdinin tek yönlü SHA-256 parmak izi — klinik adı, telefon, adres, token,
+mesaj veya e-posta hiçbir zaman yazılmaz. Yasaklı (forbidden) istekler
+hiçbir denetim satırı bırakmaz. Tablo RLS açık, hiçbir role (tarayıcı dahil,
+`service_role` dahil) doğrudan grant yoktur; tek yazma yolu bu üç RPC'nin
+kendisidir.
+
+Askıya alma ve devam ettirme, genel bakış tablosundaki uygun satırların
+yanında ayrı bir düğmeyle sunulur; klinik UUID'i hiçbir zaman görünür metin
+veya DOM özniteliği olarak yazılmaz, yalnızca JS kapanışında (closure) tutulur.
+Her iki işlem de tazelenmiş bir açık onay gerektirir; devam ettirme onay
+metni, Görev 047'nin 6. kararındaki dış ön koşulları (doğru kimlik bilgisi
+girişi, Cloudflare gizli anahtarı güncellemesi, `/ready` kontrolü, Meta
+webhook/yapılandırma kontrolleri, klinik çalışma saatleri, rota izin listesi,
+insan onayı) sayar ama bunların makine tarafından doğrulandığını **iddia
+etmez**.
 
 2026-09-01 staging denemesinde eski Supabase Site URL'inin
 `http://localhost:3000` olduğu görüldü. Bağlantı içeriği yanlışlıkla bir sohbet

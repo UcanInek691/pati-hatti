@@ -657,3 +657,85 @@ hiçbir repo belgesine kaydedilmedi.
   hesabının platform yetkisi onayla kaldırıldı; salt-okunur sayım allowlist ve
   doğrulanmış-MFA sayısını `1 / 1` gösterdi. §16.6'nın canlı bozuk/süresi-geçmiş
   bağlantı denemeleri yapılmadı; fail-closed dallar birim testleriyle kapsandı.
+
+## 17. Platform-admin klinik yaşam döngüsü smoke (Task 047)
+
+Bu bölüm Task 047'nin `/admin` provision/suspend/resume yüzeyini staging'de
+doğrulamak için Codex/Opus incelemesinden **sonra** izlenecek sırayı tarif
+eder. Uygulayan (implementer) hiçbir veritabanı adımı çalıştırmadı. Codex
+migration'ı yalnız disposable `vetai-test` üzerinde CLI query yoluyla
+uyguladı; bu yol migration-history kaydı oluşturmadı. Düzeltilmiş rollback-only
+fixture geçti ve ayrı sorguda sıfır fixture artığı doğrulandı. Staging ve
+production değişmedi. Aşağıdaki staging adımları gerçekten yürütülüp sanitize
+sonucu §11 şablonuna yazılana kadar `[ ]` kalır. Sıra §1 (yetki kapısı) ve §3
+(Supabase) sonrasını, ve §15'in (TOTP MFA) tamamlanmış olmasını varsayar —
+aal2 olmadan bu bölümdeki hiçbir staging adımı anlamlı değildir.
+
+1. **Migration.** Önce disposable `vetai-test` üzerinde Codex tarafından
+   migration ve rollback-only fixture doğrulanır (§3'teki "staging'e karşı
+   çalıştırma" kuralı burada da geçerlidir). Ancak bu geçtikten ve Opus
+   incelemesi tamamlandıktan sonra migration `vetai-staging`'e uygulanır.
+   - [x] Disposable migration + fixture + sıfır-artık kanıtı doğrulandı.
+   - [ ] Opus PASS sonrasında migration `vetai-staging`'e uygulandı.
+2. **Katalog/fixture denetimi.** Migration sonrası salt-okunur katalog
+   kontrolü: `platform_admin_clinic_action_events` tablosunda RLS açık ve
+   `service_role` dahil hiçbir grant yok; üç yeni RPC (`platform_provision_
+   clinic_v1`, `platform_suspend_clinic_v1`, `platform_resume_clinic_v1`)
+   yalnız `authenticated`'a grantlı, `anon`/`service_role`'e değil.
+   - [ ] Doğrulandı.
+3. **Worker deploy.** Task 047'nin `/admin` değişikliğiyle `vetai-staging`
+   yeniden deploy edilir. Migration'dan **önce** deploy edilmez (§12.1'deki
+   sabit sıra: önce migration, sonra Worker).
+   - [ ] Doğrulandı.
+4. **aal1 reddi.** TOTP kurulu ama henüz aal2'ye ulaşmamış (veya
+   `platform_admins` üyesi olmayan) bir oturumla yaşam döngüsü formlarından
+   biri gönderilir; authenticated çağrının HTTP 200 içindeki kapalı
+   `result = 'forbidden'` sonucuyla reddedildiği, istemcinin sabit yetki
+   hatasını gösterdiği ve hiçbir audit satırı yazılmadığı doğrulanır. Ayrı
+   anon/`service_role` katalog-fixture denetimi `insufficient_privilege`
+   sonucunu kapsar — istemci tarafı kontrolün tek başına yeterli olmadığının
+   kanıtı veritabanından dönen `forbidden` sonucudur.
+   - [ ] Doğrulandı.
+5. **aal2 provision (askıya alınmış).** Geçerli aal2 oturumuyla sentetik,
+   adında açıkça "STAGING TEST" ibaresi taşıyan yeni bir klinik provision
+   edilir. Yeni klinik satırının `operational_status = 'suspended'` ile
+   başladığı (asla `active` değil) ve tek bir audit satırının aynı
+   transaction'da yazıldığı doğrulanır.
+   - [ ] Doğrulandı.
+6. **Dış kimlik bilgisi / hazırlık kontrolleri.** Provision edilen klinik
+   hâlâ askıdayken, WhatsApp hesabı için gerçek `phone_number_id` ve
+   Cloudflare `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` kaydı §4'teki gibi ayrıca
+   girilir; `GET /ready` ve Meta webhook abonelik durumu bu klinik askıdayken
+   kontrol edilir. `/admin` bu adımların hiçbirini kendisi yapmaz veya
+   doğrulamaz — bu, resume'den önceki manuel bir insan sorumluluğudur.
+   - [ ] Doğrulandı.
+7. **Açık resume.** Yukarıdaki kontroller tamamlandıktan sonra, operatör
+   `/admin`'de fresh `window.confirm()` iletişim kutusunu görüp onaylayarak
+   kliniği devam ettirir. Confirm metninin dış ön koşulları (WhatsApp,
+   Cloudflare, `/ready`, Meta webhook) sıraladığını ama bunları makine
+   olarak doğrulamadığını açıkça belirttiği; onaydan sonra
+   `operational_status = 'active'` olduğu ve ikinci bir audit satırı
+   yazıldığı doğrulanır.
+   - [ ] Doğrulandı.
+8. **Suspend/resume smoke.** Aynı sentetik klinik tekrar askıya alınır, genel
+   bakışta işlem sütununun yalnız "Devam ettir" gösterdiği ve "Askıya al"
+   butonunun kaybolduğu; ardından tekrar resume edilerek ters durumun
+   doğrulandığı; her iki mutasyonun da kendi `request_id`'siyle bir kez daha
+   (aynı UUID'yle) tekrar gönderilmesinin ikinci kez hiçbir yeni audit satırı
+   yazmadan aynı sonucu döndürdüğü (replay idempotency) doğrulanır. Ardından
+   aynı aksiyon/aktör ve **aynı `request_id`**, fakat farklı bir sentetik
+   `p_clinic_id` ile doğrudan authenticated RPC çağrısında yeniden kullanılır.
+   Suspend/resume fingerprint'i yalnız klinik kimliğinden türediği için bu,
+   ulaşılabilir gerçek uyuşmazlık senaryosudur. RPC'nin `request_id ... reused
+   with a different ... clinic or input` exception'ıyla kapalı biçimde
+   başarısız olduğu ve yeni audit satırı veya yaşam-döngüsü mutasyonu
+   oluşturmadığı doğrulanır. Bu exception kapalı bir `request_id_conflict`
+   sonuç kodu değildir.
+   - [ ] Doğrulandı.
+
+Bu smoke sırasında hiçbir gerçek klinik, sahip veya hayvan verisi
+oluşturulmaz; yalnız §5'teki gibi adında "STAGING TEST" geçen sentetik
+kayıtlar kullanılır ve oturum sonunda temizlenmez (§12 kapsamı dışında ayrı
+bir kayıt tutulur). Bu bölüm tamamlanmadan
+[`docs/production-readiness.md`](production-readiness.md) §4'teki Task 047
+maddesi "staging-verified" olarak nitelenemez.

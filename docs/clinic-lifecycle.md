@@ -7,9 +7,12 @@ Last verified: 2026-08-31.
 Provides the smallest repeatable database lifecycle for adding, suspending,
 resuming and permanently offboarding a clinic without free-form production
 SQL, a platform-admin UI, billing logic or credential values in PostgreSQL.
-It is the backend foundation for a future metadata-only `/admin` surface — it
-does not build that surface, and `src/clinicLifecycle.ts` is not wired to any
-public route in this task.
+It is the backend foundation for the metadata-only `/admin` surface — this
+task does not build that surface itself, and `src/clinicLifecycle.ts` is not
+wired to any public route here. Task 047 later adds a bounded `/admin`
+provision/suspend/resume UI that calls these five RPCs only indirectly,
+through its own wrapper functions (see below) — this migration and its RPCs
+are not modified by that task.
 
 ## Lifecycle state
 
@@ -163,3 +166,18 @@ client: request shape, all closed results, malformed/additive Data API
 shapes, non-2xx/network failures, the loopback-only plain-HTTP rule, the exact
 10-second `AbortSignal.timeout` argument, and no logging of the request, response, or offboarding
 token.
+
+## Platform-admin wrapper RPCs (Task 047)
+
+`supabase/migrations/20260902000100_platform_admin_clinic_controls.sql` adds
+three `authenticated`-only wrappers that a `platform_admins` + `aal2` caller
+reaches from `/admin`: `platform_provision_clinic_v1`,
+`platform_suspend_clinic_v1`, `platform_resume_clinic_v1`. Each is a thin
+`SECURITY DEFINER` function that authorizes the caller, checks a
+client-supplied `request_id` for exact-replay/idempotency, calls exactly one
+of `provision_clinic_v1` / `suspend_clinic_v1` / `resume_clinic_v1` above
+unmodified, and records a minimized audit row in the same transaction — see
+[`docs/platform-admin-overview.md`](platform-admin-overview.md) for the full
+behavior. `prepare_clinic_offboarding_v1` and `finalize_clinic_offboarding_v1`
+receive no new grant and stay reachable only through the existing operator
+runbook in this document.

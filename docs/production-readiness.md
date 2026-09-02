@@ -174,16 +174,28 @@ every box in this section is checked.
 
 - [ ] Create the real clinic row, its WhatsApp account mapping
       (`phone_number_id`), and clinic staff membership rows through an
-      authorized administrative process against production. **No general
-      admin provisioning UI exists in this codebase** — this is a manual,
-      privileged, service-role operation performed by whoever owns the
-      production database, not a self-serve flow. The reviewed mechanism is
-      the five service-role-only RPCs from Task 041
+      authorized administrative process against production. The five
+      service-role-only RPCs from Task 041
       (`provision_clinic_v1`/`suspend_clinic_v1`/`resume_clinic_v1`/
-      `prepare_clinic_offboarding_v1`/`finalize_clinic_offboarding_v1`, not
-      wired to any public route) — see
-      [`docs/clinic-lifecycle.md`](clinic-lifecycle.md) for the exact pilot
-      activation and offboarding order.
+      `prepare_clinic_offboarding_v1`/`finalize_clinic_offboarding_v1`) remain
+      the only mechanism for offboarding and for any production write not
+      covered below — see [`docs/clinic-lifecycle.md`](clinic-lifecycle.md)
+      for the exact pilot activation and offboarding order. As of Task 047,
+      `/admin` additionally offers a bounded, MFA-gated self-serve path for
+      **provision (always suspended), suspend, and resume only** — see
+      [`docs/platform-admin-overview.md`](platform-admin-overview.md#klinik-yaşam-döngüsü-kontrolleri-görev-047).
+      This does **not** replace the manual process: `/admin` never creates an
+      Auth user, invites staff, writes a Meta credential (`phone_number_id`
+      is metadata only — no access token/app secret/webhook secret/WABA token
+      field exists), verifies external setup, offboards a clinic, or exposes
+      customer content. A clinic provisioned from `/admin` is not usable
+      until its WhatsApp credentials, Cloudflare secrets, and `/ready`/Meta
+      webhook checks below are completed and it is explicitly resumed. Task
+      047's migration and corrected rollback fixture passed only on disposable
+      `vetai-test` with zero fixture residue; this did not write migration
+      history and did not change staging or production. The self-serve path is
+      not usable until the mandatory Opus review passes and staging activation
+      (`docs/staging-runbook.md`) is complete.
 - [ ] Seed at least one future appointment slot before the smoke journey in
       §5 needs an `EVET`/`HAYIR` appointment decision. Since Task 044, this no
       longer requires a manual service-role write: the clinic's own `admin`

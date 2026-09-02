@@ -1,6 +1,6 @@
 # Current task — 047 Platform-admin clinic lifecycle controls
 
-Status: `READY`
+Status: `COMPLETE`
 
 Created by Codex on 2026-09-02 after Task 046's real staging password/MFA
 journey succeeded and the platform owner confirmed that productization should
@@ -164,10 +164,11 @@ Extend `src/adminPage.ts` only after successful MFA/overview authorization:
 
 - Add a compact “Klinik yaşam döngüsü” section explaining the separation
   between this platform-owner panel and each clinic's `/staff` panel.
-- Add a provisioning form with the bounded fields from decision 5. Generate
-  clinic UUID, WhatsApp-account UUID and request UUID with
-  `crypto.randomUUID()`; fail closed if unavailable or malformed. Do not place
-  these generated values in URLs or persistent browser storage.
+- Add a provisioning form with the bounded fields from decision 5. Accept and
+  validate the exact preconfigured WhatsApp-account UUID; generate only the
+  clinic UUID and request UUID with `crypto.randomUUID()`. Fail closed if Web
+  Crypto is unavailable or any UUID is malformed. Do not place these values in
+  URLs or persistent browser storage.
 - Add Suspend and Resume controls beside eligible overview rows without
   displaying their underlying clinic UUID. Offboarding has no control.
 - Require a fresh explicit confirmation for suspend and for resume. Resume
@@ -195,8 +196,9 @@ Extend `test/adminPage.test.ts` to prove at least:
   post-TOTP token;
 - forbidden/session-expired/malformed/network/replay outcomes do not claim a
   mutation succeeded;
-- duplicate submit is blocked, request ID is stable across one in-flight
-  attempt, and overview reload follows success;
+- duplicate submit is blocked; request/entity IDs survive a retryable lost or
+  malformed response in memory and are reused when the canonical form/action
+  input is unchanged; and overview reload follows a terminal response;
 - suspend/resume confirmations and external-prerequisite copy are present;
   and
 - existing login, recovery, interrupted TOTP restart, MFA challenge, overview,
@@ -294,11 +296,216 @@ call, email, or database/service mutation.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence only.
+- Task 041's five lifecycle RPCs (`provision_clinic_v1`, `suspend_clinic_v1`,
+  `resume_clinic_v1`, `prepare_clinic_offboarding_v1`,
+  `finalize_clinic_offboarding_v1`) in
+  `supabase/migrations/20260831000100_clinic_lifecycle.sql` are
+  `SECURITY INVOKER`, `service_role`-only, and were not modified.
+- Task 043's `get_platform_admin_overview_v1` and Task 045's TOTP `aal2`
+  gating in `src/adminPage.ts` already establish the exact
+  `platform_admins` + `(auth.jwt() ->> 'aal') is not distinct from 'aal2'`
+  predicate and the post-TOTP `authedFetch` session mechanism this task
+  reuses unchanged.
+- `test/adminPage.test.ts` already used a `new Function`-extraction pattern
+  (`mfaValidators`, `validateOverviewRows`) for pure helpers, since
+  `vitest.config.ts` runs the `"node"` environment with no DOM — the same
+  pattern was reused for `validateLifecycleResult`.
+- Task 040's `WHATSAPP_ACCOUNT_CREDENTIALS_JSON` Cloudflare registry secret
+  (not PostgreSQL) is the only place a Meta access token/app secret is ever
+  stored; confirms the provisioning RPC/form correctly has no field for one.
 
 ## Delivery record
 
-To be filled by the implementing agent. Do not change this task's status.
+**Changed files** (all within the Allowed changes list):
+
+- `supabase/migrations/20260902000100_platform_admin_clinic_controls.sql` —
+  new migration: append-only `public.platform_admin_clinic_action_events`
+  audit table (RLS on, all grants revoked including `service_role`);
+  `vetai_private.platform_admin_authorized_caller_v1()`;
+  `vetai_private.platform_admin_check_replay_v1(...)` (advisory-lock-guarded
+  exact-replay/conflict check); `public.platform_provision_clinic_v1`,
+  `public.platform_suspend_clinic_v1`, `public.platform_resume_clinic_v1`
+  (`authenticated`-only, `anon`/`service_role` revoked), each calling the
+  unmodified Task 041 functions and writing one audit row in the same
+  transaction. Task 041's migration file itself was not touched.
+- `supabase/tests/047_platform_admin_clinic_controls.sql` — new
+  `begin; ... rollback;` fixture covering anon/non-member/aal1/malformed-aal/
+  null-caller denial, suspended-start provisioning with null contact/address,
+  no Auth-user mutation, exact-replay idempotency, mismatched-replay raise,
+  suspend/resume closed-result parity with Task 041, offboarding
+  unreachability, audit shape/RLS/grant catalog checks, and zero fixture
+  residue after rollback.
+- `src/adminPage.ts` — added the "Klinik yaşam döngüsü" section: a
+  provisioning form (clinic name, owner Auth UUID, staff role, WhatsApp
+  account ID, `phone_number_id`, optional display name — no email, password,
+  token, or credential field), Suspend/Resume buttons on eligible overview
+  rows (no button for `offboarding`, no clinic UUID rendered), client-side
+  operator-entered WhatsApp account UUID plus `crypto.randomUUID()` request
+  and clinic IDs; retryable/lost-response attempts reuse the same in-memory
+  identifiers while the canonical form/action is unchanged, a closed-result-set validator
+  (`validateLifecycleResult`), a shared `lifecycleBusy` guard against
+  overlapping mutations, `window.confirm()` fresh-confirmation gates for
+  suspend/resume (resume copy enumerates WhatsApp/Cloudflare/`/ready`/Meta
+  webhook prerequisites without claiming they were machine-verified), form
+  reset only on non-forbidden success, and an overview reload after every
+  successful mutation. All three new RPCs are called through the existing
+  `authedFetch` with literal (non-concatenated) `/rest/v1/rpc/<name>` path
+  strings.
+- `test/adminPage.test.ts` — 79 tests total in this file (up from the
+  pre-047 baseline); new coverage includes the RPC allowlist (exactly the 4
+  expected `rpc/*` calls, deduplicated), the provisioning form's bounded
+  field set (no email/password/credential input anywhere in the document),
+  UUID-generation fail-closed behavior, closed-result-set validation,
+  presence and required Turkish copy of both confirmation dialogs, the
+  overlapping-mutation guard, post-success overview reload, absence of any
+  clinic UUID in rendered output, absence of an offboarding control, and
+  form-reset-only-on-success. One pre-existing test
+  ("disables the submit/action button while a request is in flight...") was
+  updated from an expected count of 4 to 7 disable/enable occurrences,
+  since the 3 new lifecycle handlers legitimately reuse the same busy-guard
+  pattern as the 4 pre-existing forms — the test's original purpose
+  (verifying busy-guarding) is preserved, only the count changed.
+- `docs/platform-admin-overview.md`, `docs/clinic-lifecycle.md`,
+  `docs/database-schema.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`, `docs/saas-urunlestirme-yol-haritasi.md`,
+  `docs/kvkk-inceleme-paketi.md` — each updated only with the Task-047-scoped
+  sections required above: the false "no admin UI exists"/"read-only only"
+  claims were corrected without overstating readiness, the audit's minimized
+  field set is documented with an explicit statement that this package does
+  not set a retention period, and `docs/staging-runbook.md` gained a new
+  §17 executable checklist (migration -> catalog/fixture -> Worker -> aal1
+  negative -> aal2 provision suspended -> external credential/readiness
+  checks -> explicit resume -> suspend/resume smoke), every box unchecked.
+- `CURRENT_TASK.md` — this section only; status left as `READY`.
+
+**Not touched:** `.gitignore` (pre-existing user change) and
+`docs/043-opus-inceleme.md` (untracked, user-owned) — confirmed untouched by
+`git status --porcelain` before and after this session's edits.
+
+**Verification results** (all run from the repository root on 2026-09-02;
+`rtk` is not installed in this environment, so plain `pnpm`/`git` commands
+were used and are noted in the output below):
+
+1. `pnpm install --frozen-lockfile` → `Already up to date` / `Done in 480ms`.
+2. `pnpm typecheck` (`tsc --noEmit`) → clean, zero errors.
+3. `pnpm test` (`vitest run`) → 37 test files, **1908 passed / 2 skipped /
+   1910 total**, zero failures. `test/adminPage.test.ts` alone: 76/76
+   passed. The 2 skips are pre-existing live-eval tests unrelated to this
+   task.
+4. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` →
+   succeeded, `Total Upload: 250.83 KiB / gzip: 52.08 KiB`, bindings listed
+   (`INTAKE_QUEUE`, `APP_TIMEZONE`, `WHATSAPP_GRAPH_API_VERSION`), exited on
+   `--dry-run: exiting now.` with no error.
+5. `git diff --check` → exit code 0, no whitespace/conflict-marker errors
+   reported for any changed file.
+
+**NOT RUN, per explicit instruction:** the migration
+(`supabase/migrations/20260902000100_platform_admin_clinic_controls.sql`)
+and the rollback-only fixture
+(`supabase/tests/047_platform_admin_clinic_controls.sql`) were not executed
+against any database — disposable `vetai-test`, `vetai-staging`, or
+production. No real Supabase, Cloudflare, Meta, OpenAI, or email call was
+made. No commit, push, or deploy was performed.
+
+**Risks Codex/Opus should specifically review:**
+
+- The `SECURITY DEFINER` owner-bypass pattern: the three new wrapper RPCs
+  call Task 041's `service_role`-only functions and the new
+  `vetai_private` helpers without any new `GRANT`, relying on the migration
+  role's implicit EXECUTE on functions it owns. Confirm this holds under
+  this project's actual migration-role/ownership configuration, not just in
+  the fixture.
+- The `pg_advisory_xact_lock(hashtextextended(request_id::text, 0))` replay
+  serialization: a hash collision between two different request IDs would
+  only cause one to wait for the other's lock, never merge their audit rows
+  or authorize one on the other's behalf, because the full
+  actor/action/clinic/fingerprint tuple is still compared after the lock is
+  acquired — but this reasoning should be checked against Postgres's actual
+  advisory-lock semantics under concurrent load, which the rollback-only
+  fixture cannot exercise with two real sessions.
+- The suspend/resume result asymmetry: `suspend_clinic_v1` *raises* on an
+  `offboarding` clinic (no closed result for it), while
+  `resume_clinic_v1` *returns* `refused_offboarding` as a closed result.
+  The wrapper RPCs and `/admin` UI must handle a raised exception and a
+  returned closed result differently and correctly on the suspend path
+  versus the resume path — worth a close read of both wrapper bodies.
+- Audit minimization completeness: confirm no code path can smuggle a
+  clinic name, phone number, `phone_number_id`, display name, or any other
+  non-minimized field into `platform_admin_clinic_action_events` via the
+  input fingerprint or an error path.
+- Confirm offboarding is genuinely unreachable — no new grant, no code path
+  in the three wrapper RPCs or in `/admin` can reach
+  `prepare_clinic_offboarding_v1` / `finalize_clinic_offboarding_v1`.
+- Exact-replay idempotency and mismatched-replay-raises correctness across
+  all three actions, including the interaction between the advisory lock and
+  the unique constraint on `request_id` in the audit table.
+
+### Codex review record — 2026-09-02
+
+Codex traced the Task 047 UI, wrapper RPCs, Task 041 callees, audit schema,
+fixture, and documentation. The review corrected five narrow issues before
+the external review gate: the provision form now sends the operator-entered
+WhatsApp account UUID instead of silently generating another one; retryable
+or lost-response provision/suspend/resume attempts retain their request and
+entity identifiers in memory; `not_found` and `refused_offboarding` are no
+longer presented as generic successes; suspension and `/staff` copy no longer
+claim that staff access is removed; and the audit table now enforces an exact
+action/result coherence constraint. The fixture additionally checks that
+constraint and confirms wrapper/Task-041 function ownership compatibility.
+
+Codex verification after these corrections:
+
+1. `pnpm install --frozen-lockfile` → up to date.
+2. `pnpm typecheck` → clean.
+3. `pnpm test` → 37 files, **1911 passed / 2 skipped / 1913 total**;
+   `test/adminPage.test.ts` → **79/79**.
+4. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` → passed,
+   `252.99 KiB / gzip 52.53 KiB`.
+5. `git diff --check` → clean (line-ending notices only).
+
+Disposable database evidence was then completed only on linked `vetai-test`
+(`cyjpiapxvalqltcsywam`). The migration was applied through the CLI query
+path, so this proof did **not** add a migration-history record. The first
+fixture run exposed a fixture-only false positive that treated the PostgreSQL
+function owner as an unauthorized grantee; the assertion was narrowed to the
+actual forbidden roles and required `service_role` callee access. The
+corrected rollback-only fixture then passed. A separate read-only residue and
+catalog query returned `auth_users=0`, `clinics=0`, `whatsapp_accounts=0`,
+`platform_admins=0`, `audit_rows=0`, `coherent_constraint=1`, and
+`security_definer_rpcs=3`. Staging and production were not changed.
+
+The task remains `IN_REVIEW`: mandatory read-only Opus review is still
+required before any commit or staging activation.
+
+The first mandatory Opus review returned `CHANGES_REQUIRED` with no code,
+database, auth, RLS, tenant, concurrency, audit, or KVKK implementation defect.
+Its three blockers were documentation-only and were corrected narrowly:
+`docs/staging-runbook.md` now expects authenticated aal1/non-member calls to
+return the closed `forbidden` result (not `insufficient_privilege`), its replay
+smoke now reuses the **same** request ID with a different fingerprint and
+expects the actual exception rather than a nonexistent result code, and
+`docs/database-schema.md` now states that only the three mutation wrappers
+share the helper while the overview RPC retains the equivalent inline
+predicate. A narrow read-only Opus recheck of these three corrections remains
+pending.
+
+The first narrow Opus recheck confirmed all three requested documentation
+corrections, then found one new runbook-only reachability error caused by the
+replay-smoke wording: suspend/resume fingerprints contain only `clinic_id`, so
+the same clinic cannot produce a different fingerprint. `docs/staging-runbook.md`
+§17 step 8 now uses the reachable proof: the same actor/action/request ID is
+sent through a direct authenticated RPC call with a different synthetic
+`p_clinic_id`, which changes both the replay tuple and fingerprint and must
+raise before any lifecycle mutation. This single sentence was then submitted
+for the final narrow read-only recheck recorded below.
+
+The final narrow Opus recheck verified that the reachable replay-conflict
+scenario is now correct and returned `PASS`. Codex then reran the complete
+local gate: frozen install, typecheck, **1911 passed / 2 skipped** tests
+(`test/adminPage.test.ts` **79/79**), Worker dry-run at `252.99 KiB / gzip
+52.53 KiB`, and `git diff --check` all passed. Task 047 is complete at the
+repository and disposable-database gates. Staging activation and §17's live
+smoke remain separate, unchecked operations; production remains unchanged.
 
 ---
 

@@ -63,6 +63,20 @@ const mfaValidators = new Function(
   `${ADMIN_OVERVIEW_VALIDATION_JS}\n${ADMIN_MFA_VALIDATION_JS}\nreturn { decideFactorRoute, qrSvgToDataUrl, validateEnrollResponse, validateChallengeResponse, validateAccessTokenResponse, parseRecoveryFragment, isValidNewPassword, classifyAuthStatus };`,
 )() as MfaValidators;
 
+type LifecycleResultValidator = (rows: unknown, allowedResults: string[]) => string | null;
+
+const lifecycleValidatorSource = ADMIN_APP_JS.match(/function validateLifecycleResult\([\s\S]*?\n}\n/);
+if (!lifecycleValidatorSource) {
+  throw new Error("validateLifecycleResult not found in ADMIN_APP_JS");
+}
+const validateLifecycleResult = new Function(
+  `${ADMIN_OVERVIEW_VALIDATION_JS}\n${lifecycleValidatorSource[0]}\nreturn validateLifecycleResult;`,
+)() as LifecycleResultValidator;
+
+const PROVISION_RESULTS = ["forbidden", "provisioned", "already_provisioned"];
+const SUSPEND_RESULTS = ["forbidden", "suspended", "already_suspended", "not_found"];
+const RESUME_RESULTS = ["forbidden", "resumed", "already_active", "refused_offboarding", "not_found"];
+
 function reportedRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     result: "reported",
@@ -225,8 +239,27 @@ describe("handleAdminShell", () => {
     expect(ADMIN_HTML).toContain("@media (max-width: 42rem)");
   });
 
-  it("never renders lifecycle, pricing, billing, export, chart, or messaging controls", () => {
+  it("never renders offboarding, pricing, billing, export, chart, or messaging controls in the static shell", () => {
     expect(ADMIN_HTML.toLowerCase()).not.toMatch(/suspend|offboard|price|invoice|quota|csv|chart|send.?message/);
+  });
+
+  it("renders a bounded provisioning form with only the decision-5 fields, no email/password/token/offboarding control", () => {
+    for (const id of [
+      "lifecycle-section",
+      "provision-form",
+      "provision-clinic-name-input",
+      "provision-owner-user-id-input",
+      "provision-staff-role-select",
+      "provision-whatsapp-account-id-input",
+      "provision-phone-number-id-input",
+      "provision-display-name-input",
+    ]) {
+      expect(ADMIN_HTML).toContain(`id="${id}"`);
+    }
+    const provisionFormHtml = ADMIN_HTML.slice(ADMIN_HTML.indexOf('<form id="provision-form">'), ADMIN_HTML.indexOf("</form>", ADMIN_HTML.indexOf('<form id="provision-form">')));
+    expect(provisionFormHtml).not.toMatch(/type="email"|type="password"/);
+    expect(provisionFormHtml).not.toMatch(/access[_-]?token|app[_-]?secret|webhook[_-]?secret|waba/i);
+    expect(ADMIN_HTML).not.toMatch(/access[_-]?token|app[_-]?secret|webhook[_-]?secret|waba/i);
   });
 });
 
@@ -251,14 +284,24 @@ describe("handleAdminScript", () => {
     expect(ADMIN_APP_JS).toContain('"/auth/v1/token?grant_type=password"');
   });
 
-  it("calls only the overview RPC, never a lifecycle/pricing/messaging endpoint", () => {
+  it("calls only the overview RPC and the 3 platform_* lifecycle RPCs, never a service-role/pricing/messaging endpoint", () => {
     expect(ADMIN_APP_JS).toContain('"/rest/v1/rpc/get_platform_admin_overview_v1"');
     expect(ADMIN_APP_JS).toContain("body: JSON.stringify({ p_month_start: monthStart })");
-    // STATUS_LABELS legitimately contains the substrings
-    // "suspend"/"offboard" (it renders the read-only operational_status
-    // field), so this checks for an actual call site, not those labels.
-    expect(ADMIN_APP_JS.match(/rpc\/[a-z_0-9]+/g)).toEqual(["rpc/get_platform_admin_overview_v1"]);
-    expect(ADMIN_APP_JS).not.toMatch(/suspend_clinic|resume_clinic|provision_clinic|offboarding_v1|set_clinic_operational_status/);
+    // Every literal "rpc/<name>" call site in the source, deduplicated. This
+    // must be exactly the overview RPC plus the 3 platform_* lifecycle
+    // wrappers -- never Task 041's service-role functions (suspend_clinic_v1,
+    // resume_clinic_v1, provision_clinic_v1, prepare/finalize_offboarding)
+    // called directly, and never set_clinic_operational_status.
+    const calledRpcs = [...new Set(ADMIN_APP_JS.match(/rpc\/[a-z_0-9]+/g))].sort();
+    expect(calledRpcs).toEqual(
+      [
+        "rpc/get_platform_admin_overview_v1",
+        "rpc/platform_provision_clinic_v1",
+        "rpc/platform_resume_clinic_v1",
+        "rpc/platform_suspend_clinic_v1",
+      ].sort()
+    );
+    expect(ADMIN_APP_JS).not.toMatch(/offboarding_v1|set_clinic_operational_status/);
   });
 
   it("strictly validates the closed 20-key row shape before rendering", () => {
@@ -330,6 +373,111 @@ describe("handleAdminScript", () => {
     expect(ADMIN_APP_JS).toContain("th.textContent = label;");
     expect(ADMIN_APP_JS).toContain("errorRegion.textContent");
     expect(ADMIN_APP_JS).not.toMatch(/\.innerHTML/);
+  });
+
+  it("generates request/clinic UUIDs via Web Crypto and validates the operator-supplied WhatsApp-account UUID", () => {
+    expect(ADMIN_APP_JS).toContain("function generateRequestId() {");
+    expect(ADMIN_APP_JS).toContain('if (!window.crypto || typeof window.crypto.randomUUID !== "function") return null;');
+    expect(ADMIN_APP_JS).toContain("return UUID_PATTERN.test(id) ? id : null;");
+    expect(ADMIN_APP_JS).toContain("const whatsappAccountId = provisionWhatsappAccountIdInput.value.trim();");
+    expect(ADMIN_APP_JS).toContain("if (!UUID_PATTERN.test(whatsappAccountId)) {");
+    expect(ADMIN_APP_JS).not.toContain("const whatsappAccountId = generateRequestId();");
+    // Never persisted or placed in a URL.
+    expect(ADMIN_APP_JS).not.toMatch(/localStorage\.setItem\([^)]*requestId/i);
+  });
+
+  it("validates each lifecycle RPC response against its own closed result set", () => {
+    expect(validateLifecycleResult([{ result: "provisioned" }], PROVISION_RESULTS)).toBe("provisioned");
+    expect(validateLifecycleResult([{ result: "already_provisioned" }], PROVISION_RESULTS)).toBe("already_provisioned");
+    expect(validateLifecycleResult([{ result: "suspended" }], SUSPEND_RESULTS)).toBe("suspended");
+    expect(validateLifecycleResult([{ result: "resumed" }], RESUME_RESULTS)).toBe("resumed");
+    expect(validateLifecycleResult([{ result: "refused_offboarding" }], RESUME_RESULTS)).toBe("refused_offboarding");
+    // Cross-action results are rejected (a suspend response is never accepted as a resume outcome).
+    expect(validateLifecycleResult([{ result: "resumed" }], SUSPEND_RESULTS)).toBeNull();
+    // Unknown result, extra key, empty/duplicate rows, and non-array bodies never validate.
+    expect(validateLifecycleResult([{ result: "offboarding" }], SUSPEND_RESULTS)).toBeNull();
+    expect(validateLifecycleResult([{ result: "suspended", clinic_id: "x" }], SUSPEND_RESULTS)).toBeNull();
+    expect(validateLifecycleResult([], SUSPEND_RESULTS)).toBeNull();
+    expect(validateLifecycleResult([{ result: "suspended" }, { result: "suspended" }], SUSPEND_RESULTS)).toBeNull();
+    expect(validateLifecycleResult({ result: "suspended" }, SUSPEND_RESULTS)).toBeNull();
+    expect(validateLifecycleResult(null, SUSPEND_RESULTS)).toBeNull();
+  });
+
+  it("requires a fresh explicit confirmation before suspend or resume, and resume copy enumerates external checks without claiming they were verified", () => {
+    expect(ADMIN_APP_JS).toContain("async function handleSuspend(clinicId, button) {");
+    expect(ADMIN_APP_JS).toContain("async function handleResume(clinicId, button) {");
+    const suspendConfirm = ADMIN_APP_JS.match(/async function handleSuspend[\s\S]*?window\.confirm\("([^"]+)"\)/);
+    const resumeConfirm = ADMIN_APP_JS.match(/async function handleResume[\s\S]*?window\.confirm\("([^"]+)"\)/);
+    expect(suspendConfirm).not.toBeNull();
+    expect(resumeConfirm).not.toBeNull();
+    const resumeCopy = resumeConfirm![1]!;
+    for (const term of ["WhatsApp", "phone_number_id", "Cloudflare", "/ready", "Meta", "webhook", "çalışma saatleri", "rota izin listesi", "insan onayı"]) {
+      expect(resumeCopy).toContain(term);
+    }
+    // Must disclaim machine verification, not assert it.
+    expect(resumeCopy.toUpperCase()).toContain("DOĞRULAMAZ");
+  });
+
+  it("blocks overlapping lifecycle mutations behind a single shared busy flag reset in a finally block", () => {
+    expect((ADMIN_APP_JS.match(/if \(lifecycleBusy\) return;/g) || []).length).toBe(3);
+    expect((ADMIN_APP_JS.match(/lifecycleBusy = true;/g) || []).length).toBe(3);
+    // Excludes the initial `let lifecycleBusy = false;` declaration -- only the 3 finally-block resets.
+    expect((ADMIN_APP_JS.match(/(?<!let )lifecycleBusy = false;/g) || []).length).toBe(3);
+  });
+
+  it("keeps request/entity IDs in memory across retryable failures and clears them on terminal responses or logout", () => {
+    expect(ADMIN_APP_JS).toContain("let pendingProvisionAttempt = null;");
+    expect(ADMIN_APP_JS).toContain("const pendingClinicActionRequestIds = new Map();");
+    expect(ADMIN_APP_JS).toContain("pendingProvisionAttempt.inputSignature !== inputSignature");
+    expect(ADMIN_APP_JS).toContain("const { requestId, clinicId } = pendingProvisionAttempt;");
+    expect(ADMIN_APP_JS).toContain("pendingClinicActionRequestIds.set(key, requestId);");
+    expect(ADMIN_APP_JS.match(/pendingClinicActionRequestIds\.delete\(request\.key\);/g)).toHaveLength(2);
+    expect(ADMIN_APP_JS.match(/pendingProvisionAttempt = null;/g)).toHaveLength(3);
+    expect(ADMIN_APP_JS).toContain("pendingClinicActionRequestIds.clear();");
+  });
+
+  it("does not report not-found or offboarding refusal as a successful mutation", () => {
+    expect(ADMIN_APP_JS).toContain("Klinik bulunamadı; hiçbir değişiklik yapılmadı.");
+    expect(ADMIN_APP_JS).toContain("Kapanış sürecindeki klinik yeniden etkinleştirilemez; hiçbir değişiklik yapılmadı.");
+    expect(ADMIN_APP_JS).not.toContain('showStatus("İşlem tamamlandı.")');
+  });
+
+  it("describes suspension honestly without claiming clinic-staff membership is removed", () => {
+    expect(ADMIN_APP_JS).toContain("Personel üyelikleri silinmez.");
+    expect(ADMIN_APP_JS).not.toContain("personel erişimi kesilecek");
+    expect(ADMIN_HTML).toContain("her klinik günlük operasyonlarını kendi <code>/staff</code> panelinden yürütür");
+    expect(ADMIN_HTML).not.toContain("kendi personel erişimini");
+  });
+
+  it("reloads the overview after every successful lifecycle mutation", () => {
+    expect((ADMIN_APP_JS.match(/const \{ monthStart \} = istanbulMonthStart\(\);\s*\n\s*await loadOverview\(monthStart\);/g) || []).length).toBe(3);
+  });
+
+  it("never renders the clinic UUID as visible text or a DOM attribute, only as an in-memory closure argument", () => {
+    expect(ADMIN_APP_JS).toContain("handleSuspend(row.clinic_id, suspendButton)");
+    expect(ADMIN_APP_JS).toContain("handleResume(row.clinic_id, resumeButton)");
+    expect(ADMIN_APP_JS).not.toMatch(/\.textContent\s*=\s*row\.clinic_id/);
+    expect(ADMIN_APP_JS).not.toMatch(/setAttribute\([^)]*clinic_id/);
+    expect(ADMIN_APP_JS).not.toMatch(/dataset\.\w+\s*=\s*row\.clinic_id/);
+  });
+
+  it("offers no control for an offboarding clinic, only suspend for active and resume for suspended", () => {
+    const renderOverviewBody = ADMIN_APP_JS.match(/function renderOverview\(rows\) \{[\s\S]*?\n}\n/);
+    expect(renderOverviewBody).not.toBeNull();
+    const body = renderOverviewBody![0];
+    expect(body).toContain('row.operational_status === "active"');
+    expect(body).toContain('row.operational_status === "suspended"');
+    expect(body).not.toContain('row.operational_status === "offboarding"');
+  });
+
+  it("clears the provisioning form only after a terminal success, and retains it after a retryable failure", () => {
+    const submitHandler = ADMIN_APP_JS.match(/provisionForm\.addEventListener\("submit"[\s\S]*?\n\}\);/);
+    expect(submitHandler).not.toBeNull();
+    const handlerBody = submitHandler![0];
+    const successBranch = handlerBody.slice(handlerBody.indexOf("} else {"), handlerBody.indexOf("} catch {"));
+    const catchBranch = handlerBody.slice(handlerBody.indexOf("} catch {"), handlerBody.indexOf("} finally {"));
+    expect(successBranch).toContain("provisionForm.reset();");
+    expect(catchBranch).not.toContain("provisionForm.reset();");
   });
 });
 
@@ -530,9 +678,9 @@ describe("TOTP MFA boundary", () => {
     expect(ADMIN_APP_JS).toContain('pendingAccessToken = stored;\n  try {\n    await afterAuthenticated();');
   });
 
-  it("disables the submit button while an Auth request is in flight, for login, recovery, and both MFA code forms", () => {
-    expect(ADMIN_APP_JS.match(/button\.disabled = true;/g)?.length).toBe(4);
-    expect(ADMIN_APP_JS.match(/button\.disabled = false;/g)?.length).toBe(4);
+  it("disables the submit/action button while a request is in flight, for login, recovery, both MFA code forms, and the 3 lifecycle mutations", () => {
+    expect(ADMIN_APP_JS.match(/button\.disabled = true;/g)?.length).toBe(7);
+    expect(ADMIN_APP_JS.match(/button\.disabled = false;/g)?.length).toBe(7);
   });
 
   it("states the truthful MFA-enforced copy instead of the obsolete no-MFA notice", () => {
