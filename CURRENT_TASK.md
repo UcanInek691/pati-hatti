@@ -1,4 +1,308 @@
-# Current task — 046 Secure platform-admin password recovery
+# Current task — 047 Platform-admin clinic lifecycle controls
+
+Status: `READY`
+
+Created by Codex on 2026-09-02 after Task 046's real staging password/MFA
+journey succeeded and the platform owner confirmed that productization should
+continue. This is the smallest useful write-enabled `/admin` slice: create a
+suspended clinic, suspend an active clinic, or resume a suspended clinic with
+an append-only operator audit record. It deliberately does not automate Auth
+invitations, Meta credential entry, destructive offboarding, billing, or
+content access.
+
+## Goal
+
+Let an MFA-verified platform administrator perform the three non-destructive
+clinic lifecycle actions already supported by Task 041 from the existing
+`/admin` page, without exposing `service_role`, Meta credentials, customer
+messages, phone numbers, pet/owner data, or arbitrary database access.
+
+## Fixed product and security decisions
+
+1. Reuse the existing shared Cloudflare Worker, Supabase project, `/admin`
+   authentication flow, `platform_admins` allowlist, exact JWT `aal2` check,
+   Task 041 lifecycle RPCs, native browser APIs, and current dependencies.
+   Add no SDK, framework, dependency, separate tenant deployment, cookie,
+   server session, or arbitrary-SQL surface.
+2. The write boundary is enforced in PostgreSQL, not only in HTML or
+   JavaScript. Every new mutation RPC is `SECURITY DEFINER`, has
+   `search_path = ''`, schema-qualifies all references, uses no dynamic SQL,
+   and independently requires both `auth.uid()` membership in
+   `public.platform_admins` and the exact null-safe predicate
+   `(auth.jwt() ->> 'aal') is not distinct from 'aal2'` so three-valued SQL
+   logic cannot bypass the check.
+3. Only three actions are in scope:
+   - provision one clinic in Task 041's mandatory `suspended` state;
+   - suspend one `active` clinic;
+   - resume one `suspended` clinic.
+   Offboarding/final deletion remains the existing operator runbook and must
+   not be callable from `/admin` in this task.
+4. Provisioning requires an already-existing, confirmed Supabase Auth user
+   UUID for the clinic's first staff member. The panel does not create, invite,
+   search, display, reset, or delete Auth users and never accepts an email or
+   password. Branded SMTP and staff invitations are a separate follow-up gate.
+5. Provisioning accepts only clinic name, first staff Auth UUID and role,
+   internal WhatsApp-account UUID, Meta `phone_number_id`, and optional display
+   name. It passes `null` for clinic contact E.164 and public address. No access
+   token, app secret, webhook secret, WABA token, customer phone number, owner,
+   pet, message, or clinical content may enter the form, database audit, URL,
+   DOM status copy, logs, tests, or documentation examples.
+6. A provisioned clinic is never activated automatically. The UI must state
+   that the exact `(whatsapp_account_id, phone_number_id)` credential entry,
+   Cloudflare secret update, `/ready`, Meta webhook/configuration checks,
+   clinic schedule, route allowlist and human approval gates must be completed
+   before resume. The resume control requires an explicit operator
+   confirmation, but documentation must not pretend that the checkbox itself
+   verifies Cloudflare or Meta.
+7. All three actions are idempotent under one browser-generated canonical UUID
+   request ID. Reusing a request ID with the same actor, action, clinic and
+   canonical input returns the recorded result without repeating the action;
+   any mismatched reuse raises and performs no mutation. The browser retains a
+   request ID only in memory for the duration of one pending submission and
+   creates a fresh one after a terminal response.
+8. Every authorized terminal attempt is written atomically with its lifecycle
+   mutation to an append-only audit table. The audit contains only request ID,
+   actor Auth UUID, target clinic UUID, closed action, closed result, a one-way
+   SHA-256 input fingerprint, and timestamp. It contains no clinic name,
+   `phone_number_id`, display name, email, phone number, address, token,
+   message, owner/pet identifier, or error body. Forbidden requests write no
+   audit row.
+9. The audit table has RLS enabled with no browser policy and no table grant to
+   `anon` or `authenticated`. New mutation RPCs are granted only to
+   `authenticated`; direct execution by `anon` and `service_role` is revoked.
+   Existing service-role-only Task 041 functions and their grants remain
+   unchanged.
+10. The `/admin` overview remains metadata-only. It may use the already-returned
+    clinic UUID internally to target a row, but must not render new identifiers
+    beyond the existing clinic name/status presentation. No cross-clinic
+    content query or RLS exception is added.
+11. Malformed provider/RPC data, missing Web Crypto UUID support, expired or
+    non-`aal2` sessions, ambiguous results, duplicate submissions, network
+    failures and stale clinic state fail closed with fixed Turkish copy. A
+    mutation button is disabled while its request is in flight; a successful
+    action reloads the overview from the database before another action.
+12. Production remains untouched. The implementer performs local/static work
+    only. After Codex review and mandatory Opus review, migration and fixture
+    may run first on disposable `vetai-test`; staging activation requires a
+    separate explicit user approval and must follow migration-before-Worker.
+
+## Required database implementation
+
+Create
+`supabase/migrations/20260902000100_platform_admin_clinic_controls.sql`.
+
+### Append-only audit table
+
+Add `public.platform_admin_clinic_action_events` with exactly the minimized
+fields in decision 8. Enforce canonical UUIDs/types through PostgreSQL column
+types, closed action/result CHECKs, a 64-lowercase-hex fingerprint CHECK, a
+unique request ID, and a non-null timestamp. Do not add UPDATE/DELETE RPCs,
+browser policies, or a foreign key whose cascade would erase the audit when a
+clinic/Auth user is later removed.
+
+### Shared authorization and replay rules
+
+Use one private helper for the exact `platform_admins + aal2` authorization
+decision and one private helper or equivalent repeated-safe logic for request
+replay. Private helpers must not be executable by browser roles. Invalid typed
+input may raise before authorization because PostgREST performs casts, but no
+application-table or audit mutation may occur before authorization succeeds.
+
+For a new request, take the necessary locks in a consistent order, call the
+existing Task 041 service-only lifecycle function, and insert its closed result
+into the audit in the same transaction. For an exact replay, return the stored
+result without calling the lifecycle function again. A request ID collision
+with different actor/action/clinic/fingerprint must raise. Serialize the first
+use and replay check for one request UUID with a transaction-scoped advisory
+lock derived from that UUID before reading the audit row; a hash collision may
+cause harmless extra waiting but must not merge or authorize requests.
+
+### Public authenticated RPCs
+
+Add exactly:
+
+- `platform_provision_clinic_v1(...)` returning one `result` in
+  `forbidden | provisioned | already_provisioned`;
+- `platform_suspend_clinic_v1(p_request_id, p_clinic_id)` returning one
+  `result` in `forbidden | suspended | already_suspended | not_found`;
+- `platform_resume_clinic_v1(p_request_id, p_clinic_id)` returning one
+  `result` in
+  `forbidden | resumed | already_active | refused_offboarding | not_found`.
+
+The provision wrapper must call `provision_clinic_v1` with contact phone and
+public address fixed to SQL `null`; browser input must not be able to override
+them. Every non-forbidden row has exactly one non-null result; `forbidden` is
+the same response for missing membership, missing/invalid `aal`, or null
+caller. Do not alter the Task 041 migration or recreate its functions.
+
+## Required rollback-only SQL proof
+
+Create `supabase/tests/047_platform_admin_clinic_controls.sql` with
+`begin; ... rollback;`. It must prove at least:
+
+- `anon`, non-member `authenticated`, member-at-`aal1`, missing/malformed AAL,
+  and null caller cannot mutate or write audit rows;
+- member-at-`aal2` can provision only one suspended clinic with the exact
+  first staff and WhatsApp-account rows, with contact phone/address null;
+- provision does not create or change any Auth user and stores no email/token;
+- exact request replay returns the original result and creates one audit row;
+  mismatched replay raises with zero extra mutation;
+- suspend and resume preserve Task 041's closed results and tenant targeting;
+- offboarding cannot be initiated/finalized through any new grant;
+- audit shape, SHA-256 fingerprint, append-only/RLS/grants and absence of
+  browser table access are catalog- and behavior-checked;
+- existing Task 041 function grants remain service-role-only; and
+- all fixture rows are removed by rollback, with no global-table assumptions.
+
+The fixture must not claim to prove real two-session concurrency. Any lock or
+replay race that needs two sessions must be called out honestly for Codex's
+disposable-database review.
+
+## Required `/admin` implementation
+
+Extend `src/adminPage.ts` only after successful MFA/overview authorization:
+
+- Add a compact “Klinik yaşam döngüsü” section explaining the separation
+  between this platform-owner panel and each clinic's `/staff` panel.
+- Add a provisioning form with the bounded fields from decision 5. Generate
+  clinic UUID, WhatsApp-account UUID and request UUID with
+  `crypto.randomUUID()`; fail closed if unavailable or malformed. Do not place
+  these generated values in URLs or persistent browser storage.
+- Add Suspend and Resume controls beside eligible overview rows without
+  displaying their underlying clinic UUID. Offboarding has no control.
+- Require a fresh explicit confirmation for suspend and for resume. Resume
+  copy must enumerate the external checks from decision 6 and must not claim
+  they were machine-verified.
+- Call only the three new RPCs through the existing post-TOTP `authedFetch`.
+  Strictly validate exact response keys, one row, closed result sets and
+  result/action coherence. Never call Task 041 service-role RPCs directly.
+- Clear sensitive/operational form fields after every terminal success, retain
+  them after a retryable transport failure, prevent overlapping mutations, and
+  refresh the overview after success.
+- Preserve password recovery, TOTP, CSP, no-store headers, overview validation,
+  logout and all existing fail-closed behavior.
+
+## Required TypeScript tests
+
+Extend `test/adminPage.test.ts` to prove at least:
+
+- no service-role key, Meta token/access-token input, email/password staff
+  input, offboarding endpoint/control, or raw clinic UUID rendering is added;
+- controls render only in the authorized overview state and only for eligible
+  statuses;
+- Web Crypto UUID generation and exact input/response validation fail closed;
+- only the three named authenticated RPCs are called, using the stored
+  post-TOTP token;
+- forbidden/session-expired/malformed/network/replay outcomes do not claim a
+  mutation succeeded;
+- duplicate submit is blocked, request ID is stable across one in-flight
+  attempt, and overview reload follows success;
+- suspend/resume confirmations and external-prerequisite copy are present;
+  and
+- existing login, recovery, interrupted TOTP restart, MFA challenge, overview,
+  CSP and security-header tests remain green.
+
+## Documentation
+
+Update only the necessary Task 047 sections in:
+
+- `docs/platform-admin-overview.md`
+- `docs/clinic-lifecycle.md`
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/kvkk-inceleme-paketi.md`
+
+State plainly that the panel does not create Auth users, send invitations,
+write Meta credentials, verify external setup, perform offboarding, expose
+content, or activate production. Document the audit's minimized field set and
+the separate retention/legal decision. Add an executable staging checklist
+whose order is migration -> catalog/fixture -> Worker -> aal1 negative -> aal2
+provision suspended -> external credential/readiness checks -> explicit resume
+-> suspend/resume smoke. Leave every live checkbox unchecked for the
+implementer.
+
+## Scope boundaries
+
+Do not add staff email invitation, password reset, Auth admin endpoints,
+custom SMTP/domain, staff membership editing, offboarding/final deletion,
+Meta Embedded Signup, credential storage/editing, plan/pricing/quota/billing,
+customer-content access, break-glass support, `/staff` changes, notifications,
+composer, branding, production configuration, deployment, or external calls.
+
+The immediate follow-up after this task is expected to be branded Auth email
+delivery plus clinic staff invitation/access lifecycle. It must remain a
+separate contract because it introduces external email delivery, Auth Admin
+API side effects and orphan/reconciliation semantics.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `supabase/migrations/20260902000100_platform_admin_clinic_controls.sql`
+- `supabase/tests/047_platform_admin_clinic_controls.sql`
+- `src/adminPage.ts`
+- `test/adminPage.test.ts`
+- `docs/platform-admin-overview.md`
+- `docs/clinic-lifecycle.md`
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/kvkk-inceleme-paketi.md`
+
+The pre-existing `.gitignore` change and untracked
+`docs/043-opus-inceleme.md` are user-owned and must remain untouched.
+
+## Required verification by the implementer
+
+Run and record exactly:
+
+- `pnpm install --frozen-lockfile`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run`
+- `git diff --check`
+
+Migration and SQL fixture remain `NOT RUN` unless Codex separately authorizes
+a disposable database. Make no commit, push, deploy, real Auth/Meta/OpenAI
+call, email, or database/service mutation.
+
+## Review gates
+
+1. Codex reviews the full diff and caller/grant/lock/replay paths, reruns local
+   checks and performs disposable `vetai-test` migration/fixture proof.
+2. Claude Opus performs a mandatory read-only architecture, authentication,
+   RLS, tenant, idempotency, audit/KVKK and lifecycle-race review.
+3. Only after both pass may Codex update durable context, commit, and ask for
+   explicit staging activation approval. Production remains out of scope.
+
+## Acceptance criteria
+
+- The three lifecycle mutations are usable only by an exact
+  `platform_admins + aal2` caller and remain impossible for every clinic role
+  alone.
+- Provision always starts suspended and cannot accept contact phone/address or
+  any credential/token.
+- Each authorized action and exact replay has one minimized immutable audit
+  event; mismatched replay and forbidden calls mutate nothing.
+- Existing Task 041 grants/behavior, Task 043 overview boundary and Task
+  045/046 authentication/recovery behavior remain intact.
+- `/admin` gains no content access, arbitrary SQL, offboarding, Auth-user,
+  pricing or credential-management capability.
+- Required local checks pass; database/external checks are reported honestly.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementing agent. Do not change this task's status.
+
+---
+
+# Previous task — 046 Secure platform-admin password recovery
 
 Status: `COMPLETE` (closed 2026-09-02 after local verification and a real
 staging recovery -> password -> interrupted-enrollment restart -> TOTP ->
