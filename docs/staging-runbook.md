@@ -552,7 +552,7 @@ veteriner hekim kopya onayı, Türk hukuku/KVKK onay paketi, hukukçu onaylı
 `UNAVAILABLE` olduğu için §13'e göre gereken incelenmiş personel Cloud API
 composer'ı.
 
-## 15. Platform-admin TOTP MFA smoke (Task 045, kısmen canlı doğrulandı)
+## 15. Platform-admin TOTP MFA smoke (Task 045, tamamlandı)
 
 Bu bölüm, Task 045'in `/admin` TOTP MFA sınırını staging'de doğrulamak için
 Codex/Opus incelemesinden sonra izlenecek sırayı tarif eder. Uygulayan hiçbir
@@ -563,9 +563,10 @@ veritabanı adımı çalıştırmadı. Codex migration ve rollback-only fixture'
 yalnız `vetai-staging` üzerinde etkinleştirildi; katalog denetimi `aal2`
 yüklemini ve grant sınırlarını doğruladı. Gerçek parola-kurtarma, yarım kurulum
 yenileme, TOTP doğrulama, üyeliksiz reddi ve allowlist sonrası genel bakış
-2026-09-02'de geçti; production değişmemiştir. Tüm allowlist hesaplarının
-denetimi, fresh-session challenge ve rate-limit kanıtı hâlâ açıktır. Sıra §1
-(yetki kapısı) ve §3 (Supabase) sonrasını varsayar.
+2026-09-02'de geçti; production değişmemiştir. Eski geçersiz e-posta test
+hesabının platform yetkisi kaldırıldı, allowlist `1 / 1` doğrulanmış MFA oldu,
+fresh-session challenge geçti ve rate-limit değeri kaydedildi. Sıra §1 (yetki
+kapısı) ve §3 (Supabase) sonrasını varsayar.
 
 1. **Migration sırası.** `20260901000200_platform_admin_totp_mfa.sql`,
    Task 043'ün `20260831000300_platform_admin_overview.sql` migration'ından
@@ -650,6 +651,9 @@ hiçbir repo belgesine kaydedilmedi.
 - `aal2` oturumu allowlist üyeliği yokken tek `forbidden` sonucu gördü. Açık
   kullanıcı onayıyla backend-only bootstrap RPC'si `enabled` döndürdü; aynı
   oturumun salt-okunur yenilemesi tek staging klinik satırını gösterdi.
-- §15.5 fresh-session challenge, §15.7 MFA verify rate-limit ve §16.6'nın canlı
-  bozuk/süresi-geçmiş bağlantı denemeleri bu kanıtla kapanmadı. Birim testleri
-  fail-closed dalları kapsasa da üretim maddesi bu yüzden işaretsiz kalır.
+- Sonraki çıkış/parola girişi yeni altı haneli challenge istedi ve ancak doğru
+  koddan sonra genel bakışı açtı. Supabase Auth token-verification sınırı IP
+  başına beş dakikada 30 istek olarak kaydedildi. Eski geçersiz e-posta test
+  hesabının platform yetkisi onayla kaldırıldı; salt-okunur sayım allowlist ve
+  doğrulanmış-MFA sayısını `1 / 1` gösterdi. §16.6'nın canlı bozuk/süresi-geçmiş
+  bağlantı denemeleri yapılmadı; fail-closed dallar birim testleriyle kapsandı.

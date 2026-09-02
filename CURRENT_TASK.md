@@ -137,10 +137,14 @@ The pre-existing `.gitignore` change and untracked
   the single staging clinic overview row. No message, phone, owner, pet or
   clinical content was exposed. Production, production Auth settings and
   production data were not touched.
-- Still outside this task: verifying the already-enrolled fresh-session
-  challenge UX, inspecting the Supabase MFA verify rate limit, auditing every
-  staging allowlist member, recovery for a lost verified factor, custom SMTP,
-  custom domain and all production activation/human approval gates.
+- Same-day follow-up closed the remaining staging MFA checks: an already-
+  enrolled fresh login required a new six-digit challenge before the overview;
+  the Supabase Auth token-verification limit was confirmed as 30 requests per
+  five minutes per IP; and the obsolete invalid-email tester's platform-admin
+  membership was disabled with approval. A read-only count then proved one
+  allowlisted admin and one admin with verified MFA.
+- Still outside this task: recovery for a lost verified factor, custom SMTP,
+  custom domain and all other production activation/human approval gates.
 
 ---
 

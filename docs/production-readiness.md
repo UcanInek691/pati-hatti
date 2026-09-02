@@ -70,7 +70,7 @@ itself.
     reviewing expert; it states verified facts only and deliberately answers
     none of the above.
 
-- [ ] Multi-factor authentication is verified end-to-end, in staging, for
+- [x] Multi-factor authentication is verified end-to-end, in staging, for
       every account enrolled in `platform_admins` before `/admin` (Task 043,
       [`platform-admin-overview.md`](platform-admin-overview.md)) is used
       against real data. Task 045 added a database-enforced TOTP `aal2`
@@ -83,23 +83,25 @@ itself.
       completed memory-only password recovery, exact-one interrupted TOTP
       cleanup, fresh text-key enrollment, TOTP verification, the membership
       rejection, and the allowlisted read-only overview. Production remains
-      unchanged. This box must stay unchecked until staging
-      (`docs/staging-runbook.md`) has confirmed,
-      against a real Supabase project: the migration applies cleanly after
+      unchanged. The staging evidence in `docs/staging-runbook.md` confirmed,
+      against a real Supabase project, that the migration applies cleanly after
       the Task 043 one, a password-only session cannot read overview data,
       a fresh account is forced through TOTP enrollment before it can, an
       already-enrolled account is forced through a challenge on every new
       session, and `platform_admins` membership without a verified TOTP
-      factor (and vice versa) is still rejected. Before this box is checked,
-      an interrupted first enrollment must also be proven to remove only its
+      factor (and vice versa) is still rejected. An interrupted first
+      enrollment was also proven to remove only its
       single unverified TOTP factor and restart with one fresh enrollment
       (safe QR or the mandatory validated text key) while every
       verified, multiple, non-TOTP, or malformed factor state remains closed.
-      Before this box is checked,
-      the Supabase Auth MFA-verify rate limit for the project must also be
-      inspected and its actual configured value recorded in the staging
-      evidence; the browser does not claim to provide its own brute-force
-      boundary.
+      The Supabase Auth MFA-verify rate limit was inspected and its actual
+      configured value recorded in the staging evidence; the browser does not
+      claim to provide its own brute-force boundary.
+      On 2026-09-02 the obsolete invalid-email tester's platform-admin
+      membership was disabled, leaving `1 / 1` allowlisted accounts with a
+      verified factor. A fresh password login required a new six-digit TOTP
+      challenge before the overview, and the project Auth setting showed a
+      token-verification limit of 30 requests per five minutes per IP.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

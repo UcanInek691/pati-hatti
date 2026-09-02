@@ -697,9 +697,12 @@ allowlisting and one read-only clinic overview row. No password, bearer, setup
 key or one-time code was recorded; a setup key pasted into chat was abandoned
 before use and its unverified factor was replaced. Worker version
 `e1999511-0efd-43f2-aafa-85edbb8343b4` is staging-only. Production remains
-untouched. Fresh-session challenge UX, the Supabase MFA verify rate limit,
-every allowlist member, lost-device recovery, custom SMTP/domain and human
-production approvals remain open gates.
+untouched. The subsequent fresh-session login required a new six-digit TOTP
+challenge, the Supabase Auth token-verification limit was recorded as 30
+requests per five minutes per IP, and the obsolete invalid-email tester's
+platform-admin membership was disabled. A read-only count then proved one
+allowlisted admin and one verified-MFA admin. Lost-device recovery, custom
+SMTP/domain and human production approvals remain open gates.
 
 Maya's recorded next-product requirements (2026-08-27), not yet claimed as
 verified behavior:
