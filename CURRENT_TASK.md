@@ -1,4 +1,346 @@
-# Current task — 047 Platform-admin clinic lifecycle controls
++# Current task — 048 Safe staff WhatsApp reply composer
+
+Status: `READY`
+
+Created by Codex on 2026-09-03 after Task 047's bounded
+provision/suspend/resume surface and staging evidence were closed. This is the
+next smallest commercial-product gap: a clinic staff member who has explicitly
+claimed a human-handoff item must be able to write a WhatsApp reply from
+`/staff` without exposing a Meta credential, bypassing tenant boundaries, or
+claiming delivery before Meta accepts the message.
+
+## Goal
+
+Add a tenant-safe, idempotent, human-authored text composer to the existing
+`/staff` work-item detail view. Reuse the current outbox, scheduled sender,
+per-account credential isolation and status-callback path. A staff reply is
+allowed only inside Meta's customer-service window and only for the exact
+human-handoff item currently assigned to the caller.
+
+## Fixed product and security decisions
+
+1. Reuse the shared Worker, Supabase Auth session, `staff_work_items`,
+   `outbound_message_outbox`, `claim_outbound_message_v2()`, scheduled sender,
+   Task 040 per-account credential registry and current dependencies. Add no
+   SDK, framework, browser-held Meta token, direct Graph API call from the
+   browser, separate inbox, template-message system or new Queue.
+2. Only an authenticated current `clinic_staff` member may call the new RPC.
+   A new reply additionally requires an `in_progress` handoff work item whose
+   `assigned_to` is exactly `auth.uid()`, a non-completed tenant-matching
+   conversation, an active clinic and a valid latest inbound message/account
+   mapping.
+3. The browser sends only `work_item_id`, a fresh UUID `request_id`, and the
+   reply text. It never sends or receives recipient phone, clinic ID,
+   WhatsApp-account ID, `phone_number_id`, Meta token or service-role
+   credential as part of the mutation response.
+4. PostgreSQL derives clinic, conversation, owner/recipient and WhatsApp account
+   from tenant-constrained rows. Cross-tenant/missing rows return the same
+   closed result and create no audit, message or outbox row.
+5. Free-form text is permitted only while the rolling 24-hour customer-service
+   window from the latest inbound WhatsApp message is open. The server, not the
+   browser clock, decides this. This task does not add or send approved
+   templates outside that window and makes no pricing/free-message claim.
+6. Reply text is human-authored and must never be passed to OpenAI, merged into
+   an AI prompt, relabeled as AI output or start a new intake job. Meta outbound
+   status callbacks remain status callbacks and cannot enter the inbound path.
+7. The existing outbox row is the durable send request. Staff origin and the
+   actor are marked separately from automation origin. Accepted message history
+   must preserve the origin so `/staff` can render “Personel” versus
+   “Otomatik”; raw actor UUID is never rendered.
+8. Queueing is not delivery. Success copy says only that the message entered the
+   send queue. The work item is not auto-resolved, and no staff notification or
+   delivery promise is invented. Existing provider-failure work-item behavior
+   remains authoritative.
+9. One browser `request_id` represents one work item, actor and exact text.
+   Exact replay returns the original outbox row without a second send; reuse
+   with different input raises before mutation. The UI retains the same request
+   ID across an ambiguous/lost-response retry and generates a new one only for
+   a genuinely new draft.
+10. A pending staff reply whose 24-hour window expires before claim becomes
+    terminal without a Meta call. A reclaimed processing row whose lease and
+    window both expired must not be sent again; documentation must state that a
+    provider request already handed off before failure cannot be recalled.
+11. Changing a contact to `manual` or `personal` may suppress/delete pending
+    automation replies but must not delete a human-authored staff reply.
+12. Production remains untouched. The implementer performs local/static work
+    only; migration/fixture execution, staging deploy and live WhatsApp sends
+    require later Codex review, mandatory Opus review and explicit owner
+    approval.
+
+## Required database implementation
+
+Create
+`supabase/migrations/20260903000100_staff_reply_composer.sql`.
+
+### Outbox and accepted-message origin
+
+Extend `public.outbound_message_outbox` with the smallest fields needed to
+represent staff-origin work:
+
+- `message_origin text not null default 'automation'`, closed to
+  `automation | staff`;
+- nullable `staff_request_id uuid`;
+- nullable `staff_actor_user_id uuid references auth.users(id) on delete set
+  null`;
+- nullable `staff_window_expires_at timestamptz`.
+
+Replace the old unconditional
+`unique (clinic_id, source_provider_message_id)` with an equivalent partial
+unique index for non-null automation source IDs, and add a unique partial index
+for non-null `staff_request_id`. Make
+`source_provider_message_id` nullable only as part of a validated coherence
+constraint:
+
+- automation rows retain a non-null source provider message ID and have all
+  staff-only fields null;
+- staff rows have null source provider ID, non-null request ID and window
+  expiry, and `reply_category = 'staff_reply'`;
+- the actor may become null only through Auth-user erasure, but the enqueue RPC
+  always writes the current non-null `auth.uid()`.
+
+Extend the closed reply-category check with `staff_reply`. Preserve every
+existing automation category and delivery-state invariant.
+
+Extend `public.messages` with nullable `outbound_origin text`, closed to
+`automation | staff`, and nullable
+`staff_actor_user_id uuid references auth.users(id) on delete set null`.
+Backfill only existing `direction = 'outbound'` rows as automation; inbound and
+system rows keep both fields null. Add a closed coherence check: inbound/system
+rows have no outbound origin or actor, outbound rows have an origin, automation
+outbound rows have no staff actor, and staff outbound rows may have a nullable
+actor after Auth erasure. Do not expose actor UUIDs in UI queries.
+
+Recreate `accept_outbound_message(...)` forward-only so an accepted outbox
+row copies its origin and nullable actor into the durable outbound
+`public.messages` row. Preserve signature, grants, lock/replay semantics and
+all existing result values.
+
+### Staff enqueue RPC
+
+Add
+`public.queue_staff_reply_v1(p_work_item_id uuid, p_request_id uuid,
+p_content text)`, returning exactly:
+
+- `result text`;
+- `outbox_id uuid`;
+- `window_expires_at timestamptz`.
+
+Use a closed result set:
+`queued | already_queued | not_found | not_allowed | inactive |
+window_closed`. Only `queued` and `already_queued` have non-null outbox and
+window fields.
+
+The RPC must be `SECURITY DEFINER`, `VOLATILE`, exact empty
+`search_path`, fully schema-qualified, contain no dynamic SQL, be revoked from
+`PUBLIC`, `anon` and `service_role`, and be granted only to
+`authenticated`.
+
+Required behavior:
+
+- validate UUID/text shape and 1–4096 Unicode code-point length; reject
+  whitespace-only text and unsafe control characters while permitting ordinary
+  Turkish text and line breaks;
+- derive the caller solely from `auth.uid()`;
+- verify tenant membership and active lifecycle inside the same transaction;
+- lock/revalidate the exact work item before a new enqueue;
+- require `kind = 'handoff'`, `status = 'in_progress'` and
+  `assigned_to = auth.uid()`;
+- derive the recipient from the conversation's owner and choose the exact
+  WhatsApp account attached to the latest inbound message for that
+  conversation;
+- compute the window expiry from that inbound provider timestamp using the
+  database clock, never a client timestamp;
+- serialize by request ID; return `already_queued` only for the exact same
+  actor/work item/conversation/content tuple, and raise on mismatched reuse;
+- insert one immediately due `staff_reply` outbox row without updating
+  conversation intake state, contact automation route or work-item resolution.
+
+### Sender and route compatibility
+
+Recreate `claim_outbound_message_v2()` without changing its signature or
+eight-column result shape. Before claiming, terminalize due staff rows whose
+customer-service window is no longer open. Extend the delivery-state
+constraint narrowly for the new fixed failure reason and valid attempt-count
+range. Do not attempt a Meta send for such a row, and do not change automation
+retry behavior.
+
+Recreate `set_whatsapp_contact_route(...)` forward-only so its pending-outbox
+cleanup applies only to automation-origin rows. Preserve authorization,
+result shape, grants and all other Task 033/034 behavior.
+
+Do not edit any already-applied migration.
+
+## Required rollback-only SQL proof
+
+Create `supabase/tests/048_staff_reply_composer.sql` with
+`begin; ... rollback;`. It must prove at least:
+
+- new schema constraints/indexes are validated and existing automation rows
+  retain their exact shape;
+- direct table access remains unavailable to `anon` and `authenticated`;
+- RPC grants are authenticated-only and implementation metadata is correct;
+- missing/null caller, non-member, cross-tenant, inactive clinic, unclaimed,
+  other-user-assigned, resolved and non-handoff work items create nothing;
+- an exact assigned handoff inside the 24-hour window queues one staff-origin
+  row with server-derived clinic/conversation/account/recipient and no source
+  provider ID;
+- the same owner/conversation receiving through two clinic WhatsApp accounts
+  uses the latest inbound account, never an arbitrary account;
+- the exact 24-hour boundary is fail-closed and a future client timestamp cannot
+  extend it;
+- exact replay is idempotent; mismatched request-ID reuse raises before any
+  second row;
+- contact route changes preserve a pending staff reply while retaining existing
+  automation cleanup;
+- expired pending and expired/reclaimable processing staff rows are
+  terminalized before claim and never returned to the sender; ordinary
+  automation claim/retry remains unchanged;
+- accept copies staff origin into `messages`, while automation acceptance
+  still records automation origin;
+- Auth-user deletion nulls the actor without deleting message/outbox history;
+- tenant cascades and rollback leave zero fixture residue.
+
+The fixture must not claim to prove real two-session concurrency or a real Meta
+send.
+
+## Required `/staff` implementation
+
+Extend `src/staffPage.ts` only in the authenticated work-item detail view:
+
+- add a bounded text area, remaining-character indicator and “Yanıtı kuyruğa
+  al” button;
+- show the composer only when the current item is a handoff in
+  `in_progress` and is assigned to the current user; otherwise keep it hidden
+  and disabled;
+- require a fresh fixed Turkish `window.confirm()` that says the text will be
+  sent to the owner through WhatsApp and that queueing does not prove delivery;
+- call only `queue_staff_reply_v1`, with exact response-shape/result
+  validation and a 10-second request bound;
+- keep one stable request UUID for ambiguous retry, prevent duplicate submit,
+  clear the draft/request ID only after a definitive queued/already-queued
+  result, and fail closed when `crypto.randomUUID` is unavailable;
+- never put phone/account/clinic/actor identifiers in the mutation body;
+- never resolve the work item automatically;
+- render history as `Müşteri`, `Sistem`, `Personel` or `Otomatik` from the
+  direction/origin pair, without rendering the actor UUID;
+- use only safe DOM APIs; do not loosen CSP, add inline handlers or log message
+  content/token material.
+
+Fixed Turkish outcome copy must distinguish at least: queued-not-delivered,
+window closed, no longer assigned/eligible, inactive clinic, unavailable item,
+session expiry and generic retryable failure.
+
+Update `test/staffPage.test.ts` with structural and behavioral tests for every
+visibility, validation, stable-ID, duplicate-submit, malformed-response,
+timeout, session-clearing and truthful-copy branch. Existing 79 tests must
+remain green.
+
+## Documentation
+
+Update only the necessary Task 048 sections in:
+
+- `docs/staff-workflow.md`;
+- `docs/outbound-delivery.md`;
+- `docs/outbound-status.md`;
+- `docs/selective-automation.md`;
+- `docs/database-schema.md`;
+- `docs/production-readiness.md`;
+- `docs/staging-runbook.md`;
+- `docs/saas-urunlestirme-yol-haritasi.md`;
+- `docs/kvkk-inceleme-paketi.md`.
+
+Document the 24-hour free-form restriction using the current official WhatsApp
+Business policy, without claiming that service messages are free. Record the
+new content/actor/request/window fields in the KVKK inventory, distinguish
+queue/accepted/delivered/read truth, describe Auth-erasure nulling, and leave
+retention/legal approval as external gates.
+
+Add a new executable staging section with every live checkbox initially
+unchecked: migration and catalog first, Worker second, aal2 staff journey,
+cross-tenant/assignment negatives, queue-not-delivery copy, one real accepted
+message/status callback, an expired-window negative, no OpenAI call, no
+auto-resolution and sanitized residue evidence. Production remains unchanged.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `supabase/migrations/20260903000100_staff_reply_composer.sql`
+- `supabase/tests/048_staff_reply_composer.sql`
+- `src/staffPage.ts`
+- `test/staffPage.test.ts`
+- `docs/staff-workflow.md`
+- `docs/outbound-delivery.md`
+- `docs/outbound-status.md`
+- `docs/selective-automation.md`
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/kvkk-inceleme-paketi.md`
+
+Everything else is forbidden. In particular, do not touch `.gitignore`,
+`docs/043-opus-inceleme.md`, existing migrations, Worker sender source,
+`/admin`, intake/OpenAI code, secrets/config files or dependency manifests.
+
+## Required verification
+
+Run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+Migration and SQL fixture remain `NOT RUN` unless Codex separately authorizes
+a disposable database. Make no commit, push, deploy, live WhatsApp/Meta/OpenAI
+call, email or database/service mutation.
+
+## Review gates
+
+1. Sonnet implements the allowed scope, fills only this task's
+   **Observed context** and **Delivery record**, and does not commit.
+2. Codex reviews the complete diff and all caller/grant/lock/replay/retention
+   paths, reruns local checks and performs disposable-database proof.
+3. Claude Opus performs a mandatory separate read-only architecture,
+   authentication/RLS/tenant, idempotency, outbox/status, concurrency and KVKK
+   review.
+4. Only after both reviews pass may Codex update durable context, commit and
+   request explicit staging activation approval. Production remains out of
+   scope.
+
+## Acceptance criteria
+
+- A staff member can queue one human-authored WhatsApp text only for the exact
+  currently assigned handoff and only within the server-verified service
+  window.
+- Recipient, tenant and sending account are database-derived and cannot be
+  selected or crossed by the browser.
+- Exact retry cannot duplicate a send; mismatched reuse and every malformed or
+  stale state fail closed.
+- Staff origin remains distinguishable from automation in outbox and accepted
+  message history without exposing actor UUIDs.
+- Expired staff replies never become a new Meta attempt; route changes never
+  delete human replies.
+- Queueing, provider acceptance and final delivery/read status are described
+  truthfully and separately.
+- Existing automation, appointments, staff workflow, sender credentials,
+  strict allowlist, RLS and production state remain unchanged.
+
+## Observed context
+
+To be filled by the implementer from repository evidence.
+
+## Delivery record
+
+To be filled by the implementer after implementation and local verification.
+
+---
+
+# Previous task — 047 Platform-admin clinic lifecycle controls
+
 
 Status: `COMPLETE`
 
