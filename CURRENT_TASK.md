@@ -507,6 +507,34 @@ local gate: frozen install, typecheck, **1911 passed / 2 skipped** tests
 repository and disposable-database gates. Staging activation and §17's live
 smoke remain separate, unchecked operations; production remains unchanged.
 
+### Staging verification record — 2026-09-02/03
+
+Task 047's bounded lifecycle-control surface is verified on `vetai-staging`.
+The migration was applied and managed migration history is aligned through
+Tasks 044, 045 and 047. The post-migration catalog audit confirmed the audit
+table's RLS/no-direct-grant boundary, the three expected `SECURITY DEFINER`
+wrappers, exact empty `search_path`, authenticated-only wrapper grants and the
+validated action/result coherence constraint.
+
+Worker `3fe0ecd8-52ff-448f-b078-e7bb5f935936` was deployed after the migration;
+`/health` and `/ready` returned 200. The live `/admin` page provisioned
+`STAGING TEST TASK 047` in `suspended` state and exercised suspend/resume. A
+read-only state check then confirmed the pilot clinic `active`, the synthetic
+clinic `suspended`, one provision/suspend/resume audit row for the synthetic
+clinic, one suspend/resume audit row for the pilot, and zero active outbox rows
+for both.
+
+A rollback-safe authenticated transaction additionally proved that aal1
+returns `forbidden`, exact request replay returns the recorded result, and the
+same actor/action/request ID with a different synthetic clinic ID raises before
+any lifecycle or audit mutation. The transaction left no persistent change.
+
+The synthetic clinic intentionally has no real Meta/Cloudflare credential and
+remains suspended. External credentials, webhook readiness and a deliberate
+operator-confirmed resume are therefore still required when onboarding a real
+new clinic; they are not evidence gaps in the Task 047 lifecycle-control code.
+Production remains unchanged and unapproved.
+
 ---
 
 # Previous task — 046 Secure platform-admin password recovery

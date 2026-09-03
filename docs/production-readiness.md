@@ -191,11 +191,17 @@ every box in this section is checked.
       customer content. A clinic provisioned from `/admin` is not usable
       until its WhatsApp credentials, Cloudflare secrets, and `/ready`/Meta
       webhook checks below are completed and it is explicitly resumed. Task
-      047's migration and corrected rollback fixture passed only on disposable
-      `vetai-test` with zero fixture residue; this did not write migration
-      history and did not change staging or production. The self-serve path is
-      not usable until the mandatory Opus review passes and staging activation
-      (`docs/staging-runbook.md`) is complete.
+      047's migration and corrected rollback fixture passed on disposable
+      `vetai-test` with zero fixture residue. The mandatory Opus review then
+      passed and, on 2026-09-02/03, the migration, catalog boundary, Worker and
+      bounded provision/suspend/resume behavior were verified on
+      `vetai-staging`; migration history is aligned through Tasks 044, 045 and
+      047 (`docs/staging-runbook.md` §17.1). This verifies the lifecycle-control
+      surface, not a real new-clinic onboarding: external Meta/Cloudflare
+      credentials, webhook/readiness checks and an explicit post-check resume
+      remain required for every real clinic. The synthetic clinic remains
+      suspended, the self-serve path is not approved for production, and
+      production remains unchanged.
 - [ ] Seed at least one future appointment slot before the smoke journey in
       §5 needs an `EVET`/`HAYIR` appointment decision. Since Task 044, this no
       longer requires a manual service-role write: the clinic's own `admin`

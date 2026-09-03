@@ -46,9 +46,9 @@ gereksinim çıktığında değerlendirilir.
 | Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme ve temel rota yönetimi var; ticari ürün için composer ve gerçek bildirim eksik. |
 | İnsan onay paketleri | Veteriner ve KVKK taslakları üretildi; dış uzman onayı hâlâ üretim kapısıdır. |
 | Production | Kurulmadı ve hiçbir Task 039 değişikliği production'a uygulanmadı. |
-| Çok-klinik Meta gönderimi | Eksik: outbound bugün tek global Meta tokenı kullanıyor. |
-| Kullanım/faturalama | Ölçüm ve fatura doğruluk kaynağı henüz yok. |
-| Provizyon/offboarding | Genel, güvenli bir yönetim yüzeyi yok; mevcut kurulum kontrollü ve elle. |
+| Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
+| Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
+| Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
 
 Önceki bir incelemedeki “tanınmayan WhatsApp hesabı 503 üretir” bulgusu güncel
 değildir. Worker tanınmayan hesabı artık başarılı biçimde kabul edip hiçbir iş
@@ -188,9 +188,12 @@ TOTP `aal2` denetimi gerektiriyor (bkz.
 Uygulayan migration ve rollback-only fixture'ı hiçbir veritabanında
 çalıştırmadı. Codex daha sonra ikisini yalnız disposable `vetai-test` üzerinde
 başarıyla doğruladı; sıfır fixture kalıntısı ve zorunlu Opus `PASS` kaydedildi.
-Staging'e henüz uygulanmadı. Planlanan gerçek staging TOTP/rate-limit smoke'u
-(`docs/staging-runbook.md` §15) tamamlanmadan bu panel production'da onaylı
-ayrıcalıklı erişim olarak kabul edilemez.
+Migration ve Worker daha sonra yalnız `vetai-staging`'e uygulandı; gerçek
+password-recovery, yarım TOTP kurulumundan güvenli toparlanma, fresh-session
+TOTP challenge, allowlist ve Auth rate-limit smoke'u geçti
+(`docs/staging-runbook.md` §15). Production hâlâ değişmedi; kayıp cihaz
+kurtarma ve dış insan onayları tamamlanmadan panel production'da onaylı
+ayrıcalıklı erişim değildir.
 
 **Durum (Task 047):** Yukarıdaki hedef listedeki "provizyon, askıya alma"
 kısmı — **offboarding hariç** — bu panele eklendi: `/admin` artık her aal2
@@ -205,11 +208,16 @@ offboarding hâlâ yalnız [`clinic-lifecycle.md`](clinic-lifecycle.md)'deki ell
 operatör akışından yürütülür. Uygulayan migration ve rollback-only fixture'ı
 hiçbir veritabanında çalıştırmadı. Codex daha sonra migration'ı yalnız
 disposable `vetai-test` üzerinde CLI query yoluyla uyguladı; düzeltilmiş
-rollback fixture'ı PASS verdi ve sıfır fixture artığı doğrulandı. Staging ve
-production değişmedi. Zorunlu Opus incelemesi ve ardından gerçek staging
-smoke'u (`docs/staging-runbook.md` §17)
-tamamlanmadan bu genişletme production'da onaylı bir kapasite olarak kabul
-edilemez.
+rollback fixture'ı PASS verdi ve sıfır fixture artığı doğrulandı. Zorunlu Opus
+incelemesi PASS verdi. 2026-09-02/03'te migration `vetai-staging`'e uygulandı,
+ilgili Worker deploy edildi ve yönetilen migration geçmişinin Tasks 044, 045 ve
+047 ile hizalı olduğu doğrulandı. Katalog/grant sınırı, aal1 reddi, provision
+audit'i, canlı suspend/resume, exact replay ve farklı klinikle request-ID
+uyuşmazlığının mutasyondan önce kapanması staging'de kanıtlandı — bkz.
+[`staging-runbook.md`](staging-runbook.md) §17.1. Sentetik klinik gerçek
+Meta/Cloudflare kimlik bilgisi olmadan `suspended` bırakıldı. Bu yüzden gerçek
+yeni klinik onboarding'inin dış hazırlık ve açık resume adımları hâlâ ayrı bir
+production kapısıdır; production değişmedi.
 
 ## 7. Kullanım, tarife ve faturalama
 
@@ -375,8 +383,10 @@ randevu slot envanterini kendi kendine yönetir
 - implementer tarafından migration ve `supabase/tests/044_clinic_schedule_management.sql`
   hiçbir veritabanına uygulanmadı/çalıştırılmadı. Codex daha sonra migration'ı
   yalnız disposable `vetai-test` üzerinde uyguladı, rollback fixture'ı PASS
-  verdi ve sıfır artık doğrulandı. Zorunlu salt-okunur Opus incelemesi henüz
-  yapılmadı; staging/production değişmedi.
+  verdi ve sıfır artık doğrulandı. Zorunlu salt-okunur Opus incelemesi dar
+  düzeltmelerden sonra PASS verdi; migration daha sonra `vetai-staging`'e
+  uygulandı ve `/staff` yüzeyi staging'de açıldı. Production değişmedi; gerçek
+  klinik saatlerinin kurulması ayrı onboarding kapısıdır.
 
 ## 11. Kaynak ve yeniden doğrulama notu
 

@@ -989,9 +989,22 @@ occurred.
   fixture passed only on disposable `vetai-test`; a separate query confirmed
   zero Auth-user, clinic, WhatsApp-account, platform-admin and audit fixture
   residue plus the expected coherence constraint and three SECURITY DEFINER
-  RPCs. This query-path proof did not add migration history. Task 047 has not
-  been applied to staging or production; staging runbook §17 remains the next
-  separately authorized gate.
+  RPCs. This query-path proof did not add migration history.
+- Task 047's bounded lifecycle-control surface was then verified on
+  `vetai-staging` on 2026-09-02/03. Managed migration history is aligned through
+  Tasks 044, 045 and 047; the Task 047 catalog audit confirmed the audit
+  table/RLS/grant boundary, three authenticated-only `SECURITY DEFINER`
+  wrappers with exact empty `search_path`, and the validated coherence
+  constraint. Worker `3fe0ecd8-52ff-448f-b078-e7bb5f935936` is live and
+  `/health` plus `/ready` returned 200.
+- The live `/admin` journey provisioned a synthetic clinic in `suspended` and
+  exercised suspend/resume. The final state is pilot clinic `active`, synthetic
+  clinic `suspended`, the expected per-clinic provision/suspend/resume audit
+  counts, and zero active outbox rows. A rollback-safe authenticated check also
+  proved aal1 denial, exact replay idempotency, mismatched request-ID rejection
+  before mutation and zero persistent change. The synthetic clinic deliberately
+  has no real Meta/Cloudflare credential; real-clinic external setup and an
+  explicit resume remain onboarding gates. Production remains unchanged.
 
 ## Context maintenance
 
