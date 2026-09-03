@@ -1006,8 +1006,13 @@ occurred.
   has no real Meta/Cloudflare credential; real-clinic external setup and an
   explicit resume remain onboarding gates. Production remains unchanged.
 
-- Task 048 (safe staff WhatsApp reply composer) is `COMPLETE` at repository and
-  disposable-database gates as of 2026-09-04. A staff member may queue a
+- Task 048 (safe staff WhatsApp reply composer) reached repository and
+  disposable-database gates on 2026-09-04, but its first authorized staging
+  migration attempt failed atomically before schema/history change because the
+  replacement reply-category CHECK omitted valid appointment categories. The
+  narrow compatibility correction, renewed local plus disposable-database proof
+  and narrow Opus re-check all passed; the task is repository-complete again and
+  awaits the authorized staging retry. Once activated, a staff member may queue a
   human-authored text only for the exact `human_handoff` item currently assigned
   to them, while the clinic is active and the conservative server-verified
   24-hour service window remains open. Tenant, recipient, sending account and

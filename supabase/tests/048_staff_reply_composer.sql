@@ -252,6 +252,89 @@ begin
 end;
 $$;
 
+-- Preserve the complete reply-category vocabulary from the latest prior
+-- constraint and add only staff_reply. This catches drift against real
+-- appointment/cancellation rows, not merely the fixture's usual categories.
+do $$
+declare
+  v_category text;
+begin
+  foreach v_category in array array[
+    'emergency_handoff', 'human_handoff', 'safety_questions', 'pet_identity',
+    'intake_confirmation', 'complaint', 'intake_received',
+    'appointment_offer', 'appointment_confirmed', 'appointment_declined',
+    'appointment_unavailable', 'appointment_cancel_offer',
+    'appointment_cancelled', 'appointment_cancel_declined',
+    'appointment_cancel_unavailable'
+  ] loop
+    insert into public.webhook_events (
+      id, clinic_id, provider_event_id, payload_hash, processing_status,
+      whatsapp_account_id, received_at
+    ) values (
+      pg_catalog.gen_random_uuid(),
+      '48800000-0000-0000-0000-000000000001',
+      '048-category-' || v_category, 'h', 'processed',
+      '48800000-0000-0000-0000-000000000011', pg_catalog.now()
+    );
+
+    insert into public.outbound_message_outbox (
+      clinic_id, conversation_id, whatsapp_account_id,
+      source_provider_message_id, recipient_e164, reply_category, content,
+      next_attempt_at
+    ) values (
+      '48800000-0000-0000-0000-000000000001',
+      '48800000-0000-0000-0000-000000000031',
+      '48800000-0000-0000-0000-000000000011',
+      '048-category-' || v_category,
+      '+905551000001', v_category, 'category compatibility proof',
+      pg_catalog.now() + interval '100 years'
+    );
+  end loop;
+
+  if (
+    select count(*)
+    from public.outbound_message_outbox
+    where source_provider_message_id like '048-category-%'
+  ) <> 15 then
+    raise exception 'expected all 15 pre-existing reply categories to remain valid';
+  end if;
+
+  begin
+    insert into public.webhook_events (
+      id, clinic_id, provider_event_id, payload_hash, processing_status,
+      whatsapp_account_id, received_at
+    ) values (
+      pg_catalog.gen_random_uuid(),
+      '48800000-0000-0000-0000-000000000001',
+      '048-category-invalid', 'h', 'processed',
+      '48800000-0000-0000-0000-000000000011', pg_catalog.now()
+    );
+
+    insert into public.outbound_message_outbox (
+      clinic_id, conversation_id, whatsapp_account_id,
+      source_provider_message_id, recipient_e164, reply_category, content,
+      next_attempt_at
+    ) values (
+      '48800000-0000-0000-0000-000000000001',
+      '48800000-0000-0000-0000-000000000031',
+      '48800000-0000-0000-0000-000000000011',
+      '048-category-invalid', '+905551000001', 'invalid_category',
+      'invalid category must fail', pg_catalog.now() + interval '100 years'
+    );
+    raise exception 'expected unknown reply category to be rejected';
+  exception
+    when check_violation then null;
+  end;
+
+  delete from public.outbound_message_outbox
+  where source_provider_message_id like '048-category-%';
+
+  delete from public.webhook_events
+  where clinic_id = '48800000-0000-0000-0000-000000000001'
+    and provider_event_id like '048-category-%';
+end;
+$$;
+
 -- =========================================================================
 -- 2. Direct table access remains unavailable to anon/authenticated; RPC
 --    grants are authenticated-only.

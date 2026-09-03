@@ -77,7 +77,11 @@ alter table public.outbound_message_outbox
   add constraint outbound_message_outbox_reply_category_check
   check (reply_category in (
     'emergency_handoff', 'human_handoff', 'safety_questions', 'pet_identity',
-    'complaint', 'intake_received', 'staff_reply'
+    'intake_confirmation', 'complaint', 'intake_received',
+    'appointment_offer', 'appointment_confirmed', 'appointment_declined',
+    'appointment_unavailable', 'appointment_cancel_offer',
+    'appointment_cancelled', 'appointment_cancel_declined',
+    'appointment_cancel_unavailable', 'staff_reply'
   ));
 
 alter table public.outbound_message_outbox

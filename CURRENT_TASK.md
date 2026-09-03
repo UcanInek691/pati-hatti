@@ -1,7 +1,7 @@
 # Current task — 048 Safe staff WhatsApp reply composer
 
-Status: `COMPLETE` (closed 2026-09-04 after local verification,
-disposable-database proof and mandatory Claude Opus review)
+Status: `COMPLETE` (reclosed 2026-09-04 after the staging-discovered category
+compatibility fix, renewed local/disposable proof and narrow Opus PASS)
 
 Created by Codex on 2026-09-03 after Task 047's bounded
 provision/suspend/resume surface and staging evidence were closed. This is the
@@ -343,12 +343,13 @@ call, email or database/service mutation.
 - Task 045's `aal2` requirement protects `/admin` only. `/staff` has no TOTP challenge flow, so Codex corrected the staging contract from "aal2 staff journey" to the real authenticated-clinic-staff boundary. The executable runbook records staff MFA as a separate production-access task.
 - Codex's disposable `vetai-test` run exposed and corrected fixture-only drift against four already-applied invariants: active clinics require `suspended_at = null`, strict-allowlist accounts require `automation_default = 'personal'`, one owner may have only one open conversation per clinic, and delivery-failure work items require a valid source outbox. The production migration itself applied cleanly before these fixture corrections.
 - The first mandatory Opus review returned `CHANGES_REQUIRED` but found no tenant, RLS, idempotency or service-window authorization bypass. Its real blockers were a misleading button label, missing executable browser behavior tests, the outbound-length cap being incorrectly reused for inbound history, and stale documentation. `.gitignore` was also reported, but repository evidence shows that line predates Task 048 and remains user-owned; Codex did not revert or stage it.
+- The first authorized staging `db push` failed atomically while adding `outbound_message_outbox_reply_category_check`: Task 048 had accidentally copied the original intake-only vocabulary instead of the latest Task 039 vocabulary. Staging retained the prior constraint and migration history. Codex restored all 15 pre-existing categories, added only `staff_reply`, and added a fixture regression that inserts every prior category and rejects an unknown value.
 
 ## Delivery record
 
 **Changed files** (all task changes remain within the allowed list):
-- `supabase/migrations/20260903000100_staff_reply_composer.sql` (new, 765 lines) — outbox/message origin schema, exact staff-work-item/request correlation, restored delivery-state invariants, failure-trigger compatibility, forward-only function recreations and `queue_staff_reply_v1`.
-- `supabase/tests/048_staff_reply_composer.sql` (new, 1,074 lines) — rollback-only database proof with current lifecycle, strict-allowlist, conversation and work-item invariants.
+- `supabase/migrations/20260903000100_staff_reply_composer.sql` (new, 769 lines) — outbox/message origin schema, exact staff-work-item/request correlation, restored delivery-state and reply-category invariants, failure-trigger compatibility, forward-only function recreations and `queue_staff_reply_v1`.
+- `supabase/tests/048_staff_reply_composer.sql` (new, 1,157 lines) — rollback-only database proof with current lifecycle, strict-allowlist, conversation/work-item invariants and all 15 pre-existing reply categories.
 - `src/staffPage.ts` and `test/staffPage.test.ts` — fail-closed composer UI, strict response/history validation, stable ambiguous-retry UUID, stale-detail guards and 107 passing staff-page tests.
 - The nine allowed Task 048 documentation files and this task record.
 - Pre-existing `.gitignore` and `docs/043-opus-inceleme.md` changes remain user-owned and untouched.
@@ -384,6 +385,16 @@ call, email or database/service mutation.
   staff-send rate-limit policy remain explicit production-hardening items; they
   are not silently treated as solved. This engineering review is neither legal
   approval nor veterinarian approval.
+- The first staging activation attempt was rolled back by PostgreSQL before
+  migration history or schema changed because live appointment-category rows
+  exposed an incomplete replacement CHECK. The compatibility fix passed frozen
+  install, typecheck, all 1,936 local tests, Worker dry-run and `git diff
+  --check`. The expanded disposable fixture passed and an independent query
+  found zero fixture residue across clinics, conversations, messages, webhook
+  events, work items, outbox rows and Auth users. The narrow Opus re-check
+  independently confirmed an exact 15-old-plus-`staff_reply` set, behavioral FK
+  coverage, non-vacuous rejection and cleanup, and returned `PASS` with no new
+  blocker. The authorized staging retry may now proceed.
 
 ---
 
