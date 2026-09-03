@@ -165,6 +165,43 @@ durably records a `send_attempts_exhausted` work item for it so clinic staff
 can see it in their own tenant's data; that is visibility, not notification —
 no email, push, or WhatsApp alert is sent, and no one is paged.
 
+## Staff-originated rows (Task 048)
+
+Not every `outbound_message_outbox` row is automation-produced. Task 048
+(`supabase/migrations/20260903000100_staff_reply_composer.sql` — implemented
+and locally verified; migration plus rollback fixture passed only on disposable
+`vetai-test`, with zero fixture residue; not applied to staging/production; see
+[`docs/database-schema.md`](database-schema.md#staff-authored-whatsapp-reply-composer-task-048)
+and [`docs/staff-workflow.md`](staff-workflow.md#staff-reply-composer-task-048))
+adds a `queue_staff_reply_v1` RPC that a signed-in clinic staff member can
+call to queue one human-authored reply for their assigned human-handoff work
+item, inside the WhatsApp 24-hour customer-service window computed from the
+database clock and capped by the trusted webhook receipt time when the
+provider/client timestamp is future-skewed. It inserts a row into this same `outbound_message_outbox`
+table with `message_origin = 'staff'` (instead of `'automation'`) — from that
+point on it is claimed, sent, and accepted through the exact same pipeline
+described above, with no separate code path. Two narrow additions to that
+existing pipeline, forward-only recreated in the same migration:
+
+- `claim_outbound_message_v2()` now terminalizes to `failed` (with
+  `failure_reason = 'staff_window_expired'`) any staff-origin row whose
+  service window has since expired, instead of attempting a send Meta would
+  reject anyway. That no-send expiry does not create a misleading
+  `send_attempts_exhausted` staff work item; the automation
+  claim/lease/exhaustion and real provider-failure paths are unchanged. A
+  provider request already handed to Meta before the expiry transition cannot
+  be recalled.
+- `accept_outbound_message()` now copies the accepted row's origin and
+  queuing staff member into the durable `messages` row, so accepted history
+  can distinguish a staff reply from an automated one. VetAI's first-party
+  `/staff` query deliberately omits the actor UUID; the existing tenant-scoped
+  `messages` table grant is not a column-level secrecy boundary.
+
+A staff-queued reply follows the same **at-least-once, not exactly-once**
+guarantee described above, and the same Meta-acceptance-vs-delivered-vs-read
+distinction in [`docs/outbound-status.md`](outbound-status.md) — queuing a
+staff reply never itself claims delivery or read receipt.
+
 ## Disposable validation passed
 
 `supabase/migrations/20260809000200_outbound_delivery.sql` and
@@ -186,7 +223,9 @@ rather than claiming to have tested it.
 No Cloudflare resource (Cron, Queue, DLQ) is created by this task — the Cron
 trigger is declared in `wrangler.toml` only and takes effect on the next real
 `wrangler deploy`, which this task does not run. No plugin is installed, no
-dependency is added, no real Meta/Supabase/LLM endpoint is called, and no
+dependency is added, no real Meta/LLM endpoint is called, and no staging or
+production Supabase project is changed. The only Supabase mutation was the
+authorized disposable `vetai-test` migration/rollback proof. No
 existing migration, inbound webhook behavior, intake Queue behavior, reply
 copy, or extraction/planning/safety/pet-selection logic changes.
 

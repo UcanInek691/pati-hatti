@@ -43,7 +43,7 @@ gereksinim çıktığında değerlendirilir.
 | Pet ve randevu akışı | Kayıt, düzeltme, randevu oluşturma, mevcut randevuyu bildirme ve iptal staging'de doğrulandı. |
 | Hızlı ardışık mesajlar | Task 039 ile tek sınırlı burst olarak işleniyor. |
 | Seçmeli otomasyon | Strict AI allowlist, manual/personal yollar ve grup dışlama mevcut. |
-| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme ve temel rota yönetimi var; ticari ürün için composer ve gerçek bildirim eksik. |
+| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme ve temel rota yönetimi var; composer (Task 048) yerel kontrolleri ve disposable `vetai-test` migration/rollback kanıtını geçti, staging'de doğrulanmadı ve commit edilmedi; ticari ürün için gerçek bildirim hâlâ eksik. |
 | İnsan onay paketleri | Veteriner ve KVKK taslakları üretildi; dış uzman onayı hâlâ üretim kapısıdır. |
 | Production | Kurulmadı ve hiçbir Task 039 değişikliği production'a uygulanmadı. |
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
@@ -146,6 +146,27 @@ için gerekli sıra:
 
 Composer, AI tarafından yazılan metni sessizce personel mesajı gibi gönderemez;
 personel kaynaklı mesaj ayrıca işaretlenir ve yeniden AI turu başlatmaz.
+
+**Durum (Task 048):** Madde 2'deki composer (`queue_staff_reply_v1`) yazıldı
+ve yerel olarak doğrulandı — tipcheck, tam test paketi ve dry-run deploy
+geçti. Codex migration'ı yalnız disposable `vetai-test` üzerinde uyguladı;
+düzeltilmiş rollback fixture'ı PASS verdi ve ayrı sorguda sıfır artık
+doğrulandı. Staging'de doğrulanmadı, commit/push/deploy edilmedi. İlk zorunlu
+Opus incelemesinin düzeltmeleri tamamlandı; dar salt-okunur kapanış kontrolü
+bekleniyor (bkz.
+`docs/staging-runbook.md` §18). Composer yalnız doğrulanmış
+klinik-personel oturumu ile, kendisine atanmış ve `in_progress` olan tek bir `human_handoff`
+work item'ı için, gelen mesaj zamanı ile güvenilir sunucu alış zamanının erken
+olanından veritabanında türetilen WhatsApp
+24 saatlik pencere içinde çalışır; bu, ticari MVP'de "ücretsiz" bir
+mesajlaşma penceresi vaadi olarak değil, yalnız Meta'nın mevcut
+customer-service-window kuralının teknik bir yansıması olarak anlaşılmalıdır
+— fiyatlandırma/paket iletişiminde bu pencereye dayalı bir "ücretsiz mesaj"
+iddiası kurulmamalıdır.
+
+Task 045'in TOTP/`aal2` koruması yalnız VetAI sahibi `/admin` panelini kapsar.
+Veteriner müşterilerin kullandığı `/staff` için MFA ayrı bir üretim erişim
+kapısıdır; Task 048 bunu uygulanmış gibi göstermez.
 
 ### 6.2 VetAI sahibi `/admin`
 

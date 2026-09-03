@@ -1,6 +1,7 @@
-+# Current task — 048 Safe staff WhatsApp reply composer
+# Current task — 048 Safe staff WhatsApp reply composer
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-04 after local verification,
+disposable-database proof and mandatory Claude Opus review)
 
 Created by Codex on 2026-09-03 after Task 047's bounded
 provision/suspend/resume surface and staging evidence were closed. This is the
@@ -37,8 +38,10 @@ human-handoff item currently assigned to the caller.
    from tenant-constrained rows. Cross-tenant/missing rows return the same
    closed result and create no audit, message or outbox row.
 5. Free-form text is permitted only while the rolling 24-hour customer-service
-   window from the latest inbound WhatsApp message is open. The server, not the
-   browser clock, decides this. This task does not add or send approved
+   window from the latest inbound WhatsApp message is open. The database uses
+   the earlier of the provider/client timestamp and trusted server receipt time,
+   so future clock skew cannot extend the window; the browser clock is never
+   authoritative. This task does not add or send approved
    templates outside that window and makes no pricing/free-message claim.
 6. Reply text is human-authored and must never be passed to OpenAI, merged into
    an AI prompt, relabeled as AI output or start a new intake job. Meta outbound
@@ -80,6 +83,7 @@ represent staff-origin work:
 - `message_origin text not null default 'automation'`, closed to
   `automation | staff`;
 - nullable `staff_request_id uuid`;
+- nullable `staff_work_item_id uuid`;
 - nullable `staff_actor_user_id uuid references auth.users(id) on delete set
   null`;
 - nullable `staff_window_expires_at timestamptz`.
@@ -93,8 +97,8 @@ constraint:
 
 - automation rows retain a non-null source provider message ID and have all
   staff-only fields null;
-- staff rows have null source provider ID, non-null request ID and window
-  expiry, and `reply_category = 'staff_reply'`;
+- staff rows have null source provider ID, non-null request ID, work-item ID
+  and window expiry, and `reply_category = 'staff_reply'`;
 - the actor may become null only through Auth-user erasure, but the enqueue RPC
   always writes the current non-null `auth.uid()`.
 
@@ -143,13 +147,14 @@ Required behavior:
 - derive the caller solely from `auth.uid()`;
 - verify tenant membership and active lifecycle inside the same transaction;
 - lock/revalidate the exact work item before a new enqueue;
-- require `kind = 'handoff'`, `status = 'in_progress'` and
+- require `kind = 'human_handoff'`, `status = 'in_progress'` and
   `assigned_to = auth.uid()`;
 - derive the recipient from the conversation's owner and choose the exact
   WhatsApp account attached to the latest inbound message for that
   conversation;
-- compute the window expiry from that inbound provider timestamp using the
-  database clock, never a client timestamp;
+- compute the window expiry from the conservative earlier value of that inbound
+  provider/client timestamp and its server receipt timestamp, using the
+  database clock for comparison and never a browser-supplied timestamp;
 - serialize by request ID; return `already_queued` only for the exact same
   actor/work item/conversation/content tuple, and raise on mismatched reuse;
 - insert one immediately due `staff_reply` outbox row without updating
@@ -256,7 +261,7 @@ queue/accepted/delivered/read truth, describe Auth-erasure nulling, and leave
 retention/legal approval as external gates.
 
 Add a new executable staging section with every live checkbox initially
-unchecked: migration and catalog first, Worker second, aal2 staff journey,
+unchecked: migration and catalog first, Worker second, authenticated staff journey,
 cross-tenant/assignment negatives, queue-not-delivery copy, one real accepted
 message/status callback, an expired-window negative, no OpenAI call, no
 auto-resolution and sanitized residue evidence. Production remains unchanged.
@@ -331,11 +336,54 @@ call, email or database/service mutation.
 
 ## Observed context
 
-To be filled by the implementer from repository evidence.
+- `staff_work_items.kind` (defined in `supabase/migrations/20260809000400_staff_work_items.sql`) is a `check` constraint with values `'human_handoff'` and `'delivery_failure'` — there is no literal `'handoff'` value in the schema. `queue_staff_reply_v1` gates on `v_kind = 'human_handoff'`, matching the real enum.
+- `claim_outbound_message_v2()` was last recreated (before this task) by `supabase/migrations/20260831000100_clinic_lifecycle.sql` (Task 047), which already added `join public.clinics cl on cl.id = wa.clinic_id and cl.operational_status = 'active'` to the claim query — this is not new behavior introduced by Task 048. Diffed byte-for-byte: the only changes in this task's recreation are the two new selected columns (`message_origin`, `staff_window_expires_at`), the `loop`/`continue` wrapper, and the new `staff_window_expired` termination branch; the exhausted-check and claim/lease branches are unchanged.
+- `accept_outbound_message()` and `set_whatsapp_contact_route()` each have exactly one prior definition (`20260809000200_outbound_delivery.sql` and `20260814000300_selective_automation.sql` respectively), so the forward-only recreation baseline for both is unambiguous.
+- No other migration references `queue_staff_reply_v1`, `staff_request_id`, `staff_window_expires_at`, or `message_origin` before this task's migration — these are new.
+- Task 045's `aal2` requirement protects `/admin` only. `/staff` has no TOTP challenge flow, so Codex corrected the staging contract from "aal2 staff journey" to the real authenticated-clinic-staff boundary. The executable runbook records staff MFA as a separate production-access task.
+- Codex's disposable `vetai-test` run exposed and corrected fixture-only drift against four already-applied invariants: active clinics require `suspended_at = null`, strict-allowlist accounts require `automation_default = 'personal'`, one owner may have only one open conversation per clinic, and delivery-failure work items require a valid source outbox. The production migration itself applied cleanly before these fixture corrections.
+- The first mandatory Opus review returned `CHANGES_REQUIRED` but found no tenant, RLS, idempotency or service-window authorization bypass. Its real blockers were a misleading button label, missing executable browser behavior tests, the outbound-length cap being incorrectly reused for inbound history, and stale documentation. `.gitignore` was also reported, but repository evidence shows that line predates Task 048 and remains user-owned; Codex did not revert or stage it.
 
 ## Delivery record
 
-To be filled by the implementer after implementation and local verification.
+**Changed files** (all task changes remain within the allowed list):
+- `supabase/migrations/20260903000100_staff_reply_composer.sql` (new, 765 lines) — outbox/message origin schema, exact staff-work-item/request correlation, restored delivery-state invariants, failure-trigger compatibility, forward-only function recreations and `queue_staff_reply_v1`.
+- `supabase/tests/048_staff_reply_composer.sql` (new, 1,074 lines) — rollback-only database proof with current lifecycle, strict-allowlist, conversation and work-item invariants.
+- `src/staffPage.ts` and `test/staffPage.test.ts` — fail-closed composer UI, strict response/history validation, stable ambiguous-retry UUID, stale-detail guards and 107 passing staff-page tests.
+- The nine allowed Task 048 documentation files and this task record.
+- Pre-existing `.gitignore` and `docs/043-opus-inceleme.md` changes remain user-owned and untouched.
+
+**Codex review corrections:**
+- Added `staff_work_item_id`, a global partial unique request-ID index and a transaction advisory lock so exact replay is tied to actor/work-item/conversation/content and cross-item or cross-clinic reuse raises before mutation.
+- Enforced lifecycle/membership/work-item locking in `clinic -> membership -> work item` order and revalidated membership after a lifecycle wait.
+- Restored every pre-existing delivery-state constraint branch and prevented `staff_window_expired` from creating a false `send_attempts_exhausted` work item.
+- Closed Unicode/control/whitespace validation, malformed RPC/history responses, stale overlapping detail loads, timeout scope and queue-not-delivery copy in the browser.
+- Corrected the SQL fixture so every proof reaches the intended branch without weakening RLS or relying on impossible seed rows.
+- Closed the first Opus review: the button now says `Yanıtı kuyruğa al`; inbound history accepts the existing 65,536-code-point ingest limit while outbound drafts remain capped at 4,096; a `not_allowed` refresh disables the composer without destroying typed text; and executable tests now run the stable-ID, duplicate-click, timeout/abort and long-inbound-history branches.
+- Anchored the service window to `least(messages.created_at, webhook_events.received_at)`, added a future-skew regression fixture, proved that window expiry wins at delivery attempt 3, expanded in-fixture and post-rollback residue checks to six datasets, corrected exact UI copy in the workflow documentation, and recorded the absence of staff-send rate limiting as a production gate.
+
+**Checks run (final results):**
+- `pnpm install --frozen-lockfile` → already up to date; no dependency change.
+- `pnpm run typecheck` → exit 0.
+- `pnpm test` → 37 files passed; 1,936 passed, 2 pre-existing paid/live opt-in tests skipped, 0 failed. `test/staffPage.test.ts`: 107 passed.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` → succeeded; bindings unchanged; no deployment.
+- `git diff --check` → exit 0; line-ending notices only.
+- Disposable `vetai-test`: migration applied successfully; after the Opus corrections, the amended `queue_staff_reply_v1` was recreated and the expanded rollback-only fixture passed. The fixture asserts exact pre-rollback counts and zero post-rollback residue for clinics, conversations, messages, work items, outbox rows and Auth users. An independent post-run query also returned zero for all six datasets; `queue_staff_reply_v1` exists and all six Task 048 CHECK constraints are validated.
+
+**Not run / external state:**
+- Task 048 was not applied to staging or production. No Worker deploy, live WhatsApp/Meta/OpenAI call, email, commit or push occurred.
+- The disposable proof used direct SQL execution, so it proves the migration body and fixture but does not add a migration-history entry. The schema remains present only on the disposable `vetai-test` project.
+
+**Mandatory Opus gate:**
+- The final narrow, read-only re-check returned `PASS` with no new blocker. It
+  verified the bounded composer UI, executable retry/timeout/history tests,
+  separate inbound/outbound limits, conservative service-window anchor,
+  exact fixture counts and rollback residue, attempt-3 expiry priority,
+  `not_allowed` draft preservation, truthful queue copy and documentation.
+- The pre-existing same-tenant `messages` write/attribution grant and the new
+  staff-send rate-limit policy remain explicit production-hardening items; they
+  are not silently treated as solved. This engineering review is neither legal
+  approval nor veterinarian approval.
 
 ---
 

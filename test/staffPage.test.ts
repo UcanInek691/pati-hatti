@@ -186,7 +186,7 @@ describe("handleStaffScript", () => {
   });
 
   it("gates claim availability and owner-only resolve from work-item state", () => {
-    expect(STAFF_APP_JS).toContain("function applyWorkItemState(state)");
+    expect(STAFF_APP_JS).toContain("function applyWorkItemState(state, preserveReplyDraft = false)");
     expect(STAFF_APP_JS).toContain('state.status === "open" ||');
     expect(STAFF_APP_JS).toContain('state.status === "seen" ||');
     expect(STAFF_APP_JS).toContain(
@@ -246,7 +246,7 @@ describe("handleStaffScript", () => {
 
   it("never references webhook, outbox, or intake-data internals", () => {
     expect(STAFF_APP_JS).not.toMatch(/webhook/i);
-    expect(STAFF_APP_JS).not.toMatch(/outbox/i);
+    expect(STAFF_APP_JS).not.toMatch(/outbox(?!_id)/i);
     expect(STAFF_APP_JS).not.toMatch(/intake_data/i);
   });
 
@@ -772,6 +772,434 @@ describe("handleStaffScript: Klinik takvimi (Task 044)", () => {
     expect(STAFF_APP_JS).toContain("dayTd.textContent = WEEKDAY_LABELS[weekday];");
     expect(STAFF_APP_JS).toContain("span.textContent = row.closed_on;");
     expect(STAFF_APP_JS).not.toMatch(/schedule\w*\.innerHTML/);
+  });
+});
+
+describe("handleStaffScript: Personel yanit kompozeri (Task 048)", () => {
+  it("renders a reply composer inside detail-section, hidden until the item is eligible", () => {
+    expect(STAFF_HTML).toContain('<div id="reply-composer" hidden>');
+    expect(STAFF_HTML).toContain('id="reply-send-button" disabled>Yanıtı kuyruğa al</button>');
+    for (const id of [
+      "reply-content-input",
+      "reply-char-count",
+      "reply-send-button",
+      "reply-status-region",
+      "reply-error-region",
+    ]) {
+      expect(STAFF_HTML).toContain(`id="${id}"`);
+    }
+  });
+
+  it("binds every composer element and defines closed enums for its constants", () => {
+    for (const decl of [
+      'const replyComposer = document.getElementById("reply-composer");',
+      'const replyContentInput = document.getElementById("reply-content-input");',
+      'const replyCharCount = document.getElementById("reply-char-count");',
+      'const replySendButton = document.getElementById("reply-send-button");',
+      'const replyStatusRegion = document.getElementById("reply-status-region");',
+      'const replyErrorRegion = document.getElementById("reply-error-region");',
+    ]) {
+      expect(STAFF_APP_JS).toContain(decl);
+    }
+    expect(STAFF_APP_JS).toContain("const REPLY_MAX_LENGTH = 4096;");
+    expect(STAFF_APP_JS).toContain("const INBOUND_MESSAGE_MAX_LENGTH = 65536;");
+    expect(STAFF_APP_JS).toContain("const REPLY_RPC_TIMEOUT_MS = 10000;");
+    expect(STAFF_APP_JS).toContain(
+      'const REPLY_RESULTS = ["queued", "already_queued", "not_found", "not_allowed", "inactive", "window_closed"];',
+    );
+  });
+
+  it("queues a staff reply via queue_staff_reply_v1 with exactly the three required parameters", () => {
+    expect(STAFF_APP_JS).toContain("async function queueStaffReply(workItemId, requestId, content) {");
+    expect(STAFF_APP_JS).toContain('"/rest/v1/rpc/queue_staff_reply_v1"');
+    expect(STAFF_APP_JS).toContain(
+      "body: JSON.stringify({ p_work_item_id: workItemId, p_request_id: requestId, p_content: content }),",
+    );
+  });
+
+  it("never sends a phone, account, clinic, or actor identifier from the composer", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function queueStaffReply(workItemId, requestId, content) {"),
+      STAFF_APP_JS.indexOf("async function refreshWorkItemState("),
+    );
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).not.toMatch(/phone|account_id|clinic_id|actor/i);
+  });
+
+  it("strictly validates the RPC response as one row with exactly three closed-enum-checked fields", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function queueStaffReply(workItemId, requestId, content) {"),
+      STAFF_APP_JS.indexOf("async function refreshWorkItemState("),
+    );
+    expect(body).toContain("return validateReplyResult(rows[0]);");
+    const validator = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function validateReplyResult(value) {"),
+      STAFF_APP_JS.indexOf("function newReplyRequestId() {"),
+    );
+    expect(validator).toContain('isExactRecord(value, ["result", "outbox_id", "window_expires_at"])');
+    expect(validator).toContain("REPLY_RESULTS.indexOf(value.result) === -1");
+    expect(validator).toContain("UUID_PATTERN.test(value.outbox_id)");
+    expect(validator).toContain("ISO_TIMESTAMP_PATTERN.test(value.window_expires_at)");
+    expect(validator).toContain("Number.isFinite(Date.parse(value.window_expires_at))");
+    expect(validator).toContain("!successful && (value.outbox_id !== null || value.window_expires_at !== null)");
+  });
+
+  it("bounds the reply RPC with a 10-second AbortController timeout", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function queueStaffReply(workItemId, requestId, content) {"),
+      STAFF_APP_JS.indexOf("async function refreshWorkItemState("),
+    );
+    expect(body).toContain("const controller = new AbortController();");
+    expect(body).toContain("setTimeout(() => controller.abort(), REPLY_RPC_TIMEOUT_MS);");
+    expect(body).toContain("signal: controller.signal,");
+    expect(body).toContain("clearTimeout(timeoutId);");
+  });
+
+  it("shows the composer only for an in-progress human_handoff item assigned to the caller", () => {
+    expect(STAFF_APP_JS).toContain(
+      'composerEligible =\n    state.kind === "human_handoff" && state.status === "in_progress" && state.assigned_to === currentUserId;',
+    );
+    expect(STAFF_APP_JS).toContain("replyComposer.hidden = !composerEligible;");
+    expect(STAFF_APP_JS).toContain("&select=status,assigned_to,kind");
+  });
+
+  it("resets an ineligible reply draft unless an authoritative refresh explicitly preserves it", () => {
+    const applyBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function applyWorkItemState(state, preserveReplyDraft = false) {"),
+      STAFF_APP_JS.indexOf("function newReplyRequestId() {"),
+    );
+    expect(applyBody).toContain(
+      "if (!composerEligible && !preserveReplyDraft) {\n    resetReplyDraftState();\n  } else {\n    updateReplySendButtonState();\n  }",
+    );
+
+    const openDetailBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("async function openDetail(workItemId, conversationId) {"));
+    const resetIndex = openDetailBody.indexOf("resetReplyDraftState();");
+    const seenCallIndex = openDetailBody.indexOf('callWorkItemRpc("mark_staff_work_item_seen"');
+    expect(resetIndex).toBeGreaterThan(-1);
+    expect(resetIndex).toBeLessThan(seenCallIndex);
+
+    const clearSessionStart = STAFF_APP_JS.indexOf("function clearSession() {");
+    const clearSessionBody = STAFF_APP_JS.slice(clearSessionStart, STAFF_APP_JS.indexOf("\nfunction ", clearSessionStart));
+    expect(clearSessionBody).toContain("composerEligible = false;");
+    expect(clearSessionBody).toContain("replyComposer.hidden = true;");
+    expect(clearSessionBody).toContain("resetReplyDraftState();");
+  });
+
+  it("keeps the same request ID for unedited content and mints a fresh one when the draft changes", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function resolveReplyRequestId(content) {"),
+      STAFF_APP_JS.indexOf("function resetReplyDraftState() {"),
+    );
+    expect(body).toContain(
+      "if (currentReplyRequestId !== null && lastReplyRequestContent === content) {\n    return currentReplyRequestId;\n  }",
+    );
+    expect(body).toContain("currentReplyRequestId = requestId;");
+    expect(body).toContain("lastReplyRequestContent = content;");
+  });
+
+  it("behaviorally keeps a request ID for the same draft and rotates it after an edit", () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function newReplyRequestId() {"),
+      STAFF_APP_JS.indexOf("function resetReplyDraftState() {"),
+    );
+    const ids = [
+      "48800000-0000-4000-8000-000000000001",
+      "48800000-0000-4000-8000-000000000002",
+    ];
+    const makeHarness = new Function(
+      "crypto",
+      `"use strict";
+       const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+       let currentReplyRequestId = null;
+       let lastReplyRequestContent = null;
+       ${source}
+       return { resolveReplyRequestId };`,
+    ) as (cryptoValue: { randomUUID: () => string }) => {
+      resolveReplyRequestId: (content: string) => string | null;
+    };
+    const harness = makeHarness({ randomUUID: () => ids.shift() ?? "" });
+
+    expect(harness.resolveReplyRequestId("aynı taslak")).toBe("48800000-0000-4000-8000-000000000001");
+    expect(harness.resolveReplyRequestId("aynı taslak")).toBe("48800000-0000-4000-8000-000000000001");
+    expect(harness.resolveReplyRequestId("düzenlenmiş taslak")).toBe("48800000-0000-4000-8000-000000000002");
+  });
+
+  it("fails closed without sending a request when crypto.randomUUID is unavailable", () => {
+    expect(STAFF_APP_JS).toContain(
+      'if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {\n    return null;\n  }',
+    );
+    expect(STAFF_APP_JS).toContain("requestId === requestId.toLowerCase()");
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    const requestIdNullCheck = clickBody.indexOf("if (requestId === null) {");
+    const confirmIndex = clickBody.indexOf("window.confirm(");
+    expect(requestIdNullCheck).toBeGreaterThan(-1);
+    expect(requestIdNullCheck).toBeLessThan(confirmIndex);
+  });
+
+  it("requires a fixed Turkish confirmation naming WhatsApp delivery before queuing", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).toContain(
+      'window.confirm(\n    "Bu mesaj m\\u00fc\\u015fteriye WhatsApp \\u00fczerinden g\\u00f6nderilmek \\u00fczere kuyru\\u011fa al\\u0131nacak. Kuyru\\u011fa al\\u0131nmas\\u0131 teslim edildi\\u011fi anlam\\u0131na gelmez. Devam etmek istedi\\u011finize emin misiniz?"\n  );',
+    );
+    expect(clickBody).toContain("if (!confirmed) {\n    return;\n  }");
+    const confirmIndex = clickBody.indexOf("window.confirm(");
+    const queueCallIndex = clickBody.indexOf("await queueStaffReply(");
+    expect(confirmIndex).toBeGreaterThan(-1);
+    expect(queueCallIndex).toBeGreaterThan(-1);
+    expect(confirmIndex).toBeLessThan(queueCallIndex);
+  });
+
+  it("guards the send button against duplicate submission while a request is in flight", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).toContain("if (!currentWorkItemId || !composerEligible || replySubmitInFlight) {\n    return;\n  }");
+    expect(clickBody).toContain("replySubmitInFlight = true;");
+    expect(clickBody).toContain("replySubmitInFlight = false;");
+    expect(clickBody).toContain("} finally {");
+  });
+
+  it("behaviorally ignores a second click while the first queue request is unresolved", async () => {
+    const clickSource = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    type ClickButton = {
+      listener?: () => Promise<void>;
+      addEventListener: (event: string, listener: () => Promise<void>) => void;
+    };
+    const button: ClickButton = {
+      addEventListener(_event, listener) {
+        this.listener = listener;
+      },
+    };
+    let queueCalls = 0;
+    let finishQueue: ((value: { result: string; outbox_id: string; window_expires_at: string }) => void) | undefined;
+    const queueStaffReply = async () => {
+      queueCalls += 1;
+      return await new Promise<{ result: string; outbox_id: string; window_expires_at: string }>((resolve) => {
+        finishQueue = resolve;
+      });
+    };
+    const installHandler = new Function(
+      "replySendButton",
+      "queueStaffReply",
+      `"use strict";
+       const currentWorkItemId = "48800000-0000-4000-8000-000000000201";
+       const composerEligible = true;
+       let replySubmitInFlight = false;
+       const replyContentInput = { value: "Merhaba" };
+       const replyErrorRegion = { textContent: "" };
+       const replyStatusRegion = { textContent: "" };
+       const REPLY_MAX_LENGTH = 4096;
+       const REPLY_RESULT_MESSAGES = {};
+       const replyCodePointLength = (value) => Array.from(value).length;
+       const resolveReplyRequestId = () => "48800000-0000-4000-8000-000000000401";
+       const window = { confirm: () => true };
+       const updateReplySendButtonState = () => {};
+       const resetReplyDraftState = () => {};
+       const refreshWorkItemState = async () => {};
+       const sessionStorage = { getItem: () => "token" };
+       const showError = () => {};
+       ${clickSource}`,
+    ) as (replyButton: ClickButton, queueCall: typeof queueStaffReply) => void;
+    installHandler(button, queueStaffReply);
+
+    const first = button.listener!();
+    const second = button.listener!();
+    expect(queueCalls).toBe(1);
+    finishQueue!({
+      result: "queued",
+      outbox_id: "48800000-0000-4000-8000-000000000501",
+      window_expires_at: "2026-09-04T12:00:00Z",
+    });
+    await Promise.all([first, second]);
+    expect(queueCalls).toBe(1);
+  });
+
+  it("shows fixed truthful Turkish copy for every closed reply result without leaking internals", () => {
+    expect(STAFF_APP_JS).toContain(
+      'const REPLY_RESULT_MESSAGES = {\n  not_found: "\\u0130\\u015f bulunamad\\u0131.",\n  not_allowed: "Bu yan\\u0131t\\u0131 \\u015fu anda g\\u00f6nderemezsiniz.",\n  inactive: "Klinik \\u015fu anda aktif de\\u011fil.",\n  window_closed: "24 saatlik m\\u00fc\\u015fteri yan\\u0131t penceresi kapand\\u0131.",\n};',
+    );
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).toContain(
+      'replyErrorRegion.textContent = REPLY_RESULT_MESSAGES[outcome.result] || "Yan\\u0131t g\\u00f6nderilemedi.";',
+    );
+    expect(clickBody).toContain(
+      'outcome.result === "queued"\n          ? "Yan\\u0131t g\\u00f6nderim kuyru\\u011funa eklendi."\n          : "Bu yan\\u0131t zaten kuyru\\u011fa eklenmi\\u015fti.";',
+    );
+  });
+
+  it("refreshes work-item state after not_found/not_allowed/inactive but not after window_closed", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).toContain(
+      'if (outcome.result === "not_found" || outcome.result === "not_allowed" || outcome.result === "inactive") {\n      await refreshWorkItemState(outcome.result === "not_allowed");\n    }',
+    );
+  });
+
+  it("preserves typed text when a not_allowed refresh makes the composer ineligible", () => {
+    expect(STAFF_APP_JS).toContain("async function refreshWorkItemState(preserveReplyDraft = false) {");
+    expect(STAFF_APP_JS).toContain(
+      "applyWorkItemState(await fetchWorkItemState(currentWorkItemId), preserveReplyDraft);",
+    );
+  });
+
+  it("distinguishes a timeout abort from other send failures with distinct Turkish copy", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).toContain('err && err.name === "AbortError"');
+    expect(clickBody).toContain(
+      "Yan\\u0131t kuyru\\u011fa al\\u0131n\\u0131rken zaman a\\u015f\\u0131m\\u0131 oldu. Ayn\\u0131 taslakla tekrar deneyin.",
+    );
+    expect(clickBody).toContain("Oturumunuz sona erdi. L\\u00fctfen yeniden giri\\u015f yap\\u0131n.");
+  });
+
+  it("behaviorally aborts the reply RPC at exactly 10 seconds and clears its timer", async () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function queueStaffReply(workItemId, requestId, content) {"),
+      STAFF_APP_JS.indexOf("async function refreshWorkItemState("),
+    );
+    let observedDelay = 0;
+    let clearedTimer: unknown;
+    let observedSignal: AbortSignal | undefined;
+    const makeQueue = new Function(
+      "authedFetch",
+      "setTimeout",
+      "clearTimeout",
+      `"use strict";
+       const REPLY_RPC_TIMEOUT_MS = 10000;
+       ${source}
+       return queueStaffReply;`,
+    ) as (
+      fetchValue: (path: string, init: RequestInit) => Promise<Response>,
+      timeoutValue: (callback: () => void, delay: number) => unknown,
+      clearValue: (timer: unknown) => void,
+    ) => (workItemId: string, requestId: string, content: string) => Promise<unknown>;
+    const queue = makeQueue(
+      async (_path, init) => {
+        observedSignal = init.signal as AbortSignal;
+        if (observedSignal.aborted) {
+          throw new DOMException("aborted", "AbortError");
+        }
+        throw new Error("expected the immediate test timeout to abort first");
+      },
+      (callback, delay) => {
+        observedDelay = delay;
+        callback();
+        return "timer-048";
+      },
+      (timer) => {
+        clearedTimer = timer;
+      },
+    );
+
+    await expect(
+      queue(
+        "48800000-0000-4000-8000-000000000201",
+        "48800000-0000-4000-8000-000000000401",
+        "Merhaba",
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(observedDelay).toBe(10_000);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(clearedTimer).toBe("timer-048");
+  });
+
+  it("never invokes resolve_staff_work_item from the composer path", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf("async function init() {"),
+    );
+    expect(clickBody).not.toContain("resolve_staff_work_item");
+  });
+
+  it("labels messages as Musteri/Sistem/Personel/Otomatik from direction and outbound_origin only", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function messageLabel(message) {"),
+      STAFF_APP_JS.indexOf("function renderDetail("),
+    );
+    expect(body).toContain('return "M\\u00fc\\u015fteri";');
+    expect(body).toContain('return "Sistem";');
+    expect(body).toContain('return message.outbound_origin === "staff" ? "Personel" : "Otomatik";');
+    expect(STAFF_APP_JS).toContain(
+      'li.textContent = "[" + messageLabel(message) + "] " + when + ": " + message.content;',
+    );
+    expect(STAFF_APP_JS).toContain(
+      "&select=direction,content,created_at,outbound_origin&order=created_at.desc&limit=20",
+    );
+  });
+
+  it("enforces the 4096-character WhatsApp limit client-side and disables send for empty/whitespace-only drafts", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function updateReplySendButtonState() {"),
+      STAFF_APP_JS.indexOf('replyContentInput.addEventListener("input"'),
+    );
+    expect(body).toContain("const length = replyCodePointLength(replyContentInput.value);");
+    expect(body).toContain("const trimmedNonEmpty = replyContentInput.value.trim().length > 0;");
+    expect(body).toContain(
+      "!composerEligible || replySubmitInFlight || !trimmedNonEmpty || length > REPLY_MAX_LENGTH;",
+    );
+  });
+
+  it("validates work-item state and message-history origin shapes before enabling or rendering the composer", () => {
+    expect(STAFF_APP_JS).toContain("return validateWorkItemState(rows[0]);");
+    expect(STAFF_APP_JS).toContain('isExactRecord(value, ["status", "assigned_to", "kind"])');
+    expect(STAFF_APP_JS).toContain(
+      'isExactRecord(message, ["direction", "content", "created_at", "outbound_origin"])',
+    );
+    expect(STAFF_APP_JS).toContain(
+      '(message.direction !== "outbound" && message.outbound_origin === null)',
+    );
+  });
+
+  it("behaviorally accepts long inbound history while retaining the 4096 outbound cap", () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function replyCodePointLength(value) {"),
+      STAFF_APP_JS.indexOf("function validateReplyResult(value) {"),
+    );
+    const makeValidator = new Function(
+      "isExactRecord",
+      `"use strict";
+       const REPLY_MAX_LENGTH = 4096;
+       const INBOUND_MESSAGE_MAX_LENGTH = 65536;
+       const ISO_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
+       ${source}
+       return isValidMessageHistoryItem;`,
+    ) as (exactRecord: (value: unknown, keys: string[]) => boolean) => (value: unknown) => boolean;
+    const validate = makeValidator((value, keys) => {
+      return typeof value === "object" && value !== null && Object.keys(value).length === keys.length;
+    });
+    const baseMessage = { created_at: "2026-09-03T12:00:00Z", outbound_origin: null };
+
+    expect(validate({ ...baseMessage, direction: "inbound", content: "x".repeat(65_536) })).toBe(true);
+    expect(validate({ ...baseMessage, direction: "inbound", content: "x".repeat(65_537) })).toBe(false);
+    expect(
+      validate({ ...baseMessage, direction: "outbound", outbound_origin: "staff", content: "x".repeat(4_097) }),
+    ).toBe(false);
+  });
+
+  it("drops stale overlapping detail loads before they can replace the current item or composer state", () => {
+    const body = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function openDetail(workItemId, conversationId) {"),
+      STAFF_APP_JS.indexOf("async function fetchAutomationAccounts() {"),
+    );
+    expect(body.match(/currentWorkItemId !== workItemId/g)).toHaveLength(3);
+    expect(body).toContain("const workItemState = await fetchWorkItemState(workItemId);");
   });
 });
 

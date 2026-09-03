@@ -773,3 +773,90 @@ sentetik kliniğe bilerek gerçek Meta/Cloudflare kimlik bilgisi verilmedi ve
 klinik `suspended` bırakıldı. Adım 6–7, gerçek yeni klinik onboarding'inde dış
 hazırlık kontrolleri yapılıp operatör confirm metnini okuyarak resume edene
 kadar açık production kapılarıdır; production değişmemiştir.
+
+## 18. Personel yanıt composer smoke (Task 048)
+
+Bu bölüm Task 048'in `/staff` yanıt composer'ını (`queue_staff_reply_v1`)
+staging'de doğrulamak için Codex/Opus incelemesinden **sonra** izlenecek
+sırayı tarif eder. Uygulayan (implementer) hiçbir veritabanı adımı
+çalıştırmadı. Codex migration'ı yalnız disposable `vetai-test` üzerinde
+uyguladı; düzeltilmiş rollback-only fixture PASS verdi ve ayrı sorgu altı veri
+kümesinde sıfır fixture artığı ile altı validated CHECK doğruladı. İlk Opus
+incelemesinin düzeltmeleri tamamlandı; dar kapanış kontrolü PASS vermeden
+staging adımları çalıştırılamaz.
+Sıra §1 (yetki kapısı) ve §3 (Supabase) sonrasını varsayar. `/staff` bugün
+Supabase Auth ile doğrulanmış klinik-personel oturumu kullanır; Task 045'in
+TOTP/`aal2` sınırı yalnız `/admin` içindir ve personel MFA'sı bu görevde
+uygulanmış sayılmaz. Bu smoke sırasında hiçbir gerçek klinik, hasta sahibi veya hayvan
+verisi oluşturulmaz; yalnız içeriğinde "STAGING TEST" geçen sentetik
+work item/konuşma kayıtları kullanılır.
+
+1. **Migration.** Önce disposable `vetai-test` üzerinde Codex tarafından
+   migration ve rollback-only fixture (`supabase/tests/048_staff_reply_composer.sql`)
+   doğrulanır (§3'teki "staging'e karşı çalıştırma" kuralı burada da
+   geçerlidir). Ancak bu geçtikten ve Opus incelemesi tamamlandıktan sonra
+   migration `vetai-staging`'e uygulanır.
+   - [x] Disposable migration + fixture + sıfır-artık kanıtı doğrulandı
+         (2026-09-03; CLI query yolu, migration-history kaydı yok).
+   - [ ] Opus PASS sonrasında migration `vetai-staging`'e uygulandı.
+2. **Katalog/fixture denetimi.** Migration sonrası salt-okunur katalog
+   kontrolü: `queue_staff_reply_v1` yalnız `authenticated`'a grantlı,
+   `anon`/`service_role`'e değil; `outbound_message_outbox.message_origin`/
+   `staff_window_expires_at` ve `messages.outbound_origin`/
+   `staff_actor_user_id` kolonları beklenen check constraint'lerle mevcut.
+   - [ ] Doğrulandı.
+3. **Worker deploy.** Task 048'in `/staff` composer değişikliğiyle
+   `vetai-staging` yeniden deploy edilir. Migration'dan **önce** deploy
+   edilmez (§12.1'deki sabit sıra: önce migration, sonra Worker).
+   - [ ] Doğrulandı.
+4. **Erişim/atama reddi.** Doğrulanmış klinik-personel oturumuyla sırasıyla: kliniğin
+   üyesi olmayan bir hesap, askıya alınmış bir klinik, atanmamış/başka
+   personele atanmış bir work item, çözülmüş (`resolved`) bir work item ve
+   `kind = 'delivery_failure'` bir work item üzerinden composer denenir; her
+   birinin authenticated çağrının kapalı `result` değeriyle reddedildiği,
+   hiçbir outbox satırı yazılmadığı ve istemcinin sabit genel hata metnini
+   gösterdiği doğrulanır.
+   - [ ] Doğrulandı.
+5. **Süresi dolmuş pencere reddi.** Son gelen mesajı 24 saatten eski bir
+   konuşmada composer denenir; sunucu tarafı reddin veritabanı saatinden
+   türetildiği (istemci saatinden değil) ve hiçbir outbox satırı
+   yazılmadığı doğrulanır.
+   - [ ] Doğrulandı.
+6. **Mutlu yol — bir gerçek kabul.** Geçerli klinik-personel oturumuyla,
+   penceresi açık ve kendisine atanmış gerçek bir `human_handoff` work
+   item'ında composer kullanılarak tek bir personel yanıtı kuyruğa alınır;
+   `staff` origin ile `pending` outbox satırı oluştuğu, gönderici Worker'ın
+   bunu mevcut pipeline ile Meta'ya kabul ettirdiği ve gelen status callback
+   sonrası `messages.outbound_origin = 'staff'` olarak kaydedildiği (ama
+   personel `staff_actor_user_id` değerinin hiçbir UI sorgusunda
+   döndürülmediği) doğrulanır.
+   - [ ] Doğrulandı.
+7. **Idempotent replay + uyuşmazlık reddi.** Adım 6'nın aynı `request_id`
+   değeriyle tekrar gönderilmesinin ikinci bir outbox satırı yazmadan aynı
+   `outbox_id`'yi döndürdüğü; aynı `request_id`'nin farklı içerik/work item
+   ile yeniden kullanılmasının ise kapalı biçimde başarısız olduğu ve yeni
+   satır yazmadığı doğrulanır.
+   - [ ] Doğrulandı.
+8. **Rota değişikliği personel yanıtını silmiyor.** Adım 6'daki gibi
+   `pending` durumda bekleyen bir personel yanıtı varken aynı kişinin
+   `whatsapp_contact_routes` modu değiştirilir; personel satırının
+   silinmediği, yalnız aynı kişi için varsa bekleyen otomasyon satırlarının
+   silindiği doğrulanır.
+   - [ ] Doğrulandı.
+9. **Sınırların kanıtı.** Composer akışının hiçbir adımında OpenAI çağrısı
+   yapılmadığı (network/log kanıtı) ve work item'ın composer tarafından
+   otomatik `resolved`/`open` durumuna geçirilmediği (yalnız mevcut manuel
+   çözümleme akışının bunu yaptığı) doğrulanır.
+   - [ ] Doğrulandı.
+10. **Kanıt ve temizlik.** Yukarıdaki adımların sanitize edilmiş kanıtı
+    (PII, telefon numarası, mesaj içeriği veya token içermeyen) bu bölümün
+    tarihli bir alt bölümüne kaydedilir; sentetik work item/konuşma kayıtları
+    temizlenir veya içeriğinde "STAGING TEST" geçtiği için ayrı kayıt
+    tutulur.
+    - [ ] Doğrulandı.
+
+Adım 1–3 ve 9–10 Task 048'in kendi altyapı/sınır kanıtıdır. Adım 4–8 ise
+acceptance kriterlerinin (tenant izolasyonu, 24 saatlik pencere, idempotency,
+rota değişikliğinin personel mesajını silmemesi, kuyruk-vs-teslimat ayrımı)
+doğrudan staging kanıtıdır. Bu bölümdeki hiçbir adım tamamlanana kadar Task
+048 production'a alınamaz; production bu görev boyunca değişmemiştir.

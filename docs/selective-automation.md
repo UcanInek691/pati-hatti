@@ -145,7 +145,13 @@ before the production legal review.
   owner identifier. When the account row already has a matching owner, that
   owner row is locked before the route changes; when the resulting mode is
   `manual` or `personal`, still-`pending` automated outbox rows for that
-  account/owner's conversations are deleted in the same transaction.
+  account/owner's conversations are deleted in the same transaction. Task 048
+  (`supabase/migrations/20260903000100_staff_reply_composer.sql`, implemented
+  and verified only on disposable `vetai-test`, not staging/production) scopes this
+  delete to `message_origin = 'automation'` rows only, so a staff-queued
+  reply already `pending` for that contact survives an operator route change
+  instead of being deleted — see
+  [`docs/outbound-delivery.md`](outbound-delivery.md#staff-originated-rows-task-048).
   `processing`, `accepted`, and `failed` rows are never touched. A
   `processing` row may not yet have reached Meta; if its lease expires it
   can still be reclaimed/retried within the existing three-attempt ceiling.
@@ -240,7 +246,9 @@ Displayed fixed Turkish explanations:
 `/staff` never implies a human was notified or will answer — this task adds
 no human message composer, no staff notification, no response-time promise,
 no free-text sender, no echo import, no contact sync, and no account-default
-admin UI.
+admin UI. (Task 048 later adds a narrowly-scoped staff reply composer — see
+below; it does not add notification, echo import, contact sync, or an
+account-default admin UI.)
 
 ## Same-number manual messaging ceiling
 
@@ -253,7 +261,8 @@ the same number requires either:
    docs](https://developers.facebook.com/docs/whatsapp/cloud-api),
    [Business App/Cloud API Coexistence
    docs](https://developers.facebook.com/docs/whatsapp/embedded-signup/direct-onboarding-existing-users/existing-whatsapp-business-app-users)); or
-2. a later reviewed staff free-text sender built on Cloud API.
+2. a later reviewed staff free-text sender built on Cloud API — this is what
+   Task 048's composer implements; see below.
 
 Task 034 owns verifying the chosen Turkish pilot account's actual
 Coexistence eligibility, onboarding behavior, and outbound message-echo/
@@ -261,6 +270,22 @@ webhook behavior in real staging. Until that staging evidence exists,
 Coexistence must not be described as available in Türkiye or for this
 account, and manual compose/send remains a pilot blocker if it turns out to
 be unavailable.
+
+## Staff reply composer (Task 048)
+
+Option 2 above is now implemented, locally verified and proven only on
+disposable `vetai-test` — not staging-verified and not committed. Mandatory
+The first Opus review's corrections await a narrow read-only re-check. It does not
+depend on or interact with Coexistence: it is a narrowly-scoped RPC
+(`queue_staff_reply_v1`) that queues one human-authored reply, for the exact
+assigned human-handoff work item, inside the WhatsApp 24-hour
+customer-service window, onto the account's existing Cloud API sender
+credentials — the same credentials and pipeline automation already uses. It
+does not change route selection, does not add a general free-text sender for
+arbitrary contacts, and does not touch `whatsapp_contact_routes`. See
+[`docs/staff-workflow.md`](staff-workflow.md#staff-reply-composer-task-048)
+for the UI and [`docs/database-schema.md`](database-schema.md#staff-authored-whatsapp-reply-composer-task-048)
+for the schema/RPC contract.
 
 ## What this task does not do
 

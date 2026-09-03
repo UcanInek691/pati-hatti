@@ -103,6 +103,7 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Klinik AI kullanım defteri | Klinik kimliği, model/istem sürümü, doğrulanmış token sayıları, kaynak olayın hash'i (ham kimlik değil) (Task 042, `clinic_ai_usage_events`) | İç maliyet takibi ve aylık kullanım özetinin hesaplanması — faturalama veya kota değildir, bkz. [`usage-metering.md`](usage-metering.md) | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir |
 | Platform yöneticisi izin listesi | Auth kullanıcı kimliği (Task 043, `platform_admins`) | `/admin` panelindeki klinikler arası salt-okunur özete kimin erişebileceğini belirleme | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir; bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
 | Platform-admin klinik yaşam döngüsü denetim kaydı (Task 047, `platform_admin_clinic_action_events`) | Aktör Auth kullanıcı kimliği, klinik kimliği, sabit eylem adı (`provision`/`suspend`/`resume`), kapalı sonuç, istemci `request_id`'si, zaman ve ham istek yerine SHA-256 girdi parmak izi — ne WhatsApp kimlik bilgisi, ne hayvan sahibi/hayvan verisi, ne de ham istek/yanıt gövdesi | `/admin`'den yapılan her yaşam döngüsü mutasyonunun kim/ne/ne zaman kaydı; hesap veya müşteri içeriği erişimi değildir | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez, ekleme yalnız aynı transaction içindeki `SECURITY DEFINER` sarmalayıcı RPC'ler üzerinden olur, mutasyona uğratılamaz (append-only) — bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
+| Personel kaynaklı WhatsApp yanıtı (Task 048, yalnız disposable `vetai-test` üzerinde migration/rollback kanıtı geçti; staging/production'a uygulanmadı) | `outbound_message_outbox`/`messages` üzerinde: yanıt metni (mevcut `content`/ham metin kolonlarıyla aynı yerde), kuyruğa alan personelin Auth kullanıcı kimliği (`staff_actor_user_id`), istemci `request_id`'si, kaynak iş kaydı kimliği (`staff_work_item_id`), köken bayrağı (`message_origin`/`outbound_origin` = `automation`\|`staff`) ve hesaplanan pencere bitiş zamanı (`staff_window_expires_at`) | Personelin, kendisine atanmış tek bir insan-devri iş kaydı için, WhatsApp'ın 24 saatlik müşteri-hizmet penceresi içinde tek bir insan yazımı yanıt kuyruğa almasını sağlama; kuyruğa alma tek başına Meta kabulü, teslim veya okundu bilgisi değildir | Supabase; RLS/erişim mevcut outbox/mesaj kayıtlarıyla aynı tenant sınırına tabi. `staff_work_item_id` yalnız backend replay kanıtıdır ve VetAI'nin ilk taraf UI/REST seçimine alınmaz. `staff_actor_user_id` de bu sorguda seçilmez ve ilgili Auth kullanıcısı silinirse otomatik `null` olur (`on delete set null`); ancak `messages` için önceden var olan tenant-kapsamlı tablo yetkisi kolon bazlı gizlilik sınırı değildir |
 
 Not: Evcil hayvana ilişkin sağlık anlatımının gerçek kişiyle bağlantılı olduğu
 durumlarda hukuki niteliği ve uygulanacak koruma seviyesi uzman tarafından
@@ -173,6 +174,7 @@ gerekli” gibi genel bir ifade tek başına hukuki sebep yerine yazılmamalıd�
 | Mesaj teslimat takibi | Telefon, sağlayıcı kimliği ve sabit yanıt | | Meta, Cloudflare, Supabase | | |
 | Güvenlik, hata önleme ve olay kaydı | Hash, teknik kimlikler, sınırlı hata özeti | | Cloudflare, Supabase | | |
 | Personel kimlik doğrulama | Personel hesabı ve oturum | | Supabase Auth | | |
+| Personel kaynaklı WhatsApp yanıtını kuyruğa alma (Task 048, yalnız disposable `vetai-test` kanıtı geçti; staging/production'a uygulanmadı) | Hayvan sahibiyle bağlantılı konuşma; yanıt metni; kuyruğa alan personelin Auth kullanıcı kimliği | | Meta, Cloudflare, Supabase | | |
 
 ## 5. Aydınlatma metni için karar listesi
 
@@ -220,11 +222,25 @@ anlamına gelmez. Süreleri aşağıda uzman ve veri sorumlusu doldurmalıdır.
 | Klinik kapanış makbuzu (`clinic_offboarding_receipts`) | Klinik kimliğine göre benzersiz; otomatik süre yok | | | | |
 | Platform yöneticisi izin listesi (`platform_admins`) | Auth kullanıcısı silinince kademeli silinir; ayrıca kimin ne zaman/hangi gerekçeyle yönetici yapıldığına dair ayrı bir denetim kaydı **yoktur** — bu, kayıt altyapısı gerektiren ayrı bir karardır | | | | |
 | Platform-admin klinik yaşam döngüsü denetim kaydı (Task 047, `platform_admin_clinic_action_events`) | Append-only; hiçbir sütun tetikleyici veya arka plan işiyle silinmez, klinik/Auth kullanıcı kaydına yabancı anahtarla bağlı değildir, dolayısıyla klinik veya Auth kullanıcısı silindiğinde otomatik silinmez ya da kademelenmez. Bu belge bir saklama süresi **belirlemez veya önermez** — süre, sorumlu ve imha yöntemi ayrı bir hukuki/operasyonel karardır | | | | |
+| Personel kaynaklı WhatsApp yanıtı (Task 048, `outbound_message_outbox`/`messages` üzerindeki `message_origin`/`outbound_origin`, `staff_actor_user_id`, `staff_request_id`, `staff_work_item_id`, `staff_window_expires_at`) | Mevcut outbox/mesaj kayıtlarıyla aynı silme zincirine bağlı; ayrı bir otomatik süre yok. `staff_actor_user_id`, ilgili Auth kullanıcısı silinirse otomatik `null` olur (kayıt satırının kendisi silinmez); backend-only `staff_work_item_id` için ayrı bir saklama süresi yoktur — bu belge bir saklama süresi **belirlemez veya önermez** | | | | |
 
 Task 047 denetim kaydındaki SHA-256 girdi parmak izi anonim veri olarak kabul
 edilmez. Özellikle düşük çeşitliliğe sahip ad veya dış kimlik alanları tahmin
 edilerek yeniden eşleştirilebilir; bu nedenle parmak izi de denetim kaydıyla
 aynı erişim, saklama ve imha kararına tabi takma kimlikli veridir.
+
+Task 048'in personel yanıt alanları (yalnız disposable `vetai-test` üzerinde
+migration/rollback kanıtı geçti; staging/production'a uygulanmadı) için üç ayrı doğruluk seviyesi
+birbirine karıştırılmamalıdır: (1) kuyruğa alma yalnız bir `pending` outbox
+satırının yazıldığı anlamına gelir; (2) Meta kabulü ayrı ve sonraki bir
+adımdır; (3) teslim/okundu bilgisi bundan da ayrı, sağlayıcı durum
+geri çağrısıyla gelir (bkz. `docs/outbound-status.md`). VetAI'nin ilk taraf
+`/staff` sorgusu `staff_actor_user_id` alanını seçmez; mevcut aynı-klinik RLS
+ve tablo yetkisi kolon bazlı bir gizlilik sınırı değildir. İlgili Auth kullanıcısı silindiğinde
+otomatik `null` olur; bu, kaydın kendisinin silindiği veya anonimleştirildiği
+anlamına gelmez — yanıt metni ve köken bayrağı satırda kalmaya devam eder.
+Saklama süresi ve hukuki dayanak burada da **belirlenmemiştir**; ayrı bir
+hukuki/operasyonel karardır.
 
 Saklama şartı ortadan kalktığında silme, yok etme veya anonimleştirme yöntemi;
 periyodik imha süresi; yedeklerde uygulanma yöntemi ve sorumlu unvan ayrıca

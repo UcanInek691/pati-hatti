@@ -244,6 +244,77 @@ policy is active only after the account response validates that default; a
 missing migration or malformed response leaves route controls fail-closed
 with an explicit warning.
 
+## Staff reply composer (Task 048)
+
+**Implemented, locally verified and proven only on disposable `vetai-test` —
+not staging-verified and not committed.** The corrected rollback fixture
+passed with zero residue; the first mandatory Opus review's corrections are
+implemented and await a narrow read-only re-check. See
+`supabase/migrations/20260903000100_staff_reply_composer.sql`,
+`supabase/tests/048_staff_reply_composer.sql`, and
+[`docs/database-schema.md`](database-schema.md#staff-authored-whatsapp-reply-composer-task-048)
+for the schema/RPC contract this section describes.
+
+This surface currently relies on Supabase-authenticated clinic membership.
+Task 045's TOTP/`aal2` boundary applies only to `/admin`; staff MFA remains a
+separate production-access decision and is not claimed by Task 048.
+
+A fixed composer appears only inside the detail view of a work item that is,
+at read time, `kind = 'human_handoff'`, `status = 'in_progress'`, and
+assigned to the signed-in staff member — the same three conditions the
+server-side RPC re-checks independently, so a stale or manipulated client
+view can only ever fail closed, never queue on the caller's behalf. The
+composer is absent for every other kind/status/assignee combination,
+including the caller's own `open`/`seen`/resolved items and any item claimed
+by someone else.
+
+The RPC locks the clinic and exact membership row before the work item and
+re-checks tenant membership after any lifecycle-lock wait. A concurrent
+suspend, offboarding, or membership revocation therefore
+cannot commit and then leave a newly queued staff reply behind; this ordering
+also matches the clinic-to-child order used by lifecycle deletion.
+
+The service-window anchor is the earlier of the inbound message's provider/
+client timestamp and its trusted `webhook_events.received_at` server timestamp.
+A device clock set in the future therefore cannot lengthen the 24-hour window.
+
+Before sending, the operator sees a fixed Turkish `window.confirm()` warning
+that this will queue one real WhatsApp message and that queuing alone does not
+prove Meta acceptance or delivery; the operator must accept it. Declining
+leaves the draft untouched and sends nothing. On confirm, the page calls
+`queue_staff_reply_v1` (below) with a
+`crypto.randomUUID()` request id generated once per draft and reused only for
+that draft's own retries (a network timeout or transient failure retries the
+exact same request id; composing a new message after send always gets a new
+one) — so an accidental double-click or an automatic retry after a 10-second
+client-side timeout can never queue a second WhatsApp message for the same
+draft. The client also rejects an empty or whitespace-only draft and a draft
+over 4096 Unicode code points before calling the RPC, purely as a UX
+convenience; the RPC independently re-validates PostgreSQL character length
+and content server-side and is the authoritative check.
+
+The RPC's closed result set maps to fixed, truthful Turkish outcome copy —
+queued (`"Yanıt gönderim kuyruğuna eklendi."`) is described only as *queued*,
+never as *delivered* or *read*. Closed failures have a fixed, non-sensitive
+mapping: `not_found` → `"İş bulunamadı."`, `not_allowed` →
+`"Bu yanıtı şu anda gönderemezsiniz."`, `inactive` →
+`"Klinik şu anda aktif değil."`, and `window_closed` →
+`"24 saatlik müşteri yanıt penceresi kapandı."`. None exposes raw RPC details
+or another user's identity. This composer never reports Meta acceptance or
+delivery/read status itself — the existing sender Worker and
+`claim_outbound_message_v2`/`accept_outbound_message`
+(see [`docs/outbound-delivery.md`](outbound-delivery.md) and
+[`docs/outbound-status.md`](outbound-status.md)) own that, unchanged, exactly
+as they do for automation-produced replies.
+
+A staff-queued reply is never a new AI/automation turn: `queue_staff_reply_v1`
+only inserts a `pending` `outbound_message_outbox` row and never touches
+`staff_work_items`, `conversations`, or `whatsapp_contact_routes`, so queuing
+a reply does not itself resolve the work item, does not restart or bias
+automation for that contact, and a later `set_whatsapp_contact_route` mode
+change for that contact no longer deletes an already-queued staff reply (see
+`docs/database-schema.md`).
+
 ## Clinic schedule (Task 044)
 
 A fixed "Klinik takvimi" section — independent of the work queue and
@@ -300,11 +371,13 @@ process for the clinic to run themselves.
 
 No background or closed-tab notification (Push API, service worker), no
 full event/audit history view, no reassignment or release-claim UI, no
-notes or staff-to-staff messaging, no staff reply to the customer, no
-supervisor/admin console, no SLA timer or response-time metric, and no
-customer-facing claim about staff awareness or response time. Creation,
-deduplication, urgency, reason derivation, and the automatic
-delivery-failure resolution trigger from Task 020 are unchanged.
+notes or staff-to-staff messaging, no supervisor/admin console, no SLA timer
+or response-time metric, and no customer-facing claim about staff awareness
+or response time. Creation, deduplication, urgency, reason derivation, and
+the automatic delivery-failure resolution trigger from Task 020 are
+unchanged. (A staff reply to the customer was added later — see "Staff reply
+composer (Task 048)" above; that addition does not change anything else
+listed in this section.)
 
 ## Resolve, seen, and claim RPCs
 

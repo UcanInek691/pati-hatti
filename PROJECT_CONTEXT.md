@@ -1006,6 +1006,30 @@ occurred.
   has no real Meta/Cloudflare credential; real-clinic external setup and an
   explicit resume remain onboarding gates. Production remains unchanged.
 
+- Task 048 (safe staff WhatsApp reply composer) is `COMPLETE` at repository and
+  disposable-database gates as of 2026-09-04. A staff member may queue a
+  human-authored text only for the exact `human_handoff` item currently assigned
+  to them, while the clinic is active and the conservative server-verified
+  24-hour service window remains open. Tenant, recipient, sending account and
+  window are derived in PostgreSQL; the browser receives no phone, account,
+  actor or Meta credential.
+- Staff replies reuse the durable outbound outbox and existing per-account Meta
+  credential sender. Origin remains distinguishable as `staff` versus
+  `automation` in accepted message history, exact request replay is idempotent,
+  expired pending/reclaimable staff rows are terminalized before a Meta attempt,
+  and contact-route cleanup cannot delete human-authored pending replies.
+  Queueing is explicitly not represented as provider acceptance, delivery or
+  read status, and it does not resolve the handoff automatically.
+- Frozen install, typecheck, 1,936 tests (two opt-in paid/live gates skipped),
+  Worker dry-run, whitespace validation, Codex review and mandatory Claude Opus
+  architecture/RLS/tenant/idempotency/outbox/KVKK review passed. The migration
+  and rollback fixture passed only on disposable `vetai-test`, with independent
+  zero-residue checks; Task 048 has not been applied to staging or production.
+- Before production, staff-send rate limiting must be defined and verified. The
+  pre-existing same-tenant `messages` write/attribution grant also remains a
+  separate hardening review. External veterinarian and Turkish legal/KVKK
+  approvals remain mandatory and are not replaced by the engineering review.
+
 ## Context maintenance
 
 After each verified task, Codex updates only durable facts here: completed behavior, verified commands, accepted decisions, known blockers, and the next phase. Verbose implementation notes stay in Git history and completed task records rather than accumulating in this file.

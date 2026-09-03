@@ -96,6 +96,17 @@ infrastructure — `supabase/tests/019_outbound_status_tracking.sql` runs
 inside one PostgreSQL session and documents this limitation rather than
 claiming to have tested it.
 
+## Staff-originated rows are tracked identically (Task 048)
+
+`record_whatsapp_outbound_status(...)` and the rank/timestamp rules above are
+unmodified by Task 048 and apply identically whether the accepted outbox row
+came from automation or from a staff member's `queue_staff_reply_v1` call
+(see [`docs/outbound-delivery.md`](outbound-delivery.md#staff-originated-rows-task-048)).
+This document's queued-vs-accepted-vs-delivered-vs-read distinction is the
+same one the `/staff` composer's outcome copy relies on: queuing a staff
+reply only means a `pending` outbox row was written, never that Meta has
+accepted, delivered, or the customer has read it.
+
 ## Not built here
 
 No dashboard, alert, retention/pruning job, deployment, or real-provider

@@ -209,6 +209,28 @@ every box in this section is checked.
       self-service from `/staff` (see
       [`docs/clinic-operations.md`](clinic-operations.md#task-044-self-service-hours-closures-and-slot-inventory-staff)),
       as long as staff membership rows already exist from the process above.
+- [ ] Task 048's staff reply composer
+      (`queue_staff_reply_v1`, see
+      [`docs/staff-workflow.md`](staff-workflow.md#staff-reply-composer-task-048))
+      is **implemented, locally verified and proven only on disposable
+      `vetai-test`** — not staging-verified, not committed, and still pending
+      the narrow closeout re-check after the first mandatory Opus review's
+      corrections. Before it
+      is considered for production go-live, the staging smoke journey in
+      `docs/staging-runbook.md` must additionally prove: one real
+      staff-queued WhatsApp reply accepted end-to-end with a status callback,
+      an expired-service-window rejection, a cross-tenant/wrong-assignee/
+      wrong-work-item-kind rejection, that queuing a reply does not itself
+      resolve the work item or start a new automation turn, and that a
+      contact route change does not delete an already-queued staff reply.
+      `/staff` currently uses password-authenticated clinic membership and is
+      not protected by Task 045's `/admin`-only TOTP/`aal2` flow; the required
+      staff MFA/access policy must be explicitly decided and implemented (or
+      formally accepted by security/legal owners) before production access.
+      The staff-reply RPC currently has no conversation debounce, per-user
+      rate limit, or daily clinic cap; define and verify an operational limit
+      before broad production rollout so repeated clicks or compromised staff
+      credentials cannot damage Meta quality or create uncontrolled sends.
 
 ## 5. Controlled smoke journey
 

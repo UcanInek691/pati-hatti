@@ -149,6 +149,15 @@ export const STAFF_HTML = `<!doctype html>
   <h2 id="detail-heading">Detay</h2>
   <p id="workitem-status-region"></p>
   <div id="detail-content"></div>
+  <div id="reply-composer" hidden>
+    <h3>Personel yanıtı</h3>
+    <label for="reply-content-input">Mesaj</label>
+    <textarea id="reply-content-input" rows="4"></textarea>
+    <p id="reply-char-count"></p>
+    <button type="button" id="reply-send-button" disabled>Yanıtı kuyruğa al</button>
+    <p id="reply-status-region" role="status" aria-live="polite"></p>
+    <p id="reply-error-region" role="alert" aria-live="assertive"></p>
+  </div>
   <button type="button" id="claim-button">İşi üstlen</button>
   <button type="button" id="resolve-button">Çözüldü olarak işaretle</button>
   <button type="button" id="back-button">Listeye dön</button>
@@ -192,6 +201,12 @@ const detailContent = document.getElementById("detail-content");
 const claimButton = document.getElementById("claim-button");
 const resolveButton = document.getElementById("resolve-button");
 const backButton = document.getElementById("back-button");
+const replyComposer = document.getElementById("reply-composer");
+const replyContentInput = document.getElementById("reply-content-input");
+const replyCharCount = document.getElementById("reply-char-count");
+const replySendButton = document.getElementById("reply-send-button");
+const replyStatusRegion = document.getElementById("reply-status-region");
+const replyErrorRegion = document.getElementById("reply-error-region");
 const scheduleSection = document.getElementById("schedule-section");
 const clinicSelect = document.getElementById("clinic-select");
 const scheduleReadonlyNotice = document.getElementById("schedule-readonly-notice");
@@ -227,6 +242,16 @@ const SLOT_STATUS_LABELS = { available: "Bo\\u015f", held: "Tutuluyor", confirme
 const CLINIC_ROLES = ["admin", "veterinarian", "receptionist"];
 const CLINIC_STATUSES = ["active", "suspended", "offboarding"];
 const ISO_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
+const REPLY_MAX_LENGTH = 4096;
+const INBOUND_MESSAGE_MAX_LENGTH = 65536;
+const REPLY_RPC_TIMEOUT_MS = 10000;
+const REPLY_RESULTS = ["queued", "already_queued", "not_found", "not_allowed", "inactive", "window_closed"];
+const REPLY_RESULT_MESSAGES = {
+  not_found: "\\u0130\\u015f bulunamad\\u0131.",
+  not_allowed: "Bu yan\\u0131t\\u0131 \\u015fu anda g\\u00f6nderemezsiniz.",
+  inactive: "Klinik \\u015fu anda aktif de\\u011fil.",
+  window_closed: "24 saatlik m\\u00fc\\u015fteri yan\\u0131t penceresi kapand\\u0131.",
+};
 
 let config = null;
 let currentUserId = null;
@@ -239,6 +264,10 @@ let routeSubmitInFlight = false;
 let clinics = [];
 let selectedClinicId = null;
 let scheduleMutationInFlight = false;
+let composerEligible = false;
+let currentReplyRequestId = null;
+let lastReplyRequestContent = null;
+let replySubmitInFlight = false;
 
 function isExactRecord(value, keys) {
   try {
@@ -326,6 +355,11 @@ function clearSession() {
   scheduleReadonlyNotice.hidden = true;
   scheduleStatusRegion.textContent = "";
   scheduleErrorRegion.textContent = "";
+  composerEligible = false;
+  replyComposer.hidden = true;
+  replyStatusRegion.textContent = "";
+  replyErrorRegion.textContent = "";
+  resetReplyDraftState();
   stopPolling();
   clearMessages();
   showLoginView();
@@ -456,7 +490,7 @@ async function callWorkItemRpc(rpcName, workItemId, allowedResults) {
 
 async function fetchWorkItemState(workItemId) {
   const res = await authedFetch(
-    "/rest/v1/staff_work_items?id=eq." + encodeURIComponent(workItemId) + "&select=status,assigned_to",
+    "/rest/v1/staff_work_items?id=eq." + encodeURIComponent(workItemId) + "&select=status,assigned_to,kind",
     { headers: { Accept: "application/json" } }
   );
   if (!res.ok) {
@@ -466,10 +500,10 @@ async function fetchWorkItemState(workItemId) {
   if (!Array.isArray(rows) || rows.length !== 1) {
     throw new Error("work item state unavailable");
   }
-  return rows[0];
+  return validateWorkItemState(rows[0]);
 }
 
-function applyWorkItemState(state) {
+function applyWorkItemState(state, preserveReplyDraft = false) {
   const statusLabel = STATUS_LABELS[state.status] || state.status;
   workItemStatusRegion.textContent = statusLabel + " \\u2014 " + ownershipLabel(state.assigned_to);
   const claimable =
@@ -478,14 +512,151 @@ function applyWorkItemState(state) {
     (state.status === "in_progress" && (state.assigned_to === null || state.assigned_to === currentUserId));
   claimButton.disabled = !claimable;
   resolveButton.disabled = !(state.status === "in_progress" && state.assigned_to === currentUserId);
+  composerEligible =
+    state.kind === "human_handoff" && state.status === "in_progress" && state.assigned_to === currentUserId;
+  replyComposer.hidden = !composerEligible;
+  if (!composerEligible && !preserveReplyDraft) {
+    resetReplyDraftState();
+  } else {
+    updateReplySendButtonState();
+  }
 }
 
-async function refreshWorkItemState() {
+function validateWorkItemState(value) {
+  if (
+    !isExactRecord(value, ["status", "assigned_to", "kind"]) ||
+    ["open", "seen", "in_progress", "resolved"].indexOf(value.status) === -1 ||
+    ["human_handoff", "delivery_failure"].indexOf(value.kind) === -1 ||
+    (value.assigned_to !== null &&
+      (typeof value.assigned_to !== "string" || !UUID_PATTERN.test(value.assigned_to)))
+  ) {
+    throw new Error("malformed work item state");
+  }
+  return value;
+}
+
+function replyCodePointLength(value) {
+  return Array.from(value).length;
+}
+
+function isValidMessageHistoryItem(message) {
+  if (
+    !isExactRecord(message, ["direction", "content", "created_at", "outbound_origin"]) ||
+    ["inbound", "outbound", "system"].indexOf(message.direction) === -1 ||
+    typeof message.content !== "string" ||
+    replyCodePointLength(message.content) < 1 ||
+    replyCodePointLength(message.content) >
+      (message.direction === "inbound" ? INBOUND_MESSAGE_MAX_LENGTH : REPLY_MAX_LENGTH) ||
+    typeof message.created_at !== "string" ||
+    !ISO_TIMESTAMP_PATTERN.test(message.created_at) ||
+    !Number.isFinite(Date.parse(message.created_at))
+  ) {
+    return false;
+  }
+  return (
+    (message.direction === "outbound" &&
+      (message.outbound_origin === "automation" || message.outbound_origin === "staff")) ||
+    (message.direction !== "outbound" && message.outbound_origin === null)
+  );
+}
+
+function validateReplyResult(value) {
+  if (
+    !isExactRecord(value, ["result", "outbox_id", "window_expires_at"]) ||
+    typeof value.result !== "string" ||
+    REPLY_RESULTS.indexOf(value.result) === -1
+  ) {
+    throw new Error("malformed reply rpc response");
+  }
+
+  const successful = value.result === "queued" || value.result === "already_queued";
+  const validQueueId =
+    typeof value.outbox_id === "string" &&
+    UUID_PATTERN.test(value.outbox_id) &&
+    value.outbox_id === value.outbox_id.toLowerCase();
+  const validWindow =
+    typeof value.window_expires_at === "string" &&
+    ISO_TIMESTAMP_PATTERN.test(value.window_expires_at) &&
+    Number.isFinite(Date.parse(value.window_expires_at));
+
+  if (
+    (successful && (!validQueueId || !validWindow)) ||
+    (!successful && (value.outbox_id !== null || value.window_expires_at !== null))
+  ) {
+    throw new Error("incoherent reply rpc response");
+  }
+  return value;
+}
+
+function newReplyRequestId() {
+  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
+    return null;
+  }
+  const requestId = crypto.randomUUID();
+  return typeof requestId === "string" && UUID_PATTERN.test(requestId) && requestId === requestId.toLowerCase()
+    ? requestId
+    : null;
+}
+
+function resolveReplyRequestId(content) {
+  if (currentReplyRequestId !== null && lastReplyRequestContent === content) {
+    return currentReplyRequestId;
+  }
+  const requestId = newReplyRequestId();
+  if (requestId === null) {
+    return null;
+  }
+  currentReplyRequestId = requestId;
+  lastReplyRequestContent = content;
+  return requestId;
+}
+
+function resetReplyDraftState() {
+  currentReplyRequestId = null;
+  lastReplyRequestContent = null;
+  replyContentInput.value = "";
+  updateReplySendButtonState();
+}
+
+function updateReplySendButtonState() {
+  const length = replyCodePointLength(replyContentInput.value);
+  replyCharCount.textContent = length + " / " + REPLY_MAX_LENGTH;
+  const trimmedNonEmpty = replyContentInput.value.trim().length > 0;
+  replySendButton.disabled =
+    !composerEligible || replySubmitInFlight || !trimmedNonEmpty || length > REPLY_MAX_LENGTH;
+}
+
+replyContentInput.addEventListener("input", updateReplySendButtonState);
+
+async function queueStaffReply(workItemId, requestId, content) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REPLY_RPC_TIMEOUT_MS);
+  try {
+    const res = await authedFetch("/rest/v1/rpc/queue_staff_reply_v1", {
+      method: "POST",
+      headers: { "content-type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ p_work_item_id: workItemId, p_request_id: requestId, p_content: content }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error("reply rpc failed");
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length !== 1) {
+      throw new Error("malformed reply rpc response");
+    }
+    return validateReplyResult(rows[0]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function refreshWorkItemState(preserveReplyDraft = false) {
   if (!currentWorkItemId) {
     return;
   }
   try {
-    applyWorkItemState(await fetchWorkItemState(currentWorkItemId));
+    applyWorkItemState(await fetchWorkItemState(currentWorkItemId), preserveReplyDraft);
   } catch {
     showError("\\u0130\\u015f durumu g\\u00fcncellenemedi.");
   }
@@ -589,6 +760,16 @@ async function pollQueue() {
   await loadQueue(false);
 }
 
+function messageLabel(message) {
+  if (message.direction === "inbound") {
+    return "M\\u00fc\\u015fteri";
+  }
+  if (message.direction === "system") {
+    return "Sistem";
+  }
+  return message.outbound_origin === "staff" ? "Personel" : "Otomatik";
+}
+
 function renderDetail(owner, pet, conversation, messages) {
   detailContent.textContent = "";
 
@@ -610,7 +791,7 @@ function renderDetail(owner, pet, conversation, messages) {
   for (const message of messages) {
     const li = document.createElement("li");
     const when = new Date(message.created_at).toLocaleString("tr-TR");
-    li.textContent = "[" + message.direction + "] " + when + ": " + message.content;
+    li.textContent = "[" + messageLabel(message) + "] " + when + ": " + message.content;
     list.appendChild(li);
   }
   detailContent.appendChild(list);
@@ -618,6 +799,9 @@ function renderDetail(owner, pet, conversation, messages) {
 
 async function openDetail(workItemId, conversationId) {
   currentWorkItemId = workItemId;
+  resetReplyDraftState();
+  replyStatusRegion.textContent = "";
+  replyErrorRegion.textContent = "";
   errorRegion.textContent = "";
   try {
     const seenResult = await callWorkItemRpc("mark_staff_work_item_seen", workItemId, [
@@ -626,6 +810,9 @@ async function openDetail(workItemId, conversationId) {
       "already_resolved",
       "not_found",
     ]);
+    if (currentWorkItemId !== workItemId) {
+      return;
+    }
     if (seenResult === "already_resolved" || seenResult === "not_found") {
       currentWorkItemId = null;
       showError(
@@ -638,7 +825,11 @@ async function openDetail(workItemId, conversationId) {
       return;
     }
 
-    applyWorkItemState(await fetchWorkItemState(workItemId));
+    const workItemState = await fetchWorkItemState(workItemId);
+    if (currentWorkItemId !== workItemId) {
+      return;
+    }
+    applyWorkItemState(workItemState);
 
     const convRes = await authedFetch(
       "/rest/v1/conversations?id=eq." + encodeURIComponent(conversationId) + "&select=owner_id,pet_id,status,intake_stage",
@@ -685,22 +876,31 @@ async function openDetail(workItemId, conversationId) {
     const messagesRes = await authedFetch(
       "/rest/v1/messages?conversation_id=eq." +
         encodeURIComponent(conversationId) +
-        "&select=direction,content,created_at&order=created_at.desc&limit=20",
+        "&select=direction,content,created_at,outbound_origin&order=created_at.desc&limit=20",
       { headers: { Accept: "application/json" } }
     );
     if (!messagesRes.ok) {
       throw new Error("messages fetch failed");
     }
     const messageRows = await messagesRes.json();
-    if (!Array.isArray(messageRows)) {
+    if (
+      !Array.isArray(messageRows) ||
+      messageRows.length > 20 ||
+      !messageRows.every(isValidMessageHistoryItem)
+    ) {
       throw new Error("malformed messages response");
     }
     const chronological = messageRows.slice().reverse();
 
+    if (currentWorkItemId !== workItemId) {
+      return;
+    }
     renderDetail(owner, pet, conversation, chronological);
     showDetailView();
   } catch {
-    showError("Detay y\\u00fcklenemedi.");
+    if (currentWorkItemId === workItemId) {
+      showError("Detay y\\u00fcklenemedi.");
+    }
   }
 }
 
@@ -1643,6 +1843,59 @@ resolveButton.addEventListener("click", async () => {
   } catch {
     showError("\\u0130\\u015f \\u00e7\\u00f6z\\u00fcl\\u00fcrken bir hata olu\\u015ftu.");
     resolveButton.disabled = false;
+  }
+});
+
+replySendButton.addEventListener("click", async () => {
+  if (!currentWorkItemId || !composerEligible || replySubmitInFlight) {
+    return;
+  }
+  const content = replyContentInput.value.trim();
+  if (content.length === 0 || replyCodePointLength(content) > REPLY_MAX_LENGTH) {
+    return;
+  }
+  const requestId = resolveReplyRequestId(content);
+  if (requestId === null) {
+    replyErrorRegion.textContent =
+      "Bu taray\\u0131c\\u0131da g\\u00fcvenli yan\\u0131t g\\u00f6nderimi desteklenmiyor.";
+    return;
+  }
+  const confirmed = window.confirm(
+    "Bu mesaj m\\u00fc\\u015fteriye WhatsApp \\u00fczerinden g\\u00f6nderilmek \\u00fczere kuyru\\u011fa al\\u0131nacak. Kuyru\\u011fa al\\u0131nmas\\u0131 teslim edildi\\u011fi anlam\\u0131na gelmez. Devam etmek istedi\\u011finize emin misiniz?"
+  );
+  if (!confirmed) {
+    return;
+  }
+  replySubmitInFlight = true;
+  replyErrorRegion.textContent = "";
+  replyStatusRegion.textContent = "";
+  updateReplySendButtonState();
+  try {
+    const outcome = await queueStaffReply(currentWorkItemId, requestId, content);
+    if (outcome.result === "queued" || outcome.result === "already_queued") {
+      resetReplyDraftState();
+      replyStatusRegion.textContent =
+        outcome.result === "queued"
+          ? "Yan\\u0131t g\\u00f6nderim kuyru\\u011funa eklendi."
+          : "Bu yan\\u0131t zaten kuyru\\u011fa eklenmi\\u015fti.";
+      return;
+    }
+    replyErrorRegion.textContent = REPLY_RESULT_MESSAGES[outcome.result] || "Yan\\u0131t g\\u00f6nderilemedi.";
+    if (outcome.result === "not_found" || outcome.result === "not_allowed" || outcome.result === "inactive") {
+      await refreshWorkItemState(outcome.result === "not_allowed");
+    }
+  } catch (err) {
+    if (!sessionStorage.getItem(SESSION_STORAGE_KEY)) {
+      showError("Oturumunuz sona erdi. L\\u00fctfen yeniden giri\\u015f yap\\u0131n.");
+    } else {
+      replyErrorRegion.textContent =
+        err && err.name === "AbortError"
+          ? "Yan\\u0131t kuyru\\u011fa al\\u0131n\\u0131rken zaman a\\u015f\\u0131m\\u0131 oldu. Ayn\\u0131 taslakla tekrar deneyin."
+          : "Yan\\u0131t kuyru\\u011fa al\\u0131namad\\u0131. Ayn\\u0131 taslakla tekrar deneyin.";
+    }
+  } finally {
+    replySubmitInFlight = false;
+    updateReplySendButtonState();
   }
 });
 

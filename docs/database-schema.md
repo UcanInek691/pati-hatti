@@ -1183,3 +1183,120 @@ granted only to `authenticated`; `anon` and `service_role` direct execution
 is revoked. See [`docs/platform-admin-overview.md`](platform-admin-overview.md)
 for the `/admin` client behavior and [`docs/clinic-lifecycle.md`](clinic-lifecycle.md)
 for the underlying Task 041 functions these wrap.
+
+## Staff-authored WhatsApp reply composer (Task 048)
+
+`supabase/migrations/20260903000100_staff_reply_composer.sql` and
+`supabase/tests/048_staff_reply_composer.sql`. The implementer ran neither.
+Codex later applied the migration only to disposable `vetai-test` through the
+CLI query path; the corrected rollback fixture passed and a separate query
+confirmed zero fixture residue plus six validated Task 048 CHECK constraints.
+This did not create a migration-history entry. Staging and production remain
+unchanged; the first mandatory Opus review's corrections are implemented and
+await a narrow read-only re-check.
+
+Extends `public.outbound_message_outbox` with the origin plus four
+staff-only fields: `message_origin text` (`'automation' | 'staff'`, defaulting
+existing and future intake-produced rows to `'automation'`),
+`staff_request_id uuid`, `staff_work_item_id uuid`, `staff_actor_user_id uuid
+references auth.users (id) on delete set null` (the queuing staff member;
+nulled automatically if that Auth user is later deleted — never surfaced to
+`/staff` REST/RPC responses), and `staff_window_expires_at timestamptz` (the
+server-computed end of the WhatsApp 24-hour customer-service window at
+queue time, `null` for automation rows). `staff_work_item_id` is backend-only
+replay evidence and deliberately has no foreign key: deleting a retained work
+item must not erase an outbound send record. A new partial unique index enforces
+one outbox row per non-null `staff_request_id` for idempotent staff
+replay detection, replacing the table's previous unnamed unique constraint
+(dropped by name via `pg_catalog` introspection on `conkey`, since Postgres
+auto-generates a name that can exceed the 63-byte identifier limit — this
+does not change the constrained columns, only how the constraint is
+addressed). The table's existing state-shape check constraint gains a
+`staff_window_expired` branch: a `failed` row with `message_origin = 'staff'`
+may additionally carry `failure_reason = 'staff_window_expired'` instead of
+`attempts_exhausted`. The existing delivery-failure trigger is recreated
+narrowly so this new no-send expiry is not falsely labeled as
+`send_attempts_exhausted`; real attempt exhaustion and provider failure keep
+their previous work-item behavior.
+
+Extends `public.messages` with `outbound_origin text` (`'automation' |
+'staff'`, backfilled to `'automation'` for all pre-existing outbound rows;
+required non-null for `direction = 'outbound'`, required null otherwise) and
+`staff_actor_user_id uuid references auth.users (id) on delete set null`
+(populated only for `outbound_origin = 'staff'`; nulled on Auth-user
+deletion). VetAI's first-party `/staff` query selects only `outbound_origin`
+to render the closed `Personel | Otomatik` label; it never selects the actor
+UUID. The pre-existing tenant-scoped `messages` table grant remains row-level
+rather than column-level, so this UI omission is data minimization, not a
+database promise that same-clinic authenticated callers can never request the
+column.
+
+Forward-only recreates (via `create or replace function`, preserving each
+function's existing signature and ACL) three functions that already existed
+before this task:
+
+- `public.accept_outbound_message(p_outbox_id, p_claim_token,
+  p_provider_message_id)` (last defined by Task 018's
+  `20260809000200_outbound_delivery.sql`) — now also copies
+  `message_origin`/`staff_actor_user_id` from the claimed outbox row into the
+  inserted `messages.outbound_origin`/`staff_actor_user_id`. Acceptance and
+  claim-token/staleness semantics are otherwise unchanged.
+- `public.claim_outbound_message_v2()` (last defined by Task 047's
+  `20260831000100_clinic_lifecycle.sql`, which added the `clinics
+  .operational_status = 'active'` join — not new in this task) — now loops
+  past any locked candidate row where `message_origin = 'staff'` and
+  `staff_window_expires_at <= now()`, terminalizing it to
+  `failed`/`staff_window_expired` and continuing to the next row instead of
+  claiming it, without creating a misleading `send_attempts_exhausted` work
+  item, before falling through to the unchanged exhausted-check and claim/lease
+  branches. A provider request already handed to Meta cannot be recalled.
+  Automation-row claim/lease/exhaustion behavior is byte-identical to the Task
+  047 baseline.
+- `public.set_whatsapp_contact_route(...)` (last defined by Task 034's
+  `20260814000300_selective_automation.sql`) — its route-change cleanup
+  `delete` of pending outbox rows for the contact is now scoped to
+  `message_origin = 'automation'`, so a staff-queued reply already in
+  `pending`/`processing` survives a contact's automation-mode change instead
+  of being deleted.
+
+Adds one new `SECURITY DEFINER` RPC,
+`public.queue_staff_reply_v1(p_work_item_id uuid, p_request_id uuid,
+p_content text)` → `table (result text, outbox_id uuid,
+window_expires_at timestamptz)`, granted only to
+`authenticated` (revoked from `anon`/`service_role` direct execution). Given
+a caller and a `staff_work_items` row, it: discovers only the work item's
+tenant key, locks that clinic and the exact membership row `FOR KEY SHARE`,
+re-checks membership after any lifecycle wait, and only then
+locks/revalidates the exact work item. This
+clinic-before-child order serializes against Task 041 lifecycle `FOR UPDATE`
+without forming an offboarding deadlock and prevents an enqueue after a
+suspend/offboarding commit. It also confirms the clinic is
+`operational_status = 'active'`; confirms the work item is
+`kind = 'human_handoff'`, `status = 'in_progress'`, and currently assigned to
+the caller; derives the target conversation's WhatsApp account and recipient
+`phone_e164` from the database (never from a client parameter); computes the
+24-hour service window from the database clock off the conservative timestamp
+of that conversation's latest inbound message (`least(messages.created_at,
+webhook_events.received_at)`), so a future-skewed provider/client timestamp
+cannot extend the service window, refusing to queue outside it; validates `p_content` server-side
+(length, non-blank, no control characters) independently of any client-side
+check; and, on success, inserts exactly one `pending` row into
+`outbound_message_outbox` with `message_origin = 'staff'`,
+`staff_actor_user_id = auth.uid()`, `staff_request_id = p_request_id`,
+`staff_work_item_id = p_work_item_id`, and
+`staff_window_expires_at` set to the computed window end —
+`reply_category` reuses its existing column with a new allowed value,
+`'staff_reply'`. It never writes to `staff_work_items`, `conversations`, or
+`whatsapp_contact_routes`; only the existing sender Worker and
+`claim_outbound_message_v2`/`accept_outbound_message` (unmodified in their
+core delivery semantics) subsequently attempt an actual Meta send — this RPC
+only ever queues. A transaction-scoped advisory lock serializes first use of
+the request UUID, including calls that target different work items. Idempotent
+replay: a repeat call with the same `staff_request_id` and matching
+caller/work-item/conversation/content returns
+the original `outbox_id` without inserting a second row; a `staff_request_id`
+reused with different content, caller, or work item fails closed instead of
+silently reusing or overwriting the earlier row. See
+[`docs/staff-workflow.md`](staff-workflow.md) for the `/staff` composer UI
+and [`docs/outbound-delivery.md`](outbound-delivery.md) for how staff-origin
+rows flow through the existing send pipeline.
