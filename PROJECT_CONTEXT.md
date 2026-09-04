@@ -1077,11 +1077,20 @@ occurred.
   the redaction field. Task 050 passed frozen install, typecheck, 1,960 local
   tests (two opt-in paid evals skipped), both Worker dry-runs without config
   warnings, whitespace validation, Codex review and mandatory read-only Claude
-  Opus review. It is not yet activated on staging; production is unchanged.
-- The next active work after the separately approved Task 050 staging gate is
-  Task 051: terminal handoff recovery under an explicit product decision and
-  Opus safety review. Task 052 owns the real PostgREST regression proof and the
-  unexplained roughly 50-minute delivery-delay investigation.
+  Opus review.
+- After separate owner approval, Task 050 was deployed only to staging.
+  `/health` returned 200/`ok`, dependency-aware `/ready` returned 200/`ready`,
+  and Cloudflare Observability displayed the new invocations. A synthetic
+  webhook-verification request proved its query values were redacted while
+  retaining the clean request path. The owner then sent a real message from
+  the approved staging test contact; the inbound webhook, persistence, staging
+  Queue execution and delivery callbacks appeared, and the owner confirmed
+  receipt of the reply on the device. No sensitive content or identifier was
+  recorded in repository evidence. Production is unchanged.
+- The next active work is Task 051: terminal handoff recovery under an explicit
+  product decision and Opus safety review. Task 052 owns the real PostgREST
+  regression proof and the unexplained roughly 50-minute delivery-delay
+  investigation.
 
 ## Context maintenance
 

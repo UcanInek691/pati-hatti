@@ -327,9 +327,11 @@ dokunulmamalı, ve kontrolün kendisi yeni bir arıza kaynağı olmamalı.
 > invocation logları tam örneklemeyle etkinleştirilirken Meta webhook
 > doğrulama URL'sindeki token/challenge'ın tutulmaması için query-string
 > redaction zorunlu kılınmıştır. Bu yalnız
-> repository ve yerel test kanıtıdır — **staging aktivasyonu ayrı, henüz
-> yapılmamış bir adımdır** (bkz. `docs/staging-runbook.md` §21); İş 3'teki
-> zorunlu canlı gelen mesaj testinin yerine geçmez.
+> repository ve yerel test kanıtı olarak başladı. **Staging aktivasyonu ayrı
+> sahip onayıyla 2026-09-04'te tamamlandı** (bkz. `docs/staging-runbook.md`
+> §21): `/health` ve dependency-aware `/ready` 200 döndü, invocation log
+> redaksiyonu sentetik query değerleriyle doğrulandı ve İş 3'teki gerçek gelen
+> mesaj/cevap smoke'u geçti. Production değişmedi.
 
 **İş 3 — Runbook adımı.**
 `docs/staging-runbook.md`'ye zorunlu bir kapanış adımı: **her staging

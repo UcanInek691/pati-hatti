@@ -1,8 +1,8 @@
 # Current task — 050 Dependency-aware readiness and durable Worker observability
 
-Status: `COMPLETE` (closed 2026-09-04 after local verification, Codex review
-and mandatory read-only Claude Opus PASS; staging activation remains a
-separate explicitly approved operation and production remains unchanged)
+Status: `COMPLETE` (closed 2026-09-04 after local verification, Codex review,
+mandatory read-only Claude Opus PASS and separately approved real staging
+activation; production remains unchanged)
 
 Created by Codex on 2026-09-04 after Task 049 passed local, disposable-
 database, mandatory Opus and real staging activation gates. The Task 049 live
@@ -336,6 +336,18 @@ real external service call):**
 
 **Checks not run:** none. All six mandated verification commands above were
 run successfully in this session.
+
+**Real staging activation — PASS on 2026-09-04:** after separate owner
+approval, Codex deployed only `vetai-staging` with `wrangler.staging.toml`.
+The public `/health` endpoint returned 200/`ok`; dependency-aware `/ready`
+returned 200/`ready`. Cloudflare Observability showed the two invocations and,
+during a live synthetic webhook-verification probe, retained only the request
+path: the query-carried synthetic token/challenge were absent. No raw body,
+phone number, message content, Auth token or signature appeared in the checked
+records. The owner then sent a real message from the already-approved staging
+test contact; Cloudflare recorded the inbound webhook, persisted event, staging
+Queue execution and delivery-status callbacks, and the owner confirmed the
+reply arrived on the device. Production was not deployed or otherwise changed.
 
 **Mandatory Claude Opus review:** PASS on 2026-09-04. The review independently
 confirmed the exact PostgREST/row-lock path, fail-closed result handling,

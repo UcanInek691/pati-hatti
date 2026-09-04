@@ -971,10 +971,10 @@ Sıra:
 
 1. Worker, güncel `src/index.ts`/`src/readiness.ts`/`src/whatsappCredentials.ts`
    ile `wrangler.staging.toml` kullanılarak deploy edilir.
-   - [ ] Yapıldı.
+   - [x] Yapıldı — 2026-09-04, yalnız `vetai-staging`.
 2. `GET /health` `200 { "status": "ok" }` döner ve hâlâ hiçbir dış servise
    bağımlı değildir.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı — HTTP 200, `status = ok`.
 3. `GET /ready` `200 { "status": "ready" }` döner; bu artık yalnız yerel
    konfigürasyon şeklini değil, gerçek `resolve_whatsapp_contact_automation`
    Data API çağrısının da başarılı olduğunu kanıtlar — sabit sentetik kontak
@@ -983,7 +983,7 @@ Sıra:
    `503` dönerse registry'nin ilk hesabının `whatsapp_accounts` tablosunda
    mevcut olduğu ve bağlı kliniğin yaşam döngüsü durumunun beklendiği gibi
    olduğu kontrol edilir; neden bulunmadan sonraki adıma geçilmez.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı — HTTP 200, `status = ready`.
 4. Cloudflare panelinde bu Worker için Workers Observability'nin etkin olduğu
    ve bunun panelden elle değil `wrangler.staging.toml`'daki
    `[observability]` bloğundan (`enabled = true`, `head_sampling_rate = 1`,
@@ -991,14 +991,29 @@ Sıra:
    invocation örneklemesinden
    geldiği doğrulanır — panelden elle açılmış, deploy'dan gelmeyen bir ayar bu
    maddeyi karşılamaz; bu tam olarak olayın kök nedenlerinden biriydi.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı — deploy sonrası yeni invocation kayıtları görüldü.
 5. Observability'de normal bir invocation ve webhook doğrulama isteği
    spot-check edilir. İstek URL'sinde query string bulunmadığı ve kaydın ham
    istek gövdesi, telefon numarası, mesaj içeriği, token, challenge veya imza
    içermediği doğrulanır.
    Bunlardan biri görünürse aktivasyon durdurulur, §19 canlı smoke yapılmaz ve
    ayrı bir güvenlik düzeltme görevi açılır.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı — sentetik doğrulama isteğinin query değerleri kayıtta
+     yoktu; yalnız yöntem ve temiz yol görünüyordu.
 
 Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
 çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.
+
+### Task 050 staging yürütme kaydı — 2026-09-04
+
+Sahibin ayrı onayından sonra yalnız staging Worker deploy edildi. `/health`
+200/`ok`, `/ready` 200/`ready` döndü. Cloudflare Observability'de tam invocation
+kaydı görüldü; gerçek sır içermeyen sentetik bir webhook doğrulama isteğinde
+query string, token ve challenge tutulmadı. Kontrol edilen kayıtlarda ham gövde,
+telefon numarası, mesaj içeriği, Auth tokenı veya imza yoktu.
+
+Ardından onaylı test kontağından gerçek bir WhatsApp mesajı gönderildi. Canlı
+kayıtlar inbound webhook'u, olayın kalıcılaştırılmasını,
+`vetai-intake-staging` Queue çalışmasını ve durum callback'lerini gösterdi;
+sahip yanıtın cihazda geldiğini doğruladı. İçerik veya kimlik belirleyici bu
+kayda alınmadı. Production değiştirilmedi.

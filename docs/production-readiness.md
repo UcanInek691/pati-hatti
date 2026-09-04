@@ -118,8 +118,8 @@ itself.
       open for the production target and does not transfer staging evidence.
 - [ ] Task 050 (`/ready` dependency-aware readiness; see
       [`olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md))
-      is **implemented, locally verified and Codex/Opus-reviewed** — not
-      staging-activated. It distinguishes two different things: `/health` remains the
+      is **implemented, locally verified, Codex/Opus-reviewed and staging-
+      activated**. It distinguishes two different things: `/health` remains the
       cheap process-liveness check with no external dependency, while `/ready`
       additionally probes the real Supabase/PostgREST route-resolver boundary
       (`resolve_whatsapp_contact_automation`) using one already-validated
