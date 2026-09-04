@@ -1,8 +1,251 @@
-# Current task — 049 Persist the PostgREST route-resolver volatility invariant
+# Current task — 050 Dependency-aware readiness and durable Worker observability
+
+Status: `READY`
+
+Created by Codex on 2026-09-04 after Task 049 passed local, disposable-
+database, mandatory Opus and real staging activation gates. The Task 049 live
+WhatsApp smoke produced one accepted outbound reply and the owner confirmed
+receipt on the device. Production remains unchanged.
+
+## Goal
+
+Make `/ready` detect the exact Supabase/PostgREST route-resolution dependency
+whose four-day staging outage previously remained invisible, without sending a
+message, calling Meta or OpenAI, enqueueing work, or writing customer data.
+Persist Workers Observability in both Wrangler configuration files so a normal
+deploy cannot silently disable the logs needed to diagnose this failure class.
+
+This task does not address terminal handoff recovery or the unexplained
+approximately 50-minute delay; those remain Tasks 051 and 052.
+
+## Incident facts and scope
+
+- `/health` is a process-liveness endpoint and must remain independent of
+  external services.
+- `/ready` currently checks only local configuration shape and therefore stayed
+  HTTP 200 while every inbound webhook failed at the Data API boundary.
+- Calling the resolver with an unknown `phone_number_id` is not an adequate
+  check: that branch returns before the private helper and would not exercise
+  the row-lock path that caused the incident.
+- The existing WhatsApp credential registry already contains validated
+  `phone_number_id` values. Readiness may derive one identifier from that
+  registry, but must never expose, return or log its access token.
+- `resolve_whatsapp_contact_automation(text,text)` is read-only in product
+  semantics even though it is correctly marked `VOLATILE` for PostgREST
+  transaction routing. It is therefore the narrow dependency probe.
+- The endpoint is public. It must not turn every public request into an
+  unbounded Supabase call.
+- Workers Observability was enabled manually in the dashboard during the
+  incident and disappeared on a later deploy because it was absent from the
+  Wrangler source of truth.
+
+## Fixed implementation decisions
+
+1. Keep `/health` exactly as the cheap liveness check. Do not add Supabase,
+   Meta, OpenAI, Queue or registry work to it.
+2. Preserve `/ready`'s public HTTP contract exactly:
+   - only `GET` is accepted;
+   - success is HTTP 200 with the existing `{ "status": "ready" }` body;
+   - any failure is HTTP 503 with the existing
+     `{ "status": "unavailable" }` body;
+   - existing JSON content type and `Cache-Control: no-store` remain;
+   - no dependency name, URL, identifier, exception text or secret is exposed.
+3. Retain the current fail-closed configuration-shape checks. Invalid local
+   configuration returns unavailable without making a network call.
+4. After configuration passes, call the existing exact Data API RPC
+   `resolve_whatsapp_contact_automation` by native fetch through the existing
+   resolver client. Use:
+   - one deterministically selected `phone_number_id` from the already
+     validated WhatsApp credential registry; and
+   - a fixed synthetic E.164-shaped readiness sentinel that is not customer
+     input and is never persisted or logged.
+5. The probe is ready only when the resolver returns one of its three valid
+   configured modes: `ai`, `manual`, or `personal`. `unknown_account`, failed
+   fetch, non-2xx (including 405), timeout, malformed JSON, wrong row count,
+   extra/missing columns or any thrown error returns unavailable. Do not make
+   readiness depend on the sentinel being absent from the route table.
+6. Reuse `resolveWhatsAppContactAutomation`; do not create a new database RPC,
+   migration, table, row or direct SQL path. Add only the smallest credential-
+   registry helper needed to return one validated probe `phone_number_id`.
+   Its result type must not contain an access token or account UUID.
+7. Bound public amplification with one module-scoped readiness cache and one
+   shared in-flight promise per Worker isolate:
+   - cache both ready and unavailable results for 30 seconds;
+   - concurrent cache misses share one dependency call;
+   - after expiry exactly one new call may start;
+   - every caller receives a fresh closed result object, never a mutable cached
+     object;
+   - configuration failure must not be masked by a previously ready result.
+8. Do not add retries. The existing resolver client's bounded 10-second abort
+   is the only per-probe attempt. A failed probe may recover after the 30-second
+   cache window; `/health` remains available for distinguishing liveness.
+9. Add the following source-controlled configuration to both `wrangler.toml`
+   and `wrangler.staging.toml`:
+
+   ```toml
+   [observability]
+   enabled = true
+   head_sampling_rate = 1
+   ```
+
+   Full sampling is intentional for the current low-volume pilot. Do not add
+   custom request/message/token logging or Tail Worker infrastructure.
+10. Add no dependency, migration, SQL fixture, endpoint, scheduled job,
+    authentication change, UI, billing feature or customer-data field.
+
+## Security, privacy and cost boundaries
+
+- The probe must never call WhatsApp/Meta, OpenAI, a Queue producer, outbound
+  delivery, intake extraction or any write/mutation RPC.
+- It must never read or send a real contact phone number or message body. The
+  fixed sentinel may be sent only to the route resolver as `p_contact_e164`.
+- The existing Supabase service-role credential is used only inside the Worker
+  exactly as the current resolver client already does. Nothing secret or
+  account-identifying may enter the response, cache key, thrown error, custom
+  log, documentation evidence or tests.
+- Automated observability must contain only normal invocation metadata and
+  existing privacy-safe application logs. This task must not add raw request
+  bodies, headers, URLs with secrets, phone numbers, messages or Auth tokens to
+  logs.
+- Readiness is operational evidence, not proof that Meta delivery, OpenAI,
+  Queue processing or a real WhatsApp round trip succeeds.
+
+## Required tests
+
+Add or update focused tests that prove at least:
+
+1. every existing configuration-shape failure still returns unavailable and
+   makes zero fetch calls;
+2. valid resolver results `ai`, `manual` and `personal` return ready;
+3. `unknown_account`, thrown fetch, timeout/abort, every non-2xx response,
+   malformed/non-array/multi-row/extra-key/unknown-result payload returns
+   unavailable;
+4. the selected probe identifier comes from a fully validated registry and
+   the helper never returns an access token or account UUID;
+5. the fixed contact sentinel is used and no real fixture phone/message data is
+   required;
+6. simultaneous readiness calls share exactly one fetch;
+7. repeated calls inside 30 seconds use the cached closed result, while the
+   first call after expiry makes exactly one new fetch;
+8. an invalid current configuration cannot receive a cached ready result;
+9. returned result objects are fresh and caller mutation cannot poison later
+   responses;
+10. `/ready` preserves exact 200/503 body, method, header and no-store behavior,
+    while `/health` performs no dependency call;
+11. neither readiness nor its tests call Meta, OpenAI, Queue send, message
+    ingestion or any mutation RPC;
+12. both Wrangler files contain the exact observability configuration and both
+    dry-run successfully.
+
+Use fake timers or an injected clock/reset hook limited to tests for cache
+proof. Do not add real sleeps or make real network calls.
+
+## Required documentation
+
+Make only narrow Task 050 updates:
+
+- `docs/production-readiness.md`: distinguish liveness from dependency
+  readiness; record the exact resolver boundary checked and the limits of that
+  evidence; keep production activation unchecked.
+- `docs/staging-runbook.md`: add a bounded Task 050 activation checklist for
+  Worker deploy, `/health`, `/ready`, Cloudflare observability presence and a
+  privacy-safe invocation-log check. Leave live boxes unchecked.
+- `docs/olaylar/2026-09-04-route-resolver-405.md`: mark incident follow-up Work
+  2 as implemented locally only; do not claim staging activation.
+- `docs/saas-urunlestirme-yol-haritasi.md`: record Task 050 as implemented and
+  locally verified only, not deployed.
+
+Do not claim that `/ready` proves end-to-end WhatsApp delivery or replaces the
+mandatory live inbound smoke after a staging/production activation.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `src/readiness.ts`
+- `src/index.ts`
+- `src/whatsappCredentials.ts`
+- `test/readiness.test.ts`
+- `test/index.test.ts`
+- `test/whatsappCredentials.test.ts`
+- `wrangler.toml`
+- `wrangler.staging.toml`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/olaylar/2026-09-04-route-resolver-405.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `PROJECT_CONTEXT.md` (Codex only after all review gates pass)
+
+Everything else is forbidden. In particular, do not touch `.gitignore`,
+`docs/043-opus-inceleme.md`, `AGENTS.md`, migrations, SQL fixtures, secrets,
+package files, application data or external services.
+
+## Required verification by the implementer
+
+Run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+No real Supabase/Cloudflare/Meta/OpenAI/WhatsApp call, Worker deploy, commit or
+push is authorized for the implementer.
+
+## Review and activation gates
+
+1. Sonnet implements only the allowed scope, fills only this task's **Observed
+   context** and **Delivery record**, and does not commit.
+2. Codex reviews the cache/coalescing paths, exact Data API boundary, secret/
+   PII handling, endpoint contract and both Wrangler files; then reruns all
+   local checks and both dry-runs.
+3. Claude Opus performs a narrow read-only review of public-endpoint
+   amplification, fail-closed behavior, stale-cache bounds, credential/PII
+   exposure and documentation truthfulness.
+4. After both reviews pass, Codex updates durable context and commits the
+   repository change.
+5. Staging activation requires separate explicit owner approval. Deploy the
+   Worker only after Task 049 is already applied; verify `/health` 200,
+   `/ready` 200, persisted observability settings and a privacy-safe invocation
+   record. Then run the existing mandatory live inbound/reply smoke. Record no
+   message content, phone number, account identifier, token or signature.
+6. Production remains out of scope and unchanged.
+
+## Acceptance criteria
+
+- `/ready` turns unavailable when the exact route resolver Data API boundary
+  fails, including the prior HTTP 405 class.
+- The check reaches a real configured WhatsApp account and its transitive
+  helper path without using customer contact data or writing anything.
+- Public polling cannot trigger more than one resolver call per Worker isolate
+  per 30-second window, and simultaneous misses coalesce.
+- `/health` remains external-dependency-free and `/ready` reveals no internal
+  failure detail.
+- Both production and staging Wrangler configs persist full Workers
+  Observability sampling without adding sensitive custom logs.
+- All focused/full tests, typecheck, both Worker dry-runs and diff check pass.
+- Docs distinguish local implementation, staging activation, dependency
+  readiness and real end-to-end WhatsApp evidence.
+- No external service or production environment is changed.
+
+## Observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Delivery record
+
+To be filled by the implementing agent after implementation and verification.
+
+---
+
+# Completed task — 049 Persist the PostgREST route-resolver volatility invariant
 
 Status: `COMPLETE` (closed 2026-09-04 after local, disposable-database,
-Codex and mandatory read-only Opus review gates passed; staging activation
-remains a separate explicitly approved operation)
+Codex, mandatory read-only Opus and separately approved real staging activation
+gates passed; production remains unchanged)
 
 Created by Codex on 2026-09-04 after the staging incident recorded in
 `docs/olaylar/2026-09-04-route-resolver-405.md`. Task 048 is complete. This is
