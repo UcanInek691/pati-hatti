@@ -116,6 +116,25 @@ itself.
       what previously failed.
       Staging completed this full gate on 2026-09-04; the checkbox remains
       open for the production target and does not transfer staging evidence.
+- [ ] Task 050 (`/ready` dependency-aware readiness; see
+      [`olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md))
+      is **implemented, locally verified and Codex/Opus-reviewed** — not
+      staging-activated. It distinguishes two different things: `/health` remains the
+      cheap process-liveness check with no external dependency, while `/ready`
+      additionally probes the real Supabase/PostgREST route-resolver boundary
+      (`resolve_whatsapp_contact_automation`) using one already-validated
+      registry `phone_number_id` and a fixed synthetic sentinel contact — the
+      exact boundary whose HTTP 405 failure mode caused the Task 049 staging
+      incident. A `/ready` `200` is evidence that this one resolver call path
+      is reachable and returns a configured mode (`ai`/`manual`/`personal`); it
+      is not evidence that Meta, OpenAI, or a live WhatsApp round trip
+      succeeds, and it does not replace the mandatory live inbound/reply smoke
+      after an activation. Workers invocation logging must retain full pilot
+      sampling with `redact_query_string = true`; Meta's query-carried webhook
+      verification token/challenge must never be retained in log URLs. This
+      checkbox stays unchecked until staging
+      activation (`docs/staging-runbook.md`) and this production gate both
+      complete.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
@@ -263,8 +282,12 @@ a retry. Stop and fix before continuing if any step's actual result differs
 from its expected result.
 
 1. `GET /health` returns `200 { "status": "ok" }`.
-2. `GET /ready` returns `200 { "status": "ready" }`. If it returns `503`,
-   stop — configuration is incomplete; do not proceed.
+2. `GET /ready` returns `200 { "status": "ready" }`. Since Task 050 this also
+   proves the real Supabase/PostgREST route-resolver boundary
+   (`resolve_whatsapp_contact_automation`) is reachable, not only local
+   configuration shape — it is still not proof of a live Meta/OpenAI/WhatsApp
+   round trip. If it returns `503`, stop — configuration or the route
+   resolver is unavailable; do not proceed.
 3. The Meta webhook challenge (`GET /webhooks/whatsapp`) succeeds with the
    real verify token.
 4. Send one signed synthetic inbound WhatsApp text message; confirm it is

@@ -49,6 +49,7 @@ gereksinim çıktığında değerlendirilir.
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
 | Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
+| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` artık sentetik sabit kontakla gerçek PostgREST rota çözümleme çağrısını (Worker isolate başına 30 sn cache + eşzamanlı probe birleştirme ile) kontrol ediyor; Wrangler Workers Observability tam invocation örneklemesi ve query-string redaction ile etkinleştirildi. Yerel test/typecheck/dry-run ile doğrulandı ve Codex/Opus incelemeleri geçti; staging'e uygulanmadı. |
 
 Önceki bir incelemedeki “tanınmayan WhatsApp hesabı 503 üretir” bulgusu güncel
 değildir. Worker tanınmayan hesabı artık başarılı biçimde kabul edip hiçbir iş

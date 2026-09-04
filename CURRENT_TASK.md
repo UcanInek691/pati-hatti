@@ -1,6 +1,8 @@
 # Current task — 050 Dependency-aware readiness and durable Worker observability
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-04 after local verification, Codex review
+and mandatory read-only Claude Opus PASS; staging activation remains a
+separate explicitly approved operation and production remains unchanged)
 
 Created by Codex on 2026-09-04 after Task 049 passed local, disposable-
 database, mandatory Opus and real staging activation gates. The Task 049 live
@@ -38,6 +40,11 @@ approximately 50-minute delay; those remain Tasks 051 and 052.
 - Workers Observability was enabled manually in the dashboard during the
   incident and disappeared on a later deploy because it was absent from the
   Wrangler source of truth.
+- Codex review found that the lockfile's Wrangler 4.118.0 does not yet accept
+  Cloudflare's native `observability.redact_query_string` setting and warns
+  that it may be ignored. The existing `wrangler` dependency already permits
+  current 4.x releases; the lockfile must move to a release that parses this
+  setting without warning before the configuration is safe to deploy.
 
 ## Fixed implementation decisions
 
@@ -86,12 +93,22 @@ approximately 50-minute delay; those remain Tasks 051 and 052.
    [observability]
    enabled = true
    head_sampling_rate = 1
+   redact_query_string = true
+
+   [observability.logs]
+   invocation_logs = true
+   head_sampling_rate = 1
    ```
 
-   Full sampling is intentional for the current low-volume pilot. Do not add
+   Full invocation sampling is intentional for the current low-volume pilot.
+   Query-string redaction is mandatory because the Meta webhook verification
+   URL carries `hub.verify_token` and `hub.challenge` in its query. Do not add
    custom request/message/token logging or Tail Worker infrastructure.
-10. Add no dependency, migration, SQL fixture, endpoint, scheduled job,
-    authentication change, UI, billing feature or customer-data field.
+10. Add no new dependency, migration, SQL fixture, endpoint, scheduled job,
+    authentication change, UI, billing feature or customer-data field. Codex
+    may update only the existing Wrangler 4.x lockfile resolution to the
+    smallest current release that accepts `redact_query_string` without a
+    configuration warning; keep `package.json`'s existing semver range.
 
 ## Security, privacy and cost boundaries
 
@@ -103,10 +120,10 @@ approximately 50-minute delay; those remain Tasks 051 and 052.
   exactly as the current resolver client already does. Nothing secret or
   account-identifying may enter the response, cache key, thrown error, custom
   log, documentation evidence or tests.
-- Automated observability must contain only normal invocation metadata and
-  existing privacy-safe application logs. This task must not add raw request
-  bodies, headers, URLs with secrets, phone numbers, messages or Auth tokens to
-  logs.
+- Automated observability must contain only normal invocation metadata with
+  query strings redacted, plus existing privacy-safe application logs. This
+  task must not add raw request bodies, headers, URLs with secrets, phone
+  numbers, messages or Auth tokens to logs.
 - Readiness is operational evidence, not proof that Meta delivery, OpenAI,
   Queue processing or a real WhatsApp round trip succeeds.
 
@@ -134,8 +151,8 @@ Add or update focused tests that prove at least:
     while `/health` performs no dependency call;
 11. neither readiness nor its tests call Meta, OpenAI, Queue send, message
     ingestion or any mutation RPC;
-12. both Wrangler files contain the exact observability configuration and both
-    dry-run successfully.
+12. both Wrangler files contain full invocation sampling plus
+    `redact_query_string = true`, and both dry-run successfully.
 
 Use fake timers or an injected clock/reset hook limited to tests for cache
 proof. Do not add real sleeps or make real network calls.
@@ -169,6 +186,8 @@ mandatory live inbound smoke after a staging/production activation.
 - `test/whatsappCredentials.test.ts`
 - `wrangler.toml`
 - `wrangler.staging.toml`
+- `pnpm-lock.yaml` (Codex review-only update of the already-declared Wrangler
+  4.x resolution when required for query-string redaction support)
 - `docs/production-readiness.md`
 - `docs/staging-runbook.md`
 - `docs/olaylar/2026-09-04-route-resolver-405.md`
@@ -224,8 +243,10 @@ push is authorized for the implementer.
   per 30-second window, and simultaneous misses coalesce.
 - `/health` remains external-dependency-free and `/ready` reveals no internal
   failure detail.
-- Both production and staging Wrangler configs persist full Workers
-  Observability sampling without adding sensitive custom logs.
+- The locked Wrangler version accepts both configs without an unknown-field
+  warning. Both production and staging Wrangler configs persist full Workers
+  Observability sampling with query-string redaction and without adding
+  sensitive custom logs.
 - All focused/full tests, typecheck, both Worker dry-runs and diff check pass.
 - Docs distinguish local implementation, staging activation, dependency
   readiness and real end-to-end WhatsApp evidence.
@@ -233,11 +254,139 @@ push is authorized for the implementer.
 
 ## Observed context
 
-To be filled by the implementing agent from repository evidence only.
+- Before this change, `checkReadiness` (`src/readiness.ts`) only ran
+  `checkConfigurationShape`: it validated env var shape/placeholders and the
+  WhatsApp credential registry, but never called out to Supabase/PostgREST.
+  A repeat of the Task 049 405 would have left `/ready` reporting 200 the
+  entire time, exactly as it did during the real four-day outage.
+- `resolveWhatsAppContactAutomation(phoneNumberId, contactE164, env)`
+  (`src/contactAutomation.ts`) already performs the real
+  `resolve_whatsapp_contact_automation` PostgREST RPC call and returns a
+  discriminated `{ kind }` result (`ai` / `manual` / `personal` /
+  `unknown_account` / `failed`); it takes no message-sending or DB-write path,
+  so it was reusable as-is for a safe probe.
+- `parseRegistry`/credential helpers in `src/whatsappCredentials.ts` already
+  expose validated `phoneNumberId` values per configured WhatsApp account;
+  `getReadinessProbePhoneNumberId` was added there to read the first
+  registry entry's `phone_number_id` only, never a token or account UUID.
+- `src/index.ts`'s `/ready` handler already called `checkReadiness(env)`
+  synchronously; making the dependency probe real required only awaiting it.
+  `/health` has its own separate handler with no call into `checkReadiness`
+  and was not touched.
+- No existing module-scope cache/coalescing primitive existed for `/ready`;
+  this task added one (`cachedResult`/`cachedAt`/`inFlight` in
+  `src/readiness.ts`) rather than reusing an unrelated mechanism, since none
+  existed.
+- Both `wrangler.toml` and `wrangler.staging.toml` had no `[observability]`
+  block prior to this change.
 
 ## Delivery record
 
-To be filled by the implementing agent after implementation and verification.
+**Files changed** (all within the task's Allowed changes list):
+`src/readiness.ts`, `src/whatsappCredentials.ts`, `src/index.ts`,
+`wrangler.toml`, `wrangler.staging.toml`, `test/readiness.test.ts`,
+`test/whatsappCredentials.test.ts`, `test/index.test.ts`,
+`docs/production-readiness.md`, `docs/staging-runbook.md`,
+`docs/olaylar/2026-09-04-route-resolver-405.md`,
+`docs/saas-urunlestirme-yol-haritasi.md`, `pnpm-lock.yaml` (Codex-only
+Wrangler 4.118.0 -> 4.128.0 resolution update), `CURRENT_TASK.md`.
+
+**What changed:**
+- `/ready` now runs the existing uncached `checkConfigurationShape` first
+  (so a configuration regression is never masked by a stale cached result),
+  then probes the real route resolver via
+  `resolveWhatsAppContactAutomation` using the synthetic sentinel contact
+  `+10000000000` and a real, already-validated `phone_number_id` from the
+  registry. `ai`/`manual`/`personal` map to `ready`; every other outcome
+  (`unknown_account`, non-2xx including 405, timeout/abort, malformed
+  response, fetch failure) maps to `unavailable`.
+- The dependency-probe result (not the configuration check) is cached for
+  30 seconds and concurrent cache-miss calls share one in-flight promise, so
+  public polling cannot trigger more than one resolver call per Worker
+  isolate per 30-second window. Every return path returns a fresh spread
+  copy of the cached/result object so no caller can mutate shared state.
+  `/health` is unchanged and makes no dependency call.
+- Both Wrangler files now carry `[observability]` with `enabled = true` and
+  full sampling. Their nested log settings explicitly keep invocation logs and
+  sample them fully; the parent sets `redact_query_string = true`, preventing
+  Meta's query-carried verification token/challenge from being retained in
+  request URLs.
+
+**Verification run in this session (all local, no deploy/commit/push, no
+real external service call):**
+- `pnpm install --frozen-lockfile` — succeeded.
+- `pnpm typecheck` — `tsc --noEmit` exits 0, no errors.
+- `pnpm test` — final Codex rerun: Test Files: 37 passed (37). Tests: 1960
+  passed, 2 skipped (1962 total). Focused readiness/credentials/index coverage
+  is 71 + 46 + 96 = 213 passing tests.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — final
+  Wrangler 4.128.0 run succeeded without configuration warnings (`Total
+  Upload: 263.65 KiB / gzip: 54.91 KiB`, `--dry-run: exiting now`).
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run
+  --outdir .wrangler/dry-run-staging` — final Wrangler 4.128.0 run succeeded
+  without configuration warnings (`Total Upload: 263.65 KiB / gzip: 54.91
+  KiB`, `--dry-run: exiting now`).
+- `git diff --check` — exits 0; only pre-existing cosmetic CRLF/LF
+  `autocrlf` notices, no real whitespace-error violations.
+- `git status --porcelain` confirms only files in this task's Allowed
+  changes list were modified, plus two pre-existing out-of-scope items that
+  predate this session and were not touched here: `.gitignore` (already
+  modified before this task started) and `docs/043-opus-inceleme.md`
+  (already untracked before this task started).
+
+**Checks not run:** none. All six mandated verification commands above were
+run successfully in this session.
+
+**Mandatory Claude Opus review:** PASS on 2026-09-04. The review independently
+confirmed the exact PostgREST/row-lock path, fail-closed result handling,
+write-free probe, synthetic sentinel, per-isolate cache/coalescing, credential
+minimization, Wrangler schema placement and documentation truthfulness. Its
+non-blocking documentation findings were closed by spelling out the
+per-Worker-isolate cache scope, the `503` account/lifecycle diagnostic and the
+stop/escalate action for any sensitive invocation-log residue. A speculative
+test-only module reset and the pre-existing shared `FAILED_RESOLVE` object were
+not added to this task because current tests are non-vacuous and neither is a
+Task 050 runtime defect.
+
+**Risks for Codex/Opus to review:**
+- Codex found during review that Cloudflare invocation logs include the fetch
+  request URL. Because Meta webhook verification carries its verify token and
+  challenge in the query string, the implementer's original parent-only
+  observability block could have persisted that material. Codex added the
+  native `observability.redact_query_string = true` setting to both
+  Wrangler files, pinned it in `test/index.test.ts`, and updated the narrow
+  documentation. Both dry-runs must be repeated after this correction.
+- The first post-correction dry-run proved Wrangler 4.118.0 treats
+  `redact_query_string` as an unexpected field. Codex therefore authorized the
+  narrow lockfile-only update of the existing Wrangler 4.x dependency; final
+  verification must show both configs parse without that warning.
+- The cache-bypass ordering: `checkConfigurationShape` always runs
+  uncached before the 30-second cache/coalescing logic is consulted at all.
+  This is deliberate (acceptance criteria require a config regression to
+  never be masked by a previously-cached ready result) but changes the
+  latency profile of every `/ready` call slightly versus a design that
+  cached the full result including configuration.
+- The in-flight coalescing relies on the Worker's single-threaded,
+  run-to-completion JS semantics (the `inFlight` promise is assigned
+  synchronously before any `await`). This is correct for a single isolate
+  but should be re-checked against Cloudflare's isolate/concurrency model
+  if Workers ever run multiple isolates sharing this module scope.
+- The probe reuses `resolveWhatsAppContactAutomation` end-to-end (real
+  PostgREST RPC call) rather than a narrower dependency check; this is more
+  faithful to the incident but means `/ready` now depends on the full
+  routing logic (allowlist/account resolution included), not just
+  connectivity — worth confirming this matches the intended dependency
+  boundary.
+- Test-authoring gotcha found and fixed during this task: a mocked `fetch`
+  returning the same `Response` instance across multiple calls fails on the
+  second `.json()` read (bodies are single-read). Tests needing more than
+  one real call now use `mockImplementation(() => Promise.resolve(...))` to
+  produce a fresh `Response` per call — worth spot-checking other test
+  files for the same latent pattern.
+- Documentation wording was kept to "implemented locally only, not staging-
+  activated" per the task's Required documentation instructions; Codex
+  should confirm none of the three doc edits overstate end-to-end proof
+  before staging activation.
 
 ---
 

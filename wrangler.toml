@@ -31,3 +31,12 @@ dead_letter_queue = "vetai-intake-terminal-dlq"
 
 [triggers]
 crons = ["* * * * *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+redact_query_string = true
+
+[observability.logs]
+invocation_logs = true
+head_sampling_rate = 1

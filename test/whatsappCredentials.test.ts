@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isWhatsAppCredentialRegistryValid, resolveWhatsAppAccessToken } from "../src/whatsappCredentials";
+import { getReadinessProbePhoneNumberId, isWhatsAppCredentialRegistryValid, resolveWhatsAppAccessToken } from "../src/whatsappCredentials";
 
 const accountA = "11111111-1111-1111-1111-111111111111";
 const accountB = "22222222-2222-2222-2222-222222222222";
@@ -140,5 +140,30 @@ describe("resolveWhatsAppAccessToken", () => {
       { whatsapp_account_id: accountB, phone_number_id: "not-digits", access_token: "token-b" },
     ]);
     expect(resolveWhatsAppAccessToken(partiallyValid, accountA, "918000001")).toEqual({ kind: "not_found" });
+  });
+});
+
+describe("getReadinessProbePhoneNumberId", () => {
+  it("returns the first entry's phone_number_id for a well-formed registry", () => {
+    const registry = JSON.stringify([
+      { whatsapp_account_id: accountA, phone_number_id: "918000001", access_token: "token-a" },
+      { whatsapp_account_id: accountB, phone_number_id: "918000002", access_token: "token-b" },
+    ]);
+    expect(getReadinessProbePhoneNumberId(registry)).toBe("918000001");
+  });
+
+  it("never returns an access token or account UUID", () => {
+    const registry = JSON.stringify([{ whatsapp_account_id: accountA, phone_number_id: "918000001", access_token: "token-a" }]);
+    const result = getReadinessProbePhoneNumberId(registry);
+    expect(result).not.toContain(accountA);
+    expect(result).not.toContain("token-a");
+  });
+
+  it.each([
+    ["not JSON", "not-json"],
+    ["empty", ""],
+    ["an empty array", "[]"],
+  ])("returns null for %s", (_label, raw) => {
+    expect(getReadinessProbePhoneNumberId(raw)).toBeNull();
   });
 });

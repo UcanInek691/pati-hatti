@@ -167,7 +167,7 @@ export default {
           headers: { ...STAFF_SECURITY_HEADERS, Allow: "GET" },
         });
       }
-      const readiness = checkReadiness(env);
+      const readiness = await checkReadiness(env);
       return Response.json(readiness, {
         status: readiness.status === "ready" ? 200 : 503,
         headers: STAFF_SECURITY_HEADERS,

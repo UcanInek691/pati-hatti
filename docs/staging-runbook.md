@@ -955,3 +955,50 @@ Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
   cihazında gördüğünü doğruladı. Mesaj içeriği, telefon numarası, token veya
   imza bu kayda alınmadı.
 - Production değiştirilmedi.
+
+## 21. Task 050 aktivasyon kontrol listesi — dependency-aware `/ready` ve Workers Observability
+
+Bu bölüm, Task 050'nin (`docs/olaylar/2026-09-04-route-resolver-405.md` İş 2)
+staging'e aktive edilmesi için izlenecek, sınırlı bir kontrol listesidir. Task
+050 şu an yalnız yerel olarak implemente edilmiş ve yerel testlerle
+doğrulanmıştır; aşağıdaki hiçbir kutu bu görevin implementasyon aşamasında
+işaretlenmemiştir ve yalnız ayrı sahip onayı sonrası, gerçek bir staging
+deploy sırasında işaretlenebilir. §19'daki zorunlu canlı gelen mesaj/cevap
+testinin **yerine geçmez**. Ön koşul: Task 049 zaten staging'e aktive edilmiş
+olmalıdır (§20).
+
+Sıra:
+
+1. Worker, güncel `src/index.ts`/`src/readiness.ts`/`src/whatsappCredentials.ts`
+   ile `wrangler.staging.toml` kullanılarak deploy edilir.
+   - [ ] Yapıldı.
+2. `GET /health` `200 { "status": "ok" }` döner ve hâlâ hiçbir dış servise
+   bağımlı değildir.
+   - [ ] Doğrulandı.
+3. `GET /ready` `200 { "status": "ready" }` döner; bu artık yalnız yerel
+   konfigürasyon şeklini değil, gerçek `resolve_whatsapp_contact_automation`
+   Data API çağrısının da başarılı olduğunu kanıtlar — sabit sentetik kontak
+   (`+10000000000`) ve kayıtlı bir `phone_number_id` ile, gerçek müşteri
+   verisi kullanılmadan.
+   `503` dönerse registry'nin ilk hesabının `whatsapp_accounts` tablosunda
+   mevcut olduğu ve bağlı kliniğin yaşam döngüsü durumunun beklendiği gibi
+   olduğu kontrol edilir; neden bulunmadan sonraki adıma geçilmez.
+   - [ ] Doğrulandı.
+4. Cloudflare panelinde bu Worker için Workers Observability'nin etkin olduğu
+   ve bunun panelden elle değil `wrangler.staging.toml`'daki
+   `[observability]` bloğundan (`enabled = true`, `head_sampling_rate = 1`,
+   `redact_query_string = true`) ve `[observability.logs]` bloğundaki tam
+   invocation örneklemesinden
+   geldiği doğrulanır — panelden elle açılmış, deploy'dan gelmeyen bir ayar bu
+   maddeyi karşılamaz; bu tam olarak olayın kök nedenlerinden biriydi.
+   - [ ] Doğrulandı.
+5. Observability'de normal bir invocation ve webhook doğrulama isteği
+   spot-check edilir. İstek URL'sinde query string bulunmadığı ve kaydın ham
+   istek gövdesi, telefon numarası, mesaj içeriği, token, challenge veya imza
+   içermediği doğrulanır.
+   Bunlardan biri görünürse aktivasyon durdurulur, §19 canlı smoke yapılmaz ve
+   ayrı bir güvenlik düzeltme görevi açılır.
+   - [ ] Doğrulandı.
+
+Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
+çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.

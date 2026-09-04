@@ -44,6 +44,10 @@ async function signedPost(body: string, extraHeaders: Record<string, string> = {
 }
 
 describe("worker fetch routing", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("GET /health returns 200 with status ok", async () => {
     const res = await worker.fetch(new Request("https://vetai.test/health"), env);
     expect(res.status).toBe(200);
@@ -52,6 +56,10 @@ describe("worker fetch routing", () => {
   });
 
   it("GET /ready returns 200 with the exact ready body and security headers when config is valid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify([{ result: "ai" }]), { status: 200, headers: { "content-type": "application/json" } })),
+    );
     const res = await worker.fetch(new Request("https://vetai.test/ready"), env);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "ready" });
@@ -76,10 +84,27 @@ describe("worker fetch routing", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
-  it("/health is unaffected by /ready being added", async () => {
+  it("/health is unaffected by /ready being added and makes no dependency call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const res = await worker.fetch(new Request("https://vetai.test/health"), env);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).not.toBe("no-store");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps full invocation sampling and redacts query strings in both Worker configs", () => {
+    const repoRoot = path.resolve(__dirname, "..");
+
+    for (const configName of ["wrangler.toml", "wrangler.staging.toml"]) {
+      const config = readFileSync(path.join(repoRoot, configName), "utf8");
+      expect(config).toMatch(
+        /\[observability\]\r?\nenabled = true\r?\nhead_sampling_rate = 1\r?\nredact_query_string = true/,
+      );
+      expect(config).toMatch(
+        /\[observability\.logs\]\r?\ninvocation_logs = true\r?\nhead_sampling_rate = 1/,
+      );
+    }
   });
 
   it("GET /webhooks/whatsapp with valid token returns the challenge as plain text", async () => {

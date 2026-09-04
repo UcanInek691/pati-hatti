@@ -83,6 +83,15 @@ export function isWhatsAppCredentialRegistryValid(raw: string): boolean {
   return parseRegistry(raw) !== null;
 }
 
+/**
+ * Returns one validated `phone_number_id` from the registry for use as a
+ * readiness probe target. Never returns an access token or account UUID.
+ */
+export function getReadinessProbePhoneNumberId(raw: string): string | null {
+  const credentials = parseRegistry(raw);
+  return credentials?.[0]?.phoneNumberId ?? null;
+}
+
 export type ResolveWhatsAppAccessTokenResult = { kind: "resolved"; accessToken: string } | { kind: "not_found" };
 
 /**

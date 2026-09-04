@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-09-01 by Codex.
+Last verified: 2026-09-04 by Codex.
 
 ## Product
 
@@ -1063,12 +1063,25 @@ occurred.
   outbound row, and the owner confirmed receipt on the device. SQL Editor
   success alone was not used as transaction-routing evidence. Production
   remains unchanged.
-- The next active work is Task 050: a truthful dependency-aware `/ready` check
-  plus persistent Cloudflare observability configuration, without paid AI
-  calls, customer writes or PII. Task 051 then addresses terminal handoff
-  recovery under an explicit product decision and Opus safety review; Task
-  052 owns the real PostgREST regression proof and the unexplained roughly
-  50-minute delivery-delay investigation.
+- Task 050 makes `/ready` probe the real Supabase/PostgREST
+  `resolve_whatsapp_contact_automation` path with a fixed synthetic contact and
+  one fully validated registry `phone_number_id`; it performs no Meta/OpenAI/
+  Queue call or database write. Ready and unavailable results are cached and
+  concurrent misses coalesced for 30 seconds per Worker isolate, while local
+  configuration is revalidated on every request. `/health` remains an
+  external-dependency-free liveness check.
+- Both Wrangler configs now persist full pilot invocation logging with query-
+  string redaction so Meta's verification token/challenge cannot be retained
+  in request URLs. Wrangler remains on the existing 4.x dependency range; its
+  lock resolution is 4.128.0 because the previous 4.118.0 did not recognize
+  the redaction field. Task 050 passed frozen install, typecheck, 1,960 local
+  tests (two opt-in paid evals skipped), both Worker dry-runs without config
+  warnings, whitespace validation, Codex review and mandatory read-only Claude
+  Opus review. It is not yet activated on staging; production is unchanged.
+- The next active work after the separately approved Task 050 staging gate is
+  Task 051: terminal handoff recovery under an explicit product decision and
+  Opus safety review. Task 052 owns the real PostgREST regression proof and the
+  unexplained roughly 50-minute delivery-delay investigation.
 
 ## Context maintenance
 

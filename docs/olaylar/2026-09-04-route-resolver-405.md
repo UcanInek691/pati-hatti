@@ -313,6 +313,24 @@ yapılıp sonucu kontrol edilmeli. Dikkat edilmesi gerekenler: her `/ready`
 çağrısında ücretli/yazan bir işlem tetiklenmemeli, gerçek müşteri verisine
 dokunulmamalı, ve kontrolün kendisi yeni bir arıza kaynağı olmamalı.
 
+> **YEREL OLARAK UYGULANDI — Task 050 (2026-09-04).** `/ready` artık
+> konfigürasyon şekli kontrolünden sonra, sentetik sabit kontak
+> (`+10000000000`) ve zaten doğrulanmış kayıttan alınan gerçek bir
+> `phone_number_id` ile `resolveWhatsAppContactAutomation` üzerinden gerçek
+> `resolve_whatsapp_contact_automation` Data API çağrısını yapar; yalnız
+> `ai`/`manual`/`personal` sonuçlarını ready sayar, `unknown_account` dahil her
+> non-2xx (405 dahil), timeout/abort, malformed/eksik/fazla alanlı yanıt veya
+> fetch hatasını unavailable'a çevirir. Çağrı Worker isolate başına 30
+> saniyelik bir cache ve tek eşzamanlı probe birleştirme ile sınırlıdır; hiçbir
+> Meta/OpenAI/Queue
+> çağrısı yapılmaz, mesaj gönderilmez, veritabanına yazılmaz. Workers
+> invocation logları tam örneklemeyle etkinleştirilirken Meta webhook
+> doğrulama URL'sindeki token/challenge'ın tutulmaması için query-string
+> redaction zorunlu kılınmıştır. Bu yalnız
+> repository ve yerel test kanıtıdır — **staging aktivasyonu ayrı, henüz
+> yapılmamış bir adımdır** (bkz. `docs/staging-runbook.md` §21); İş 3'teki
+> zorunlu canlı gelen mesaj testinin yerine geçmez.
+
 **İş 3 — Runbook adımı.**
 `docs/staging-runbook.md`'ye zorunlu bir kapanış adımı: **her staging
 aktivasyonundan sonra whitelist'li test numarasından bir gerçek gelen mesaj
