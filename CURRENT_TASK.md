@@ -378,6 +378,31 @@ cache step is operational troubleshooting rather than part of the root-cause
 fix; the ignored copy and user-owned files are outside Task 049. No staging
 activation occurred as part of closure.
 
+### Staging activation record — 2026-09-04
+
+After separate explicit owner approval, Codex verified that the CLI was linked
+to `vetai-staging` and that Task 049 was the only pending migration. Managed
+`db push` applied only `20260904000100_route_resolver_volatility.sql`; a final
+migration listing showed local and remote history aligned through 049.
+
+The staging-only catalog check returned `true` for the exact function count,
+`VOLATILE`, SECURITY INVOKER, empty `search_path`, `TABLE(result text)`, the
+service-role EXECUTE grant, and absence of `PUBLIC`/`anon`/`authenticated`
+EXECUTE grants. A real service-role PostgREST POST used an existing account
+and a synthetic unlisted contact without printing either identifier or the
+secret; it returned HTTP 200 with the expected closed `personal` result. The
+live Worker `/health` and `/ready` endpoints both returned 200.
+
+Through the authenticated `/staff` surface, Codex changed only the approved
+staging test contact from `manual` back to `ai`; the unrelated synthetic manual
+route remained unchanged. The owner then sent one real WhatsApp message. A
+sanitized database check observed exactly one recent webhook, one inbound
+message and one outbound row with provider acceptance, and the owner confirmed
+the reply on the device. No message content, phone number, account identifier,
+token or signature was recorded. Production was unchanged. Task 050 still owns
+the missing persistent Cloudflare observability configuration and the truthful
+dependency-aware `/ready` work.
+
 ---
 
 # Previous task — 048 Safe staff WhatsApp reply composer

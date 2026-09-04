@@ -114,6 +114,8 @@ itself.
       both succeed against that database. A SQL Editor call succeeding is not
       sufficient evidence: PostgREST's own read-only-transaction routing is
       what previously failed.
+      Staging completed this full gate on 2026-09-04; the checkbox remains
+      open for the production target and does not transfer staging evidence.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

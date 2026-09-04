@@ -887,7 +887,7 @@ Adımlar:
    bu adımın konusu değildir; **bir cevabın gelmesi** yeterlidir.
 4. Cevap gelmezse aktivasyon **başarısız** sayılır, §11 şablonuna sanitize FAIL
    kaydı yazılır ve sonraki göreve geçilmez.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı (2026-09-04 Task 049 aktivasyonu; cihazda yanıt görüldü).
 
 Teşhis sırası, cevap gelmezse: Cloudflare Worker log'unda
 `whatsapp webhook event received` satırının basılıp `... persisted` satırının
@@ -907,26 +907,51 @@ Sıra:
 
 1. Migration uygulanır (`resolve_whatsapp_contact_automation` `volatile`
    olur).
-   - [ ] Uygulandı.
+   - [x] Uygulandı.
 2. `pg_proc`/grant/sonuç kataloğu `supabase/tests/049_route_resolver_volatility.sql`
    ile disposable'da doğrulanmış olmalı; burada yalnız staging üzerinde exact
    `pg_proc.provolatile = 'v'`, `SECURITY INVOKER`, exact boş `search_path`,
    `TABLE(result text)` sonuç şekli ve mevcut grantlar (`service_role` evet,
    `PUBLIC`/`anon`/`authenticated` hayır) tekrar kontrol edilir.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı.
 3. Gerçek bir service-role PostgREST POST'u
    (`/rest/v1/rpc/resolve_whatsapp_contact_automation`) çalıştırılır ve
    yanıtın artık **405 değil** olduğu doğrulanır. Bir SQL Editor çağrısı bu
    adımın yerine geçmez — 2026-09-04 olayının kök nedeni tam olarak SQL
    Editor'ün READ WRITE çalışması ve PostgREST'in READ ONLY çalışmasıydı.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı.
 4. Worker konfigürasyonu/`/health` kontrol edilir.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı.
 5. Onaylı staging test kontağı yalnızca bu adımda `manual`'dan `ai`'a geri
    döndürülür (olay sırasında geçici olarak `manual`'a alınmıştı).
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı.
 6. §19'daki zorunlu canlı gelen mesaj/cevap testi çalıştırılır.
-   - [ ] Doğrulandı.
+   - [x] Doğrulandı.
 
 Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
 çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.
+
+### 2026-09-04 sanitize aktivasyon kaydı
+
+- Sahip aktivasyonu açıkça onayladı. CLI hedefi `vetai-staging` olarak
+  doğrulandı; push öncesi tek bekleyen dosya Task 049 migration'ıydı.
+- Managed push yalnız `20260904000100_route_resolver_volatility.sql` dosyasını
+  uyguladı. Son migration listesinde local/remote sürümleri 049 dahil birebir
+  eşleşti.
+- Staging katalog sorgusunda exact fonksiyon sayısı, `provolatile = 'v'`,
+  SECURITY INVOKER, boş `search_path`, `TABLE(result text)`, service-role
+  EXECUTE izni ve `PUBLIC`/`anon`/`authenticated` retlerinin tamamı `true`
+  döndü.
+- Gerçek service-role Data API POST'u sentetik ve listelenmemiş bir test
+  kontağıyla çalıştı: HTTP `200`, kapalı sonuç `personal`; telefon, hesap
+  kimliği veya anahtar çıktıya basılmadı.
+- Etkin staging Worker kaydı görüldü; `/health` ve `/ready` HTTP `200` döndü.
+  `wrangler.staging.toml` içinde kalıcı observability bloğu bulunmaması Task
+  050'nin açık kapsamıdır ve bu aktivasyon sırasında gizlenmedi.
+- Yalnız onaylı staging test kontağı `/staff` üzerinden `manual` → `ai`
+  yapıldı; ayrı sentetik `manual` rota değiştirilmedi.
+- Canlı smoke son on dakikada tam bir webhook, bir inbound mesaj ve bir
+  outbound satır üretti; outbox `accepted` oldu ve sahibi yanıtı WhatsApp
+  cihazında gördüğünü doğruladı. Mesaj içeriği, telefon numarası, token veya
+  imza bu kayda alınmadı.
+- Production değiştirilmedi.

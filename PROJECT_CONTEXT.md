@@ -1011,8 +1011,9 @@ occurred.
   migration attempt failed atomically before schema/history change because the
   replacement reply-category CHECK omitted valid appointment categories. The
   narrow compatibility correction, renewed local plus disposable-database proof
-  and narrow Opus re-check all passed; the task is repository-complete again and
-  awaits the authorized staging retry. Once activated, a staff member may queue a
+  and narrow Opus re-check all passed; the corrected migration was subsequently
+  applied to staging and Worker version
+  `819b9435-e884-4754-909d-3a8360312701` was deployed. A staff member may queue a
   human-authored text only for the exact `human_handoff` item currently assigned
   to them, while the clinic is active and the conservative server-verified
   24-hour service window remains open. Tenant, recipient, sending account and
@@ -1029,7 +1030,9 @@ occurred.
   Worker dry-run, whitespace validation, Codex review and mandatory Claude Opus
   architecture/RLS/tenant/idempotency/outbox/KVKK review passed. The migration
   and rollback fixture passed only on disposable `vetai-test`, with independent
-  zero-residue checks; Task 048 has not been applied to staging or production.
+  zero-residue checks. Task 048 is active on staging only; production remains
+  unchanged. Its initial live inbound visibility was masked by the separate
+  Task 049 resolver-volatility incident rather than a Task 048 composer defect.
 - Before production, staff-send rate limiting must be defined and verified. The
   pre-existing same-tenant `messages` write/attribution grant also remains a
   separate hardening review. External veterinarian and Turkish legal/KVKK
@@ -1051,14 +1054,15 @@ occurred.
   fixture-only drift from Task 037's selected-pet guard; one tenant-scoped
   conversation/pet association restored the intended suppression path, after
   which 033 passed. Every reported fixture-residue counter was zero.
-- Staging already has the same volatility metadata because of the manual
-  2026-09-04 incident hotfix, but Task 049 is not yet recorded in staging
-  migration history. Production remains unchanged. A separately approved
-  staging activation must apply the migration through the managed path,
-  verify exact catalog metadata and grants, exercise a real service-role
-  PostgREST POST, restore only the approved test contact from `manual` to
-  `ai`, and finish with the mandatory live WhatsApp inbound/reply smoke. SQL
-  Editor success alone is not PostgREST transaction-routing evidence.
+- After separate owner approval, Task 049 was added to staging through the
+  managed migration path; local and remote history align through 049. Exact
+  catalog metadata/grants, a real service-role PostgREST POST (HTTP 200),
+  Worker health/readiness, the approved test contact's `manual` → `ai`
+  restoration, and a live WhatsApp inbound/reply smoke all passed. The smoke
+  produced one recent webhook, one inbound message and one provider-accepted
+  outbound row, and the owner confirmed receipt on the device. SQL Editor
+  success alone was not used as transaction-routing evidence. Production
+  remains unchanged.
 - The next active work is Task 050: a truthful dependency-aware `/ready` check
   plus persistent Cloudflare observability configuration, without paid AI
   calls, customer writes or PII. Task 051 then addresses terminal handoff

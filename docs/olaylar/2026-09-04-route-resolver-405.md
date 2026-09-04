@@ -3,9 +3,9 @@
 Hazırlayan: koordinatör Opus, 2026-09-04.
 Ortam: yalnız `vetai-staging`. **Production etkilenmedi** (production hâlâ kurulmadı).
 Durum: **kök neden bulundu, staging'de elle düzeltildi, kalıcı repository
-düzeltmesi (Task 049 migration + fixture) hazırlandı ve yalnız disposable
-`vetai-test` üzerinde kanıtlandı; staging migration history'sine ve
-production'a henüz uygulanmadı.**
+düzeltmesi (Task 049 migration + fixture) disposable `vetai-test` üzerinde
+kanıtlandı ve staging migration history'sine uygulandı; gerçek PostgREST ve
+canlı WhatsApp smoke geçti. Production'a uygulanmadı.**
 
 Bu bir olay kaydıdır; görev sözleşmesi değildir. Aktif sözleşme her zaman
 kökteki `CURRENT_TASK.md`'dir. §11'deki iş önerileri uygulama yetkisi vermez.
@@ -178,7 +178,7 @@ Staging'de elle çalıştırıldı:
 alter function public.resolve_whatsapp_contact_automation(text, text) volatile;
 ```
 
-> **AÇIK KALEM — durum güncellendi (Task 049).** Bu elle çalıştırılan
+> **KAPANDI — Task 049 (2026-09-04).** Bu elle çalıştırılan
 > değişiklik başlangıçta **migration dosyasız** kalmıştı; Task 049
 > `supabase/migrations/20260904000100_route_resolver_volatility.sql` ve
 > `supabase/tests/049_route_resolver_volatility.sql` ile kalıcı repository
@@ -186,10 +186,11 @@ alter function public.resolve_whatsapp_contact_automation(text, text) volatile;
 > düzeltmenin herhangi bir veritabanına migration olarak uygulanması ayrı
 > şeylerdir** — implementer migration'ı hiçbir veritabanında çalıştırmadı;
 > Codex daha sonra yalnız disposable `vetai-test` üzerinde migration ile
-> 049/034/033 fixture'larını sıfır artıkla doğruladı. Staging'in fiili şeması
-> hâlâ yalnızca 2026-09-04'teki elle çalıştırılan `alter function` sayesinde
-> doğrudur; migration ancak ayrı onaylı bir aktivasyonla staging history'sine
-> uygulandığında repository ile örtüşür (bkz. `docs/staging-runbook.md` §20).
+> 049/034/033 fixture'larını sıfır artıkla doğruladı. Ayrı sahip onayıyla
+> migration daha sonra managed push yoluyla staging history'sine eklendi;
+> exact katalog kontrolü, gerçek service-role PostgREST POST'u ve cihazdan
+> doğrulanan canlı WhatsApp yanıtı geçti. Repository ve staging history artık
+> 049 dahil örtüşür (bkz. `docs/staging-runbook.md` §20). Production değişmedi.
 
 ## 7. Neden dört gün görünmedi
 
@@ -270,9 +271,9 @@ Belirleyici araç **Supabase edge log'ları** oldu: Cloudflare tarafı yalnız
 
 **İş 1 — Kalıcı migration (acil, staging şeması repo ile örtüşmüyor).**
 İleri yönlü bir migration `resolve_whatsapp_contact_automation`'ın volatility
-metadata'sını `volatile` yapmalı. Task 049 migration/fixture'ı hazırlandı ve
-disposable DB kanıtı geçti; zorunlu Opus incelemesi ile staging aktivasyonu
-henüz bekliyor (RLS/DB dokunuşu).
+metadata'sını `volatile` yapmalı. Task 049 migration/fixture'ı hazırlandı;
+disposable DB ve Opus kapıları ile staging aktivasyonu tamamlandı. Production
+aktivasyonu ayrı bir hazır-olma ve sahip onayı kapısıdır.
 
 *Repo geneli denetim yapıldı (2026-09-04, koordinatör Opus).* 53 fonksiyon
 tanımının tamamı `supabase/migrations/` üzerinden tarandı; volatility etiketi
