@@ -1,4 +1,248 @@
-# Current task — 050 Dependency-aware readiness and durable Worker observability
+# Current task — 051 Safe terminal-handoff recovery
+
+Status: `READY`
+
+Created by Codex on 2026-09-04 after Task 050 passed every local, review and
+staging gate. Task 050's complete record is preserved below as archived
+predecessor context; Task 051 is the only active contract. Production remains
+unchanged.
+
+## Goal
+
+Remove the permanent AI lockout that currently follows every
+`human_handoff`. When the assigned clinic staff member explicitly resolves a
+human-handoff work item, atomically complete that exact conversation. A later
+inbound message must create a fresh conversation and pass through the normal
+safety-first intake flow again.
+
+Keep the per-conversation terminal-state invariant. Do not reopen or move a
+`human_handoff` conversation back to a non-terminal intake stage.
+
+## Confirmed defect
+
+Three existing rules combine into a permanent lockout:
+
+1. `public.advance_conversation_intake` correctly treats `human_handoff` and
+   `completed` as terminal stages.
+2. inbound persistence reuses the one conversation whose status is either
+   `active` or `handoff`; it creates a new conversation only after the old one
+   becomes `completed`.
+3. `public.resolve_staff_work_item(uuid)` currently resolves only the
+   `staff_work_items` row and never completes its linked conversation.
+
+## Fixed product decisions
+
+1. Keep `human_handoff` terminal within its original conversation. Do not
+   weaken `public.advance_conversation_intake`, its forward graph, or any
+   deterministic safety rule.
+2. A successful explicit resolution of a `kind = 'human_handoff'` work item
+   by its current assignee must, in the same transaction:
+   - set the linked conversation to `status = 'completed'` and
+     `intake_stage = 'completed'`;
+   - increment `state_version` exactly once when that conversation changes;
+   - preserve tenant/owner/pet/intake/message/appointment data; and
+   - resolve the exact work item with the existing actor/time audit fields.
+3. A later inbound for the same owner must create a different `active`
+   conversation at the existing default stage and run safety-first intake
+   again. It must not reuse or mutate the completed conversation.
+4. Resolving `kind = 'delivery_failure'` retains its current behavior: only
+   the work item changes; the conversation remains byte-for-byte equivalent.
+5. Staff reply sending and work-item resolution remain separate explicit
+   actions. Neither action silently performs the other.
+6. Normal human handoff requires one truthful `/staff` confirmation explaining
+   the closure and fresh-conversation behavior.
+7. `reason = 'emergency_handoff'` requires two explicit browser confirmations:
+   first, that clinic staff handled the urgent escalation; second, that this
+   conversation will close and a later message will restart safety screening.
+   Cancelling either prompt makes no RPC call. This is an added operator-safety
+   guard; database authorization remains the current-assignee rule.
+8. Preserve the exact public result set and meanings:
+   `resolved | already_resolved | not_claimed | not_owner | not_found`.
+9. If the linked conversation is already exactly `completed/completed`, the
+   assigned open handoff item may resolve without another version increment.
+   Any other unexpected status/stage pairing fails closed with an exception
+   and zero mutation.
+10. Repair historical lockouts only when a conversation is exactly
+    `handoff/human_handoff`, at least one linked handoff item is resolved, and
+    no linked handoff item remains non-resolved. Increment its version once.
+    Never close a conversation with an open/seen/in-progress handoff item, or
+    one represented only by delivery-failure work.
+11. Do not mutate outbound rows. A response already claimed before resolution
+    may still arrive; this task controls future conversation selection, not
+    provider recall.
+12. Add no table, column, index, dependency, endpoint, Queue, cron, model call,
+    prompt, clinical copy, customer notification, diagnosis, medication,
+    billing feature, free-form SQL path, or production resource.
+
+## Database and concurrency contract
+
+Add one forward-only migration; never edit applied history. Recreate only the
+exact existing `public.resolve_staff_work_item(p_work_item_id uuid)` function.
+It must remain `SECURITY DEFINER`, `VOLATILE`, `SET search_path = ''`, fully
+schema-qualified, dynamic-SQL-free, executable only by `authenticated`, and
+scoped from database relationships plus `auth.uid()` rather than client-
+supplied clinic/actor data.
+
+For a human-handoff path, use this deadlock-conscious order:
+
+1. untrusted locator read for clinic/conversation;
+2. lock and revalidate the clinic, then the exact caller membership;
+3. lock the exact conversation before the work item;
+4. lock and authoritatively reread the work item, including clinic,
+   conversation, kind, reason, status and assignee;
+5. revalidate locator values;
+6. complete the conversation, then resolve the item atomically.
+
+Use a conversation lock mode that serializes state updates without conflicting
+with child-table foreign-key `KEY SHARE` locks. Preserve the lifecycle lock
+boundary and align conversation-before-work-item order with the existing
+conversation trigger. Never hold a work-item lock and then wait for the
+conversation lock. Historical repair must be exact, tenant-scoped and
+deterministically ordered.
+
+## Required SQL fixture
+
+Add a rollback-only, behavioral, tenant-safe, non-vacuous Task 051 fixture
+proving at least:
+
+1. exact function identity/result shape, `VOLATILE`, `SECURITY DEFINER`, empty
+   `search_path`, ownership and exact grants/revocations;
+2. null/unknown, unauthenticated, non-member and cross-tenant calls are
+   indistinguishable and make zero mutations;
+3. `not_claimed`, `not_owner`, `already_resolved` and successful ownership
+   paths retain their existing meanings;
+4. normal and emergency human-handoff resolution atomically completes only the
+   exact conversation, increments its version once, preserves related data,
+   and writes the existing resolver audit;
+5. delivery-failure resolution leaves all conversation fields unchanged;
+6. already-completed handling, inconsistent-pairing rollback, and exact
+   historical-repair inclusion/exclusion rules;
+7. a real call through the existing inbound persistence RPC after completion
+   creates a different active conversation at the default intake stage while
+   the previous conversation remains completed;
+8. `advance_conversation_intake` still rejects movement from
+   `human_handoff` to a non-terminal stage;
+9. lock/concurrency limits are described honestly—no single-session fixture
+   may claim true two-session proof;
+10. rollback leaves zero synthetic residue in every touched table.
+
+Use only synthetic data. Never include a real person, clinic, phone, message,
+token, provider identifier, or production identifier.
+
+## Required `/staff` behavior and tests
+
+- Retain and strictly validate selected work-item `kind` and `reason`.
+- Normal human handoff uses the truthful single confirmation above.
+- Emergency handoff uses both confirmations and calls no RPC if either is
+  cancelled.
+- Delivery failure keeps the existing single generic confirmation.
+- Never claim a reply was sent, care was delivered, an emergency was medically
+  resolved, or the customer was notified.
+- Preserve duplicate-click prevention, closed RPC validation, queue refresh,
+  composer behavior, CSP/Auth/RLS and unrelated schedule/automation UI.
+- Tests must cover all three branches, both emergency cancel points, malformed
+  kind/reason fail-closed behavior, and prove reply submission still never
+  invokes `resolve_staff_work_item`.
+
+## Required documentation
+
+Make only narrow Task 051 updates:
+
+- `docs/staff-workflow.md`: exact resolution semantics, confirmation branches,
+  composer separation, historical repair, races and limits;
+- `docs/database-schema.md`: RPC, lock order, transition, repair and grants;
+- `docs/inbound-queue.md`: fresh conversation and renewed safety-first intake;
+- `docs/ai-behavior-and-safety.md`: terminal conversation remains terminal,
+  safety is repeated, and resolving is not a medical judgment;
+- `docs/production-readiness.md`: keep staging and production gates unchecked;
+- `docs/staging-runbook.md`: bounded sanitized activation/smoke sequence gated
+  on disposable DB and Opus PASS;
+- `docs/olaylar/2026-09-04-route-resolver-405.md`: close only this local
+  follow-up; keep the delay investigation open and preserve the timeline;
+- `docs/saas-urunlestirme-yol-haritasi.md`: truthful implementation status.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `supabase/migrations/20260904000200_handoff_conversation_recovery.sql` (new)
+- `supabase/tests/051_handoff_conversation_recovery.sql` (new)
+- `src/staffPage.ts`
+- `test/staffPage.test.ts`
+- `docs/staff-workflow.md`
+- `docs/database-schema.md`
+- `docs/inbound-queue.md`
+- `docs/ai-behavior-and-safety.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/olaylar/2026-09-04-route-resolver-405.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `PROJECT_CONTEXT.md` (Codex only after all review gates pass)
+
+Everything else is forbidden. In particular, do not touch `.gitignore`,
+`docs/043-opus-inceleme.md`, `AGENTS.md`, earlier migrations/fixtures,
+credentials, Wrangler config, model/prompt code, external services, or
+production resources.
+
+## Required verification by the implementer
+
+Run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+The implementer must record the migration and fixture as `NOT RUN` and must
+not call or mutate any real database/service, commit, push, or deploy.
+
+## Review and activation gates
+
+1. Sonnet implements only allowed scope, fills only Task 051 **Observed
+   context** and **Delivery record**, and does not commit.
+2. Codex reviews all callers/locks, reruns local checks, and runs migrations
+   plus Task 051 fixture only on disposable `vetai-test`, with zero residue.
+3. Claude Opus performs mandatory read-only tenant/RLS/grant, SECURITY DEFINER,
+   concurrency, historical-repair, terminal/emergency safety, non-vacuity and
+   documentation review.
+4. Fix/re-review until both pass; Codex updates durable context and commits only
+   Task 051 files.
+5. Staging requires separate explicit owner approval and migration-before-
+   Worker order. The smoke must prove normal handoff resolution, exact old
+   conversation completion, a different new active conversation, renewed
+   safety screening, and emergency double confirmation without real emergency
+   content. Record only sanitized states/counts and equality/inequality.
+6. Production remains out of scope and unchanged.
+
+## Acceptance criteria
+
+- Successful human-handoff resolution cannot leave that conversation reusable
+  in `handoff`.
+- No terminal conversation is reopened; the next message uses a new
+  safety-first conversation.
+- Emergency handoff requires both `/staff` confirmations.
+- Delivery-failure and staff-reply behavior remain unchanged.
+- Cross-tenant, non-member, unassigned and wrong-assignee callers cannot mutate
+  or learn inaccessible row existence.
+- Historical repair is exact and never closes a still-open handoff.
+- Local checks, disposable-DB proof, Codex review and mandatory Opus review
+  pass before staging. Production stays unchanged.
+
+## Task 051 observed context
+
+To be filled by the implementer from repository evidence only.
+
+## Task 051 delivery record
+
+To be filled by the implementer from repository evidence only.
+
+---
+
+## Archived predecessor record — Task 050 (not active)
+
+# Task 050 Dependency-aware readiness and durable Worker observability
 
 Status: `COMPLETE` (closed 2026-09-04 after local verification, Codex review,
 mandatory read-only Claude Opus PASS and separately approved real staging
