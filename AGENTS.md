@@ -40,6 +40,11 @@ After a verified commit, conversation context may be compacted. Never compact wh
 - Never write real secrets, production identifiers, phone numbers, or patient data to the repository.
 - Never log raw sensitive messages, tokens, signatures, or service-role credentials.
 - AI must never execute arbitrary SQL; runtime database access must use predefined, validated operations.
+- When a migration adds a row lock or a write anywhere in a call chain, verify that the outermost
+  PostgREST-exposed function in that chain is `VOLATILE`. PostgREST runs `POST` to a `STABLE`/`IMMUTABLE`
+  function in a READ ONLY transaction, where locks and writes fail and surface to the caller as HTTP 405.
+  Volatility is a promise PostgreSQL does not enforce, so neither applying the migration nor calling the
+  function from the SQL editor reveals the fault. See `docs/olaylar/2026-09-04-route-resolver-405.md`.
 - Tenant isolation must be enforced by database constraints and RLS, not prompt instructions alone.
 - The product must never diagnose, list possible diseases, recommend medication/dosage, or alter treatment.
 - Safety-critical triage must combine structured extraction with deterministic, veterinarian-approved rules and human handoff.

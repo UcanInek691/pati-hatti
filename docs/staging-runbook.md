@@ -860,3 +860,38 @@ acceptance kriterlerinin (tenant izolasyonu, 24 saatlik pencere, idempotency,
 rota değişikliğinin personel mesajını silmemesi, kuyruk-vs-teslimat ayrımı)
 doğrudan staging kanıtıdır. Bu bölümdeki hiçbir adım tamamlanana kadar Task
 048 production'a alınamaz; production bu görev boyunca değişmemiştir.
+
+## 19. Zorunlu kapanış adımı — canlı gelen mesaj testi (her aktivasyon)
+
+Bu bölüm 2026-09-04 olayından sonra eklendi
+([`olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md)).
+Yukarıdaki §15–§18 görev-özel smoke'larının yerine geçmez; onlardan sonra
+çalıştırılan, göreve bağlı olmayan tek bir zincir kontrolüdür.
+
+**Her staging aktivasyonundan sonra, o aktivasyon kapanmış sayılmadan önce**,
+whitelist'li test numarasından bir gerçek WhatsApp mesajı gönderilir ve bot
+cevabının geldiği doğrulanır.
+
+Gerekçesi kayda geçmiş bir arızadır: 2026-08-31 ile 09-04 arasında beş görev
+(044–048) staging'e alındı ve hepsinin doğrulaması panel (`/admin`, `/staff`)
+ve SQL üzerinden yürüdü. Bu süre boyunca **gelen mesaj yolu tamamen
+çalışmıyordu**; `/health` ve `/ready` 200 döndüğü ve Cloudflare hata oranı %0
+gösterdiği için arıza dört gün fark edilmedi. Panel ve SQL doğrulaması gelen
+mesaj yolunu kapsamaz; `/ready` ise tasarımı gereği Supabase'e hiç dokunmaz.
+
+Adımlar:
+
+1. Aktivasyon (migration → Worker deploy) tamamlanır.
+2. Whitelist'li test numarasından tek bir mesaj gönderilir (ör. `Merhaba`).
+3. Bot cevabının WhatsApp'a ulaştığı **cihazdan** doğrulanır. Cevabın içeriği
+   bu adımın konusu değildir; **bir cevabın gelmesi** yeterlidir.
+4. Cevap gelmezse aktivasyon **başarısız** sayılır, §11 şablonuna sanitize FAIL
+   kaydı yazılır ve sonraki göreve geçilmez.
+   - [ ] Doğrulandı.
+
+Teşhis sırası, cevap gelmezse: Cloudflare Worker log'unda
+`whatsapp webhook event received` satırının basılıp `... persisted` satırının
+basılmadığı görülürse hata rota çözümlemesindedir; ardından **Supabase edge
+log'unda fonksiyon bazında HTTP durum kodlarına** bakılır. 2026-09-04 olayında
+sebebi bulan şey buydu — Cloudflare tarafı yalnız "503 döndü" diyor, hangi
+çağrının neden başarısız olduğunu göstermiyor.
