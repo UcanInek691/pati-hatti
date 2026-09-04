@@ -103,6 +103,18 @@ itself.
       challenge before the overview, and the project Auth setting showed a
       token-verification limit of 30 requests per five minutes per IP.
 
+- [ ] The Task 049 route-resolver volatility fix
+      (`supabase/migrations/20260904000100_route_resolver_volatility.sql`,
+      [`olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md))
+      is applied to the target database, its `pg_proc`/grant/result catalog
+      fixture (`supabase/tests/049_route_resolver_volatility.sql`) passes on a
+      disposable database, the target database passes the equivalent
+      read-only catalog checks, and a real service-role PostgREST POST to
+      `resolve_whatsapp_contact_automation` and a live inbound WhatsApp smoke
+      both succeed against that database. A SQL Editor call succeeding is not
+      sufficient evidence: PostgREST's own read-only-transaction routing is
+      what previously failed.
+
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
 

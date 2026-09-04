@@ -1035,6 +1035,37 @@ occurred.
   separate hardening review. External veterinarian and Turkish legal/KVKK
   approvals remain mandatory and are not replaced by the engineering review.
 
+- Task 049 permanently records the 2026-09-04 route-resolver incident fix in
+  repository migrations. The exact public
+  `resolve_whatsapp_contact_automation(text, text)` function is changed only
+  from `STABLE` to `VOLATILE`; its body, SECURITY INVOKER mode, empty
+  `search_path`, result shape and service-role-only grant remain unchanged.
+  This makes PostgREST open a read-write transaction for the Worker POST, so
+  the transitively called Task 041 `FOR KEY SHARE` lock is legal rather than
+  surfacing as HTTP 405 and then a webhook 503.
+- Task 049 passed frozen install, typecheck, 1,936 local tests (two opt-in paid
+  evals skipped), Worker dry-run, whitespace validation, Codex review and
+  mandatory read-only Claude Opus architecture/security review. On disposable
+  `vetai-test`, Codex applied the exact forward migration and ran rollback
+  fixtures 049 and 034 successfully. The required 033 rerun first exposed
+  fixture-only drift from Task 037's selected-pet guard; one tenant-scoped
+  conversation/pet association restored the intended suppression path, after
+  which 033 passed. Every reported fixture-residue counter was zero.
+- Staging already has the same volatility metadata because of the manual
+  2026-09-04 incident hotfix, but Task 049 is not yet recorded in staging
+  migration history. Production remains unchanged. A separately approved
+  staging activation must apply the migration through the managed path,
+  verify exact catalog metadata and grants, exercise a real service-role
+  PostgREST POST, restore only the approved test contact from `manual` to
+  `ai`, and finish with the mandatory live WhatsApp inbound/reply smoke. SQL
+  Editor success alone is not PostgREST transaction-routing evidence.
+- The next active work is Task 050: a truthful dependency-aware `/ready` check
+  plus persistent Cloudflare observability configuration, without paid AI
+  calls, customer writes or PII. Task 051 then addresses terminal handoff
+  recovery under an explicit product decision and Opus safety review; Task
+  052 owns the real PostgREST regression proof and the unexplained roughly
+  50-minute delivery-delay investigation.
+
 ## Context maintenance
 
 After each verified task, Codex updates only durable facts here: completed behavior, verified commands, accepted decisions, known blockers, and the next phase. Verbose implementation notes stay in Git history and completed task records rather than accumulating in this file.

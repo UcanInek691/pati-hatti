@@ -614,6 +614,18 @@ begin
   values ('33200000-0000-0000-0000-000000000002', '33000000-0000-0000-0000-000000000001', v_owner_id, 'Decision Pet', 'dog', now())
   returning id into v_pet_id;
 
+  -- Task 037: the public appointment-decision wrapper requires the supplied
+  -- pet to be the conversation's selected tenant-scoped pet before the
+  -- existing route-suppression branch can run.
+  update public.conversations
+  set pet_id = v_pet_id
+  where id = v_conversation_id
+    and clinic_id = '33000000-0000-0000-0000-000000000001'
+    and owner_id = v_owner_id;
+  if not found then
+    raise exception 'expected the decision fixture conversation to accept its selected pet';
+  end if;
+
   select result, claim_token into v_claim_result, v_token
   from public.claim_intake_queue_job(v_conversation_id, 'wamid.SEL_DECISION_AI');
   if v_claim_result <> 'claimed' then

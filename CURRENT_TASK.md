@@ -1,4 +1,386 @@
-# Current task — 048 Safe staff WhatsApp reply composer
+# Current task — 049 Persist the PostgREST route-resolver volatility invariant
+
+Status: `COMPLETE` (closed 2026-09-04 after local, disposable-database,
+Codex and mandatory read-only Opus review gates passed; staging activation
+remains a separate explicitly approved operation)
+
+Created by Codex on 2026-09-04 after the staging incident recorded in
+`docs/olaylar/2026-09-04-route-resolver-405.md`. Task 048 is complete. This is
+the first and urgent item in the incident follow-up sequence; the later
+readiness/observability, handoff-recovery and unexplained-latency tasks are not
+active yet.
+
+## Goal
+
+Make the staging-only emergency fix durable in repository migration history so
+`public.resolve_whatsapp_contact_automation(text, text)` is always exposed to
+PostgREST as `VOLATILE`. Pin that metadata in a rollback-only catalog fixture,
+prove that the existing resolver behavior and privileges remain unchanged, and
+close the schema-drift risk before any production database is created or
+updated.
+
+## Incident facts and scope
+
+- `20260814000300_selective_automation.sql` created the public resolver as
+  `STABLE`.
+- `20260831000100_clinic_lifecycle.sql` later added `FOR KEY SHARE OF cl` to
+  the transitively called
+  `vetai_private.effective_contact_automation_mode(uuid, text)` helper.
+- PostgREST executes a POST to a `STABLE`/`IMMUTABLE` RPC in a read-only
+  transaction. The row lock therefore failed and the resolver returned HTTP
+  405; the Worker converted that to `route_failed` and returned 503 to Meta.
+- Staging was repaired manually with
+  `alter function public.resolve_whatsapp_contact_automation(text, text)
+  volatile`, but no migration currently carries that change. A future database
+  built only from the repository would reproduce the outage.
+- The incident's static repository audit found no other `STABLE`/`IMMUTABLE`
+  PostgREST-exposed function that transitively reaches a row lock or write.
+  Task 049 must verify the named resolver and must not broaden into speculative
+  recreation of unrelated functions.
+- Production remains untouched. The temporary staging contact-route value is
+  still `manual`; restoring the approved test contact to `ai` is a separate
+  live activation step performed only by Codex after review and explicit owner
+  approval.
+
+## Fixed implementation decisions
+
+1. Add one forward-only migration:
+   `supabase/migrations/20260904000100_route_resolver_volatility.sql`.
+2. The migration must use the smallest root-cause change:
+   `alter function public.resolve_whatsapp_contact_automation(text, text)
+   volatile;` Do not drop/recreate the function and do not copy its body.
+   Missing or changed signature must fail the migration rather than silently
+   selecting an overload.
+3. Do not alter function ownership, `SECURITY INVOKER`, empty `search_path`,
+   result shape, grants, input validation, tenant/account resolution, route
+   semantics or the private helper's lock.
+4. Do not edit an already-applied migration. Do not remove the clinic lifecycle
+   lock to make the old `STABLE` label appear safe.
+5. Add no dependency, Worker code, endpoint, health probe, log payload or
+   customer-data access. `/ready` and Cloudflare observability belong to the
+   next task.
+6. The SQL fixture proves metadata and ordinary resolver behavior. It must not
+   claim that a SQL Editor call reproduces PostgREST transaction-mode routing.
+   The real Data API POST and WhatsApp inbound checks are separate staging
+   gates.
+
+## Required rollback-only database proof
+
+Create `supabase/tests/049_route_resolver_volatility.sql` with
+`begin; ... rollback;`. It must prove at least:
+
+- exactly one public function exists with identity arguments `text, text`;
+- `pg_proc.provolatile = 'v'` for that exact function;
+- it remains `SECURITY INVOKER` with exact empty `search_path` and the same
+  table-shaped `result text` response;
+- `PUBLIC`, `anon` and `authenticated` cannot execute it, while
+  `service_role` can;
+- the transitively called private helper remains `VOLATILE`, exact empty
+  `search_path`, and still contains the clinic lifecycle row lock;
+- a minimal synthetic active-clinic/account fixture returns the expected
+  closed route results for an explicit `ai` contact, an unlisted contact and an
+  unknown account without crossing tenants;
+- the transaction rolls back and leaves zero synthetic clinic, account and
+  route residue.
+
+The fixture may inspect `pg_proc`, `pg_namespace`, `pg_get_function_identity_arguments`,
+`pg_get_function_result`, `proconfig`, routine privileges and the helper's
+stored definition. It must use exact schema/signature predicates, not a loose
+function-name match. It must not execute arbitrary dynamic SQL.
+
+In addition to the new fixture, the disposable-database gate must rerun the
+existing selective-automation and strict-allowlist fixtures
+(`033_selective_automation.sql` and `034_strict_ai_allowlist.sql`) after all
+migrations are present. Static inspection alone is not an applied proof.
+
+## Required documentation
+
+Make only narrow Task 049 corrections:
+
+- `docs/database-schema.md`: change the public resolver's documented
+  volatility from `stable` to `volatile`, explain that the outermost
+  PostgREST-exposed function determines POST transaction access mode, and link
+  the incident report.
+- `docs/production-readiness.md`: add an unchecked production gate requiring
+  the Task 049 migration/catalog proof and a successful PostgREST/live-inbound
+  smoke before production activation. A SQL Editor call alone is insufficient.
+- `docs/staging-runbook.md`: add a bounded Task 049 activation record/checklist
+  after the existing incident-driven live-inbound rule. Keep every live box
+  unchecked until Codex performs it.
+- `docs/olaylar/2026-09-04-route-resolver-405.md`: only update the repair-status
+  wording needed to distinguish “repository fix implemented” from “migration
+  applied”. Do not erase the original incident timeline or claim staging/
+  production evidence that has not happened.
+
+Do not duplicate the full incident report into other documents.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `supabase/migrations/20260904000100_route_resolver_volatility.sql`
+- `supabase/tests/049_route_resolver_volatility.sql`
+- `supabase/tests/033_selective_automation.sql` (Codex review-only fixture
+  compatibility correction if the mandatory rerun exposes later-schema drift)
+- `docs/database-schema.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/olaylar/2026-09-04-route-resolver-405.md`
+- `PROJECT_CONTEXT.md` (Codex only, after all review gates pass, for the
+  durable Task 049 closure record; explicitly approved by the owner on
+  2026-09-04)
+
+Everything else is forbidden. In particular, do not touch `AGENTS.md`,
+`.gitignore`, `docs/043-opus-inceleme.md`, existing
+migrations/fixtures, Worker source, Wrangler configuration, secrets, package
+files or external services.
+
+## Required verification by the implementer
+
+Run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+git diff --check
+```
+
+The implementer must leave the new migration and SQL fixture `NOT RUN` against
+every database. No commit, push, deploy, Supabase/Cloudflare/Meta/OpenAI call or
+staging mutation is authorized.
+
+## Review and activation gates
+
+1. Sonnet implements only the allowed scope, fills only this task's **Observed
+   context** and **Delivery record**, and does not commit.
+2. Codex reviews the exact migration/fixture/doc diff, the resolver's callers
+   and the PostgREST boundary; reruns local checks; and runs all migrations plus
+   fixtures 033, 034 and 049 on disposable `vetai-test` with zero residue.
+3. Claude Opus performs a narrow read-only review of volatility, function
+   metadata/grants, tenant behavior, fixture non-vacuity and documentation
+   truthfulness.
+4. After both reviews pass, Codex updates durable context and commits the
+   repository change.
+5. Staging activation requires separate explicit owner approval. Order is:
+   migration first; exact `pg_proc`/grant/result catalog check; a real
+   service-role PostgREST POST proving the resolver no longer returns 405;
+   Worker configuration/health confirmation; restoration of only the approved
+   staging test contact from `manual` to `ai`; then the mandatory real
+   WhatsApp inbound/reply smoke from runbook §19. Record only sanitized
+   metadata—no message content, phone number, token or signature.
+6. Production remains out of scope and unchanged.
+
+## Acceptance criteria
+
+- A database built only from repository migrations exposes the exact public
+  resolver as `VOLATILE`.
+- The new catalog fixture fails loudly if the resolver returns to `STABLE` or
+  `IMMUTABLE`, changes signature/security/search-path/result/grants, or loses
+  the transitive lifecycle lock.
+- Existing selective-automation and strict-allowlist behavior still passes on
+  the disposable database with zero fixture residue.
+- Documentation no longer describes the resolver as `stable` and does not
+  treat SQL Editor success as PostgREST proof.
+- No unrelated function, runtime behavior, secret, dependency, staging state
+  or production state changes during implementation.
+
+## Sequenced follow-ups — not active tasks
+
+After Task 049 is `COMPLETE`, Codex will promote these one at a time:
+
+1. Task 050: truthful dependency-aware `/ready` plus persistent Cloudflare
+   observability configuration, without paid AI calls, customer writes or PII.
+2. Task 051: product decision and Opus-reviewed recovery path for terminal
+   human-handoff conversations; emergency handoffs remain separately guarded.
+3. Task 052: disposable-environment PostgREST regression proof and the observed
+   approximately 50-minute inbound-to-outbound delay investigation, with
+   measurable timestamps and no speculative fix.
+
+## Observed context
+
+Verified directly from the repository before implementing:
+
+- `supabase/migrations/20260814000300_selective_automation.sql:121-160`
+  creates `public.resolve_whatsapp_contact_automation(p_phone_number_id text,
+  p_contact_e164 text)` as `security invoker`, `stable`,
+  `set search_path = ''`, `returns table (result text)`, with `execute`
+  granted only to `service_role` (revoked from `public`, `anon`,
+  `authenticated`). No other migration drops or recreates this function, so
+  it is the sole applicable target for a metadata-only `ALTER FUNCTION`.
+- `supabase/migrations/20260831000100_clinic_lifecycle.sql:82-127` drops and
+  recreates `vetai_private.effective_contact_automation_mode(uuid, text)` as
+  `security invoker`, `volatile`, `set search_path = ''`, with a
+  `for key share of cl` row lock on `public.clinics` before returning
+  `'personal'` for a non-active clinic. This is the transitively called
+  helper the incident report and Task 049 both name.
+- `docs/olaylar/2026-09-04-route-resolver-405.md` (pre-existing and tracked in
+  commit `443ba8a` before this session; not created by this task) documents the confirmed
+  root cause, timeline, and evidence: PostgREST runs a POST to a
+  `STABLE`/`IMMUTABLE` RPC in a read-only transaction, the helper's row lock
+  was rejected under that mode, PostgREST returned HTTP 405, and the Worker
+  converted that to a 503 to Meta from 2026-08-31 03:13 to 2026-09-04 03:44
+  in `vetai-staging`. Its own repo-wide audit found exactly one
+  `STABLE`/`IMMUTABLE` PostgREST-exposed function transitively reaching a
+  lock/write (this resolver); the migration/fixture scope was not broadened.
+- No `supabase/migrations/20260904*` or `supabase/tests/049_*` file existed
+  before this session (`ls supabase/migrations`, `ls supabase/tests`).
+- `supabase/tests/033_selective_automation.sql`, `034_strict_ai_allowlist.sql`,
+  and `041_clinic_lifecycle.sql` establish this repository's existing
+  `pg_proc`/`pg_namespace`/`pg_get_function_identity_arguments`/
+  `pg_get_functiondef`/`information_schema.role_routine_grants`/role-switch
+  fixture idioms; the new fixture reuses them rather than inventing a new
+  style.
+- `docs/database-schema.md:723-735` documented both the helper and the public
+  resolver as `stable`; the helper's label there was already stale relative
+  to the applied Task 041 migration (which made it `volatile`) before this
+  task started. Codex corrected that directly related label during review so
+  the incident explanation does not contradict the migration it cites.
+- `docs/production-readiness.md` §1 and `docs/staging-runbook.md` (ending at
+  its pre-existing §19) had no Task 049 gate/checklist entries before this
+  session.
+- `CURRENT_TASK.md`'s Task 049 section (this file, prepended above the
+  previous Task 048 record) was already present in the working tree at
+  session start, per the repository's role split in `AGENTS.md` (Codex
+  authors task contracts; the implementer only fills **Observed context**
+  and **Delivery record**).
+
+## Delivery record
+
+Implemented, within the allowed-changes list only:
+
+- `supabase/migrations/20260904000100_route_resolver_volatility.sql`: one
+  statement, `alter function
+  public.resolve_whatsapp_contact_automation(text, text) volatile;`. No
+  drop/recreate, no body copy, no other function touched. An exact-signature
+  `ALTER FUNCTION` fails the migration outright if the function is missing or
+  its signature changed, rather than silently matching another overload.
+- `supabase/tests/049_route_resolver_volatility.sql`: a `begin; ... rollback;`
+  fixture proving (1) exactly one `public.resolve_whatsapp_contact_automation`
+  exists with identity arguments `p_phone_number_id text, p_contact_e164
+  text`; (2) `pg_proc.provolatile = 'v'`, `security invoker` (`prosecdef =
+  false`), empty `search_path`, and unchanged `TABLE(result text)` result
+  shape; (3) `information_schema.role_routine_grants` shows no
+  `PUBLIC`/`anon`/`authenticated` execute grant and a retained `service_role`
+  grant, and a runtime `set local role authenticated`/`anon` call raises
+  `insufficient_privilege`; (4) the transitively called
+  `vetai_private.effective_contact_automation_mode` still has
+  `provolatile = 'v'`, empty `search_path`, and a `pg_get_functiondef` body
+  matching `for key share of cl`; (5) a minimal synthetic two-account fixture
+  proves the explicit `ai` route, the strict `personal` default for an
+  unlisted contact, tenant isolation for an identical contact number under an
+  unrelated account, and `unknown_account` for an unregistered
+  `phone_number_id`; (6) after `rollback;`, a final `select` against the
+  post-rollback state reports zero remaining synthetic clinics, accounts, and
+  routes. The fixture uses only exact schema/signature predicates and no
+  dynamic SQL.
+- `docs/database-schema.md`: changed the public resolver's documented
+  volatility from `stable` to `volatile`, added a short explanation of why
+  PostgREST's POST transaction mode is determined by the outermost exposed
+  function's volatility (not a transitively called helper's), linked
+  `olaylar/2026-09-04-route-resolver-405.md`, and—during Codex review—corrected
+  the directly related private helper's stale `stable` label to its actual
+  Task 041 `volatile` metadata.
+- `docs/production-readiness.md`: added one new unchecked `## 1. Human gates`
+  item requiring the Task 049 migration to be applied, its catalog fixture to
+  pass, and a real service-role PostgREST POST plus a live inbound smoke to
+  succeed before production activation; states plainly that a SQL Editor
+  call is not sufficient evidence.
+- `docs/staging-runbook.md`: added `## 20. Task 049 aktivasyonu` after the
+  existing §19 live-inbound rule, an ordered six-step checklist (migration →
+  catalog re-check → real PostgREST POST no longer 405 → Worker/health →
+  restore the approved test contact from `manual` to `ai` → the mandatory
+  §19 live smoke), all boxes left unchecked.
+- `docs/olaylar/2026-09-04-route-resolver-405.md`: updated only the top
+  "Durum" line and the §6 "AÇIK KALEM" callout to distinguish "repository fix
+  implemented" (this task) from "migration applied to a database" (not done
+  here); did not alter the original timeline, evidence, or root-cause
+  sections, and does not claim any staging/production evidence that has not
+  occurred.
+- `CURRENT_TASK.md`: filled only this task's **Observed context** and
+  **Delivery record** sections.
+
+Codex review corrections:
+
+- Corrected the directly related private helper's stale documentation from
+  `stable` to its actual Task 041 `volatile` metadata and removed an incorrect
+  “helper below” direction.
+- Clarified that rollback fixture 049 runs only on disposable `vetai-test`;
+  staging/production use equivalent read-only catalog checks rather than
+  running rollback fixtures.
+- Corrected the incident report's repository evidence: it was already tracked
+  by commit `443ba8a`, not an untracked file.
+- The mandatory disposable rerun exposed later-schema drift in fixture 033:
+  Task 037's appointment-decision wrapper now requires the supplied pet to be
+  the conversation's selected pet. Added one tenant-scoped fixture update
+  before the existing suppression assertion; no migration/runtime behavior
+  changed.
+
+Implementer verification run locally before Codex review (at that point the
+new migration and fixture were `NOT RUN` against any database):
+
+- `pnpm install --frozen-lockfile` — passed (`Already up to date`).
+- `pnpm typecheck` (`tsc --noEmit`) — passed with no output.
+- `pnpm test` — passed: 1936 tests passed, 2 opt-in live evals skipped
+  (unrelated to this task; no TypeScript file was changed).
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed;
+  Total Upload 262.35 KiB / gzip 54.54 KiB; bindings unchanged
+  (`INTAKE_QUEUE`, `APP_TIMEZONE`, `WHATSAPP_GRAPH_API_VERSION`).
+- `git diff --check` — exit 0 (only pre-existing LF/CRLF autocrlf notices,
+  no added whitespace errors).
+
+`git status --porcelain` after Codex review shows task changes only to the
+allowed files: `CURRENT_TASK.md`, `docs/database-schema.md`,
+`docs/olaylar/2026-09-04-route-resolver-405.md`,
+`docs/production-readiness.md`, `docs/staging-runbook.md`,
+`supabase/tests/033_selective_automation.sql`, plus the two new
+files `supabase/migrations/20260904000100_route_resolver_volatility.sql` and
+`supabase/tests/049_route_resolver_volatility.sql`. `.gitignore` (pre-existing
+working-tree change) and `docs/043-opus-inceleme.md` (pre-existing untracked
+file) were not touched, per the explicit exclusion in this task. No commit,
+push, staging/production deploy, or Cloudflare/Meta/OpenAI call was made.
+
+### Codex review record — 2026-09-04
+
+Codex traced the exact resolver definition, its private helper, the Worker
+PostgREST caller and the webhook failure mapping. The forward migration changes
+only the exact function's volatility metadata; it does not copy or recreate the
+body, alter grants, or change runtime TypeScript.
+
+Codex then temporarily linked the Supabase CLI to the disposable `vetai-test`
+project (`cyjpiapxvalqltcsywam`) and ran only the predefined reviewed SQL files:
+
+- `20260904000100_route_resolver_volatility.sql` — PASS;
+- `049_route_resolver_volatility.sql` — PASS, with zero remaining synthetic
+  clinics, accounts and routes after rollback;
+- `034_strict_ai_allowlist.sql` — PASS, with all reported residue counts zero;
+- `033_selective_automation.sql` — its first run exposed the later Task 037
+  fixture drift described above; after the tenant-scoped fixture-only
+  correction, the rerun passed with all eight reported residue counts zero.
+
+No staging or production database was changed by this review. Codex's final
+post-correction local rerun also passed: TypeScript typecheck; 37 test files,
+1936 passed and 2 opt-in live evals skipped; Worker dry-run with unchanged
+bindings; and `git diff --check` with no whitespace errors.
+
+The mandatory final read-only Opus review returned `PASS` with no blocker. It
+independently confirmed the exact metadata-only migration, the complete
+PostgREST failure chain, the non-vacuous catalog/role/tenant/rollback proof,
+the tenant-scoped fixture 033 compatibility correction, truthful evidence
+levels in the documentation, and the absence of an RLS/grant/privacy/runtime
+regression. Its six recommendations were explicitly non-blocking: tighter
+runtime-role error attribution, a stronger optional tenant discriminator,
+documenting the catalog-view execution-role assumption, an optional
+PostgREST schema-cache reload troubleshooting note, cleanup of an ignored
+`.wrangler` copy, and selective staging at commit time. The first three are
+already backed by independent positive catalog/behavior assertions; the
+cache step is operational troubleshooting rather than part of the root-cause
+fix; the ignored copy and user-owned files are outside Task 049. No staging
+activation occurred as part of closure.
+
+---
+
+# Previous task — 048 Safe staff WhatsApp reply composer
 
 Status: `COMPLETE` (reclosed 2026-09-04 after the staging-discovered category
 compatibility fix, renewed local/disposable proof and narrow Opus PASS)

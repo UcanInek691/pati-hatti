@@ -2,7 +2,10 @@
 
 Hazırlayan: koordinatör Opus, 2026-09-04.
 Ortam: yalnız `vetai-staging`. **Production etkilenmedi** (production hâlâ kurulmadı).
-Durum: **kök neden bulundu, staging'de düzeltildi, kalıcı migration bekliyor.**
+Durum: **kök neden bulundu, staging'de elle düzeltildi, kalıcı repository
+düzeltmesi (Task 049 migration + fixture) hazırlandı ve yalnız disposable
+`vetai-test` üzerinde kanıtlandı; staging migration history'sine ve
+production'a henüz uygulanmadı.**
 
 Bu bir olay kaydıdır; görev sözleşmesi değildir. Aktif sözleşme her zaman
 kökteki `CURRENT_TASK.md`'dir. §11'deki iş önerileri uygulama yetkisi vermez.
@@ -175,11 +178,18 @@ Staging'de elle çalıştırıldı:
 alter function public.resolve_whatsapp_contact_automation(text, text) volatile;
 ```
 
-> **AÇIK KALEM — kritik.** Bu değişikliğin **migration dosyası yok**. Staging
-> şeması artık `supabase/migrations/` ile birebir örtüşmüyor. Production'a
-> `supabase db push` yapıldığı gün fonksiyon yeniden `STABLE` olarak gider ve
-> arıza production'da birebir tekrarlanır. Kalıcı düzeltme, ileri yönlü bir
-> migration ile bağlanmalıdır (§11, İş 1).
+> **AÇIK KALEM — durum güncellendi (Task 049).** Bu elle çalıştırılan
+> değişiklik başlangıçta **migration dosyasız** kalmıştı; Task 049
+> `supabase/migrations/20260904000100_route_resolver_volatility.sql` ve
+> `supabase/tests/049_route_resolver_volatility.sql` ile kalıcı repository
+> düzeltmesini ve katalog kanıtını ekledi. **Repository düzeltmesi ile o
+> düzeltmenin herhangi bir veritabanına migration olarak uygulanması ayrı
+> şeylerdir** — implementer migration'ı hiçbir veritabanında çalıştırmadı;
+> Codex daha sonra yalnız disposable `vetai-test` üzerinde migration ile
+> 049/034/033 fixture'larını sıfır artıkla doğruladı. Staging'in fiili şeması
+> hâlâ yalnızca 2026-09-04'teki elle çalıştırılan `alter function` sayesinde
+> doğrudur; migration ancak ayrı onaylı bir aktivasyonla staging history'sine
+> uygulandığında repository ile örtüşür (bkz. `docs/staging-runbook.md` §20).
 
 ## 7. Neden dört gün görünmedi
 
@@ -245,8 +255,11 @@ Belirleyici araç **Supabase edge log'ları** oldu: Cloudflare tarafı yalnız
   transaction`) log'da görünmedi; Supabase edge log'u yalnız HTTP durum kodunu
   ve boş `x_sb_error_code` alanını verdi. Mekanizma PostgREST dokümantasyonu ve
   405 ↔ `volatile` değişiminin nedensel eşleşmesiyle kuruldu.
-- Bu olayın `vetai-test` (disposable) üzerindeki durumu kontrol edilmedi. Aynı
-  `stable` etiketi orada da mevcut olmalıdır.
+- Task 049 incelemesinde migration yalnız disposable `vetai-test` üzerinde
+  uygulandı; `pg_proc.provolatile = 'v'` ve ilgili 049/034/033 rollback
+  fixture'ları sıfır artıkla doğrulandı. Bu doğrudan SQL kanıtı PostgREST'in
+  HTTP transaction-routing davranışını tek başına kanıtlamaz; o canlı kontrol
+  Task 049 staging aktivasyonunda ve Task 052'nin regresyon kapısında kalır.
 - 2026-08-31 ile 09-04 arasında Meta'nın retry'ları tükendikten sonra kaç
   mesajın kalıcı olarak düştüğü sayılmadı. Sentetik test trafiği dışında gerçek
   müşteri mesajı beklenmiyor (staging, whitelist'li tek test numarası).
@@ -256,10 +269,10 @@ Belirleyici araç **Supabase edge log'ları** oldu: Cloudflare tarafı yalnız
 Öneri sırası; her biri kendi sözleşmesini gerektirir.
 
 **İş 1 — Kalıcı migration (acil, staging şeması repo ile örtüşmüyor).**
-İleri yönlü bir migration `resolve_whatsapp_contact_automation`'ı `volatile`
-olarak yeniden yaratmalı. Fixture, `pg_proc` üzerinden bu invaryantı katalog
-iddiası olarak sabitlemeli. Disposable DB kanıtı + Opus kapısı gerekir
-(RLS/DB dokunuşu).
+İleri yönlü bir migration `resolve_whatsapp_contact_automation`'ın volatility
+metadata'sını `volatile` yapmalı. Task 049 migration/fixture'ı hazırlandı ve
+disposable DB kanıtı geçti; zorunlu Opus incelemesi ile staging aktivasyonu
+henüz bekliyor (RLS/DB dokunuşu).
 
 *Repo geneli denetim yapıldı (2026-09-04, koordinatör Opus).* 53 fonksiyon
 tanımının tamamı `supabase/migrations/` üzerinden tarandı; volatility etiketi

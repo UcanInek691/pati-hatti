@@ -895,3 +895,38 @@ basılmadığı görülürse hata rota çözümlemesindedir; ardından **Supabas
 log'unda fonksiyon bazında HTTP durum kodlarına** bakılır. 2026-09-04 olayında
 sebebi bulan şey buydu — Cloudflare tarafı yalnız "503 döndü" diyor, hangi
 çağrının neden başarısız olduğunu göstermiyor.
+
+## 20. Task 049 aktivasyonu — route-resolver volatility düzeltmesi
+
+Bu bölüm, `docs/olaylar/2026-09-04-route-resolver-405.md` olayının kalıcı
+migration'ını (`supabase/migrations/20260904000100_route_resolver_volatility.sql`)
+staging'e uygularken izlenecek sırayı sabitler. §19'daki zorunlu canlı gelen
+mesaj testinin **yerine geçmez**; ondan önce gelen, bu göreve özel adımlardır.
+
+Sıra:
+
+1. Migration uygulanır (`resolve_whatsapp_contact_automation` `volatile`
+   olur).
+   - [ ] Uygulandı.
+2. `pg_proc`/grant/sonuç kataloğu `supabase/tests/049_route_resolver_volatility.sql`
+   ile disposable'da doğrulanmış olmalı; burada yalnız staging üzerinde exact
+   `pg_proc.provolatile = 'v'`, `SECURITY INVOKER`, exact boş `search_path`,
+   `TABLE(result text)` sonuç şekli ve mevcut grantlar (`service_role` evet,
+   `PUBLIC`/`anon`/`authenticated` hayır) tekrar kontrol edilir.
+   - [ ] Doğrulandı.
+3. Gerçek bir service-role PostgREST POST'u
+   (`/rest/v1/rpc/resolve_whatsapp_contact_automation`) çalıştırılır ve
+   yanıtın artık **405 değil** olduğu doğrulanır. Bir SQL Editor çağrısı bu
+   adımın yerine geçmez — 2026-09-04 olayının kök nedeni tam olarak SQL
+   Editor'ün READ WRITE çalışması ve PostgREST'in READ ONLY çalışmasıydı.
+   - [ ] Doğrulandı.
+4. Worker konfigürasyonu/`/health` kontrol edilir.
+   - [ ] Doğrulandı.
+5. Onaylı staging test kontağı yalnızca bu adımda `manual`'dan `ai`'a geri
+   döndürülür (olay sırasında geçici olarak `manual`'a alınmıştı).
+   - [ ] Doğrulandı.
+6. §19'daki zorunlu canlı gelen mesaj/cevap testi çalıştırılır.
+   - [ ] Doğrulandı.
+
+Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
+çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.

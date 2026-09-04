@@ -722,7 +722,7 @@ whole model.
 
 Two private helpers back every route decision:
 `vetai_private.effective_contact_automation_mode(whatsapp_account_id,
-contact_e164)` (`stable`, `security invoker`) returns the contact's override
+contact_e164)` (`volatile`, `security invoker`) returns the contact's override
 if one exists, else the account's `automation_default`; and
 `vetai_private.lock_owner_and_resolve_automation(clinic_id,
 whatsapp_account_id, owner_id)` (`volatile`, `security invoker`) locks the
@@ -730,9 +730,18 @@ owner row `for update` before resolving its effective mode, so route
 mutation and finalization always serialize on the same owner lock.
 
 `public.resolve_whatsapp_contact_automation(p_phone_number_id text,
-p_contact_e164 text)` is `security invoker`, `stable`, `set search_path=''`,
+p_contact_e164 text)` is `security invoker`, `volatile`, `set search_path=''`,
 and executable only by `service_role`. It returns exactly one closed
 `ai | manual | personal | unknown_account` result and exposes no identifier.
+It was originally created `stable`; PostgREST decides a POST RPC's
+transaction access mode from the volatility of the exact function it calls
+directly (`STABLE`/`IMMUTABLE` gets a read-only transaction, `VOLATILE` gets
+read-write), so once the transitively called
+`effective_contact_automation_mode` helper gained a row lock, the
+`stable` label made every POST fail with HTTP 405 rather than a SQL error.
+Task 049 (`20260904000100_route_resolver_volatility.sql`) changed only the
+label to `volatile`; see
+[`olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md).
 `public.set_whatsapp_contact_route(p_whatsapp_account_id uuid,
 p_contact_e164 text, p_mode text)` is `security definer`, `volatile`, `set
 search_path=''`, and executable only by `authenticated` — the one other
