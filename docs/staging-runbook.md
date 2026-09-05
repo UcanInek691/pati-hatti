@@ -1047,32 +1047,32 @@ implementasyon sırasında (Claude Sonnet tarafından) hiçbir veritabanına kar
 
 Sıra (yalnız Codex tarafından, ayrı sahip onayından sonra):
 
-1. Migration, güncel `wrangler.staging.toml` hedefiyle yalnız `vetai-staging`
+1. [x] Migration, güncel `wrangler.staging.toml` hedefiyle yalnız `vetai-staging`
    üzerinde ve aynı konuşma için eşzamanlı intake trafiği olmayan kısa bir
    bakım penceresinde uygulanır. Uygulama sonrası, `status = 'handoff'` ve
    `intake_stage = 'human_handoff'` olduğu halde açık bir `human_handoff` işi
    bulunan konuşmalar salt-okunur sorguyla kontrol edilir; bulunan satırlar
    otomatik olarak değiştirilmez ve ayrı incelemeye alınır.
-2. Katalog kontrolü: `public.resolve_staff_work_item`'ın kimliği, `VOLATILE`,
+2. [x] Katalog kontrolü: `public.resolve_staff_work_item`'ın kimliği, `VOLATILE`,
    `SECURITY DEFINER`, boş `search_path`, ve grant durumu (`authenticated`
    izinli; `PUBLIC`/`anon`/`service_role` reddedilir) staging'de salt-okunur
    sorgularla doğrulanır — fixture'daki Section 1/2 kontrollerinin aynısı,
    gerçek veri değiştirmeden.
-3. Staging'de gerçek klinik/sahip verisi kullanılmadan, sabit sentetik bir
+3. [x] Staging'de gerçek klinik/sahip verisi kullanılmadan, sabit sentetik bir
    `human_handoff` iş kaydı üretilir (ör. mevcut bir test kliniğinde sentetik
    bir konuşma el ile `handoff` durumuna alınarak). Mevcut bir staff hesabı bu
    kaydı `/staff` sayfasından üstlenir ve çözer; konuşmanın `completed`/
    `completed` durumuna, iş kaydının `resolved` durumuna geçtiği ve
    `state_version`'ın tam olarak bir artışla değiştiği doğrulanır.
-4. Aynı sentetik sahipten (gerçek WhatsApp mesajı göndermeden, doğrudan
+4. [x] Aynı sentetik sahipten (gerçek WhatsApp mesajı göndermeden, doğrudan
    `ingest_whatsapp_text_message` ile) ikinci bir mesaj işlenir; bunun yeni ve
    ayrı bir konuşma satırı oluşturduğu, önceki `completed` satırın
    değişmeden kaldığı doğrulanır (bkz.
    [`docs/inbound-queue.md`](inbound-queue.md#fresh-conversation-after-a-resolved-handoff-task-051)).
-5. `/staff` sayfasında `emergency_handoff` ve normal `human_handoff`
+5. [x] `/staff` sayfasında `emergency_handoff` ve normal `human_handoff`
    nedenleri için çözüm butonunun sırasıyla iki ve tek onay metnini
    gösterdiği, iptalin hiçbir RPC çağrısı yapmadığı elle spot-check edilir.
-6. Whitelist'li gerçek staging test numarasıyla normal (acil olmayan) bir
+6. [x] Whitelist'li gerçek staging test numarasıyla normal (acil olmayan) bir
    `human_handoff` oluşturulur, iş `/staff` üzerinden üstlenilip çözülür ve aynı
    numaradan yeni bir WhatsApp mesajı gönderilir. Yeni mesajın eski terminal
    konuşmaya eklenmediği, farklı bir konuşma kimliği oluşturduğu ve müşteriye
@@ -1082,3 +1082,12 @@ Sıra (yalnız Codex tarafından, ayrı sahip onayından sonra):
 
 Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
 çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.
+
+Aktivasyon kaydı (2026-09-05): ayrı sahip onayıyla migration yalnız staging'e
+uygulandı ve Worker migration-sonra sırasıyla deploy edildi. Katalog ve açık
+handoff kontrolleri geçti. Sentetik `/staff` çözümü ile farklı yeni konuşma
+kanıtlandı; sentetik veriler sıfır artıkla temizlendi. Son canlı, acil olmayan
+handoff → personel çözümü → yeni mesaj akışında güvenlik soruları cihaza ulaştı;
+salt-okunur veritabanı kanıtı eski konuşmanın kapalı, yeni konuşmanın farklı ve
+aktif olduğunu doğruladı. Hassas içerik veya kimlik kaydedilmedi. Production
+değişmedi.

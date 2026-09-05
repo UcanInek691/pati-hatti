@@ -1087,8 +1087,9 @@ occurred.
   Queue execution and delivery callbacks appeared, and the owner confirmed
   receipt of the reply on the device. No sensitive content or identifier was
   recorded in repository evidence. Production is unchanged.
-- Task 051 (safe terminal-handoff recovery) is complete at repository and
-  disposable-database gates as of 2026-09-05. Resolving the exact assigned
+- Task 051 (safe terminal-handoff recovery) is complete at repository,
+  disposable-database and separately approved staging gates as of 2026-09-05.
+  Resolving the exact assigned
   `human_handoff` work item now atomically completes its terminal conversation;
   the next inbound message creates a fresh conversation and restarts the
   safety-first intake instead of permanently excluding that owner from AI.
@@ -1107,8 +1108,14 @@ occurred.
   Opus review passed. The corrected migration and rollback fixture passed only
   on disposable `vetai-test`; all 13 residue counters and an independent
   residue query returned zero. This direct-query proof did not add migration
-  history. Staging and production remain unchanged; staging requires separate
-  owner approval and the §22 migration/catalog/synthetic/live smoke sequence.
+  history. After separate owner approval, the migration was applied only to
+  `vetai-staging` and the Worker was deployed migration-first. Catalog and
+  post-migration guards, a synthetic `/staff` resolution/direct-ingest proof,
+  and zero synthetic residue all passed. A final allowlisted live WhatsApp
+  handoff → resolve → new-message journey produced a different active
+  conversation; the owner confirmed renewed safety questions on the device
+  and a read-only proof found one matching old/new pair. Production remains
+  unchanged.
 - The next active work is Task 052: investigate the unexplained roughly
   50-minute delivery delay and add the remaining real PostgREST regression
   evidence. The agreed risk-based model/testing protocol should be formalized

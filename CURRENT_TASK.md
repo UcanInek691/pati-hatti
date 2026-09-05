@@ -1,8 +1,8 @@
 # Current task — 051 Safe terminal-handoff recovery
 
 Status: `COMPLETE` (closed 2026-09-05 after local verification, Codex review,
-disposable-database proof and mandatory read-only Claude Opus PASS; staging and
-production remain unchanged)
+disposable-database proof, mandatory read-only Claude Opus PASS and separately
+approved staging activation/live smoke; production remains unchanged)
 
 Created by Codex on 2026-09-04 after Task 050 passed every local, review and
 staging gate. Task 050's complete record is preserved below as archived
@@ -456,8 +456,32 @@ passed again with all 13 residue counters at `0`. Because the post-PASS edits
 were documentation plus fixture assertions only, the already-green 1,966-test
 TypeScript suite was not repeated; the directly affected SQL fixture and
 `git diff --check` were the proportionate closeout gates. Staging activation
-remains a separate owner-approved operation under `docs/staging-runbook.md`
-§22. Production remains unchanged.
+was subsequently completed under separate owner approval; the evidence is
+recorded below. Production remains unchanged.
+
+### Staging activation record — 2026-09-05
+
+- Only `vetai-staging` was targeted. Migration history was aligned through
+  Task 049 before `20260904000200_handoff_conversation_recovery.sql` was
+  applied through the managed migration workflow. The staging Worker was then
+  deployed as version `5925a9fe-f373-493c-9fdd-54804a6988bc`; `/health`
+  returned `ok` and dependency-aware `/ready` returned `ready`.
+- A read-only catalog check confirmed the exact RPC identity/result shape,
+  `VOLATILE`, `SECURITY DEFINER`, empty `search_path`, authenticated execution,
+  and no `PUBLIC`/`anon`/`service_role` execution. The post-migration open-
+  handoff guard returned zero rows.
+- A bounded synthetic normal handoff was claimed and resolved through the real
+  `/staff` surface. Database evidence confirmed the old conversation became
+  `completed/completed`, its work item became `resolved`, and a direct follow-
+  up ingest created a different `active/pet_identification` conversation. All
+  synthetic records were deleted and the zero-residue guard passed.
+- The owner completed the final allowlisted live WhatsApp smoke: a normal
+  handoff was resolved in `/staff`, the next message created a different active
+  conversation, and the safety questions reached the device. A read-only proof
+  returned true for both old-conversation completion and different-new-
+  conversation creation, with one matching pair. No phone number, message text
+  or identifier was recorded.
+- No production database, Worker, Meta resource or customer record changed.
 
 ---
 

@@ -410,7 +410,7 @@ randevu slot envanterini kendi kendine yönetir
   uygulandı ve `/staff` yüzeyi staging'de açıldı. Production değişmedi; gerçek
   klinik saatlerinin kurulması ayrı onboarding kapısıdır.
 
-## 10d. Task 051 (yerel/Codex/disposable/Opus tamamlandı; staging bekliyor)
+## 10d. Task 051 (yerel/Codex/disposable/Opus/staging tamamlandı)
 
 Task 051, `docs/olaylar/2026-09-04-route-resolver-405.md`'de bulunan ayrı bir
 üründeki boşluğu kapatır: bir konuşma `human_handoff`'a düştüğünde, personel
@@ -451,8 +451,11 @@ desteklenen geri dönüş yolu yoktu.
   düzeltilmiş rollback fixture 13 sıfır kalıntı sayacıyla PASS verdi ve
   bağımsız artık sorgusu 0 döndü. Migration history'ye kayıt eklenmedi,
   staging/production değişmedi. Claude Opus'un kilit sırası, tenant izolasyonu
-  ve tarihsel onarım incelemesi 2026-09-05'te PASS verdi. Ayrı sahip onayı
-  alınmadan `vetai-staging`'e uygulanmaz
+  ve tarihsel onarım incelemesi 2026-09-05'te PASS verdi. Ardından ayrı sahip
+  onayıyla migration yalnız `vetai-staging`'e uygulandı; katalog/deploy,
+  sentetik `/staff` çözümü, farklı yeni konuşma, sıfır sentetik artık ve gerçek
+  allowlist'li handoff → çözüm → yeniden güvenlik soruları smoke'u geçti.
+  Production değişmedi
   ([`docs/staging-runbook.md`](staging-runbook.md) §22,
   [`docs/production-readiness.md`](production-readiness.md)).
 
