@@ -1,6 +1,8 @@
 # Current task — 051 Safe terminal-handoff recovery
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-05 after local verification, Codex review,
+disposable-database proof and mandatory read-only Claude Opus PASS; staging and
+production remain unchanged)
 
 Created by Codex on 2026-09-04 after Task 050 passed every local, review and
 staging gate. Task 050's complete record is preserved below as archived
@@ -232,11 +234,230 @@ not call or mutate any real database/service, commit, push, or deploy.
 
 ## Task 051 observed context
 
-To be filled by the implementer from repository evidence only.
+Recorded by Claude Sonnet (implementer) from repository evidence only, before
+any change in this task.
+
+- The gap this task closes was found and fully diagnosed in
+  `docs/olaylar/2026-09-04-route-resolver-405.md` ("Bulgu" section onward,
+  unrelated to that document's 405 incident): `public.resolve_staff_work_item`
+  (`supabase/migrations/20260814000200_staff_assignment_and_alerts.sql:313-370`)
+  only ever updated `public.staff_work_items.status`; it never touched
+  `public.conversations`. Combined with the terminal-stage guard in
+  `advance_conversation_intake`
+  (`supabase/migrations/20260806000200_conversation_intake_state.sql:168-169`)
+  and the partial unique index
+  `conversations_one_open_per_owner_idx` on `(clinic_id, owner_id)`
+  `where status in ('active', 'handoff')`
+  (`supabase/migrations/20260806000300_ingest_whatsapp_conversation_locator.sql`),
+  an owner who reached `human_handoff` stayed locked out of the AI path
+  permanently, even after staff resolved the work item, because no supported
+  path ever moved that conversation's `status` to `completed`.
+- Live evidence quoted in that incident doc: a `human_handoff` work item open
+  since 2026-08-29 with the conversation still at `status = handoff,
+  intake_stage = human_handoff` on 2026-09-04, well after the item existed.
+- The incident doc's "Karar gerektiren nokta" listed three options; option 1
+  (resolving the work item completes the conversation; the next message opens
+  a fresh one) was selected for this task, per this file's Decisions 5-12 and
+  the "Required documentation" list. Option 2 (a separate staff-initiated
+  "give back to AI" action) is explicitly out of scope.
+- Pre-existing, unrelated repository state at task start (not caused by this
+  task, left untouched): `.gitignore` had an uncommitted `+tmp/` line, and
+  `docs/043-opus-inceleme.md` was untracked. Both are outside this task's
+  "Allowed changes" list and were not modified.
+- Baseline before this task's `src/staffPage.ts`/`test/staffPage.test.ts`
+  changes (captured via a temporary `git stash` limited to those two files,
+  then restored): 107 tests in `test/staffPage.test.ts`; 1960 passed / 2
+  skipped (1962 total) in the full `pnpm test` suite.
 
 ## Task 051 delivery record
 
-To be filled by the implementer from repository evidence only.
+Recorded by Claude Sonnet (implementer) from repository evidence only.
+
+**Files changed** (all within the "Allowed changes" list):
+
+- `supabase/migrations/20260904000200_handoff_conversation_recovery.sql`
+  (new) — replaces `public.resolve_staff_work_item` with the same signature,
+  result shape, `SECURITY DEFINER`, `VOLATILE`, empty `search_path`, and
+  `authenticated`-only grant; adds atomic conversation completion under the
+  clinic → conversation (`human_handoff` only) → work item lock order
+  matching `sync_human_handoff_work_item`; tolerates a conversation already at
+  `completed`/`completed`; fails closed with an `unexpected conversation
+  state` exception for any other pairing; never touches
+  `delivery_failure`-kind work items or `outbound_message_outbox`; and adds a
+  one-time backfill `update` that completes only conversations whose sole
+  non-resolved-vs-resolved mismatch is an already-`resolved` `human_handoff`
+  item paired with a still-`handoff`/`human_handoff` conversation and no other
+  non-resolved `human_handoff` item for that conversation.
+- `supabase/tests/051_handoff_conversation_recovery.sql` (new) —
+  rollback-only fixture, `begin;`/`rollback;` bracketed, task-051-prefixed
+  synthetic UUIDs, following the `032`/`049` fixture conventions. Covers all
+  10 numbered points under "Required SQL fixture": function catalog identity
+  and lock-order markers (Section 1); grant/revoke state for
+  `authenticated`/`PUBLIC`/`anon`/`service_role` (Section 2); anon and
+  service_role RPC-call denial; null/unknown/`not_claimed` work-item-id
+  rejection with zero mutation; unauthenticated/non-member/cross-tenant
+  denial as `not_found` with zero mutation; `not_owner` rejection by a
+  same-clinic non-assignee with zero mutation; normal (scenario 01) and
+  `emergency_handoff` (scenario 02) resolution completing the conversation
+  with exactly one `state_version` increment and resolver audit fields set;
+  already-`completed` tolerance with no further increment (scenario 03);
+  inconsistent-pairing fail-closed exception with zero mutation to either row
+  (scenario 04); `delivery_failure` resolution leaving the conversation row
+  byte-for-byte unchanged (scenario 09); historical-repair inclusion for an
+  eligible leftover (scenario 07) and exclusion for a conversation with a
+  second, non-resolved `human_handoff` item (scenario 08); and confirmation
+  that a real `ingest_whatsapp_text_message` call after resolution opens a
+  second, independent conversation at the default intake stage while the
+  resolved conversation stays untouched, and that
+  `advance_conversation_intake` still raises its terminal-stage exception for
+  it. This file was not executed against any database (hard constraint) —
+  Codex must run it on disposable `vetai-test` before any other action.
+- `src/staffPage.ts` — the `/staff` work-item state fetch and validator now
+  include `reason`; `resolveButton`'s click handler branches its
+  confirmation copy on `currentWorkItemReason`: two explicit confirmations
+  for `emergency_handoff`, one for `human_handoff`, unchanged generic
+  confirmation otherwise; cancelling either emergency confirmation makes no
+  RPC call. This is an added client-side operator-safety prompt on top of,
+  not instead of, the database-level current-assignee authorization.
+- `test/staffPage.test.ts` — updated the two assertions that hard-coded the
+  old `["status", "assigned_to", "kind"]` select/validator shape; added a
+  fail-closed malformed-`reason`/`kind` test; added a static ordering/copy
+  test for the three confirmation branches; added a
+  `describe("resolveButton confirmation branches", ...)` block that extracts
+  and executes the real handler source (via `new Function`) with a stubbed
+  `window.confirm` and `callWorkItemRpc` to prove both emergency-cancellation
+  points make zero RPC calls and the human_handoff/other branches gate
+  correctly.
+- `docs/staff-workflow.md`, `docs/database-schema.md`, `docs/inbound-queue.md`,
+  `docs/ai-behavior-and-safety.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`, `docs/olaylar/2026-09-04-route-resolver-405.md`,
+  `docs/saas-urunlestirme-yol-haritasi.md` — narrow updates exactly matching
+  this file's "Required documentation" list per file; no other section of any
+  of these files was touched. `docs/production-readiness.md`'s and
+  `docs/staging-runbook.md`'s new checklist items are left entirely unchecked.
+
+**Test counts**: `test/staffPage.test.ts` 107 → 112 (5 new). Full `pnpm test`
+suite: 1960 passed / 2 skipped (1962 total) → 1965 passed / 2 skipped (1967
+total); the 2 pre-existing skips are unrelated to this task and unchanged.
+
+**Checks run**: `pnpm install --frozen-lockfile` (clean), `pnpm typecheck`
+(clean), `pnpm test` (1965/1967, 2 pre-existing skips), `pnpm exec wrangler
+deploy --dry-run --outdir .wrangler/dry-run` (succeeded, no errors), `git
+diff --check` (exit 0; only benign CRLF-conversion warnings, no whitespace
+errors).
+
+**Never done, per hard constraints**: the migration and the SQL fixture were
+never run against any database (disposable, staging, or production); no real
+Supabase, Cloudflare, Meta, OpenAI, or WhatsApp call was made; nothing was
+committed, pushed, or deployed.
+
+**Risks for Codex/Claude Opus to specifically inspect**:
+
+1. **Lock order correctness.** The function takes locks in clinic →
+   conversation (`for key share`, only when the work item's `kind` is
+   `human_handoff`) → work item (`for update`, then re-checked) order to
+   match `sync_human_handoff_work_item`'s own order and avoid a deadlock
+   against a concurrent inbound message on the same conversation. Verify this
+   against the trigger's actual current lock sequence, not just this
+   migration's comment claiming it.
+2. **Tenant isolation and current-assignee authorization**, especially that
+   `not_found` (not `not_owner`) is returned for cross-tenant and
+   non-member callers so no row existence leaks, while `not_owner` is
+   reserved for a same-clinic non-assignee.
+3. **Historical-repair backfill exactness** — that its `where` clause cannot
+   ever complete a conversation that still has a second, non-resolved
+   `human_handoff` item (scenario 08's negative case), and cannot touch a
+   `delivery_failure`-only work item.
+4. **The fixture's single-session limitation** — lock-order and deadlock
+   avoidance are asserted by reading `pg_get_functiondef` text and by
+   sequential scenario execution, not by an actual concurrent second session,
+   because a rollback-only single-transaction fixture cannot open one.
+5. **Client-side `reason`-based confirmation branching** in
+   `src/staffPage.ts` is a UX safety net, not an authorization boundary — the
+   database's current-assignee check is what actually prevents an incorrect
+   resolution regardless of which confirmation text was shown.
+6. **Pre-existing, unrelated working-tree state**: `M .gitignore` (an
+   uncommitted `+tmp/` line) and untracked `docs/043-opus-inceleme.md`
+   predate this task and were not touched by it; they should not be
+   attributed to this delivery.
+
+### Codex review and disposable-database record — 2026-09-05
+
+Codex reviewed the complete Task 051 diff and its live call paths, applied
+only targeted in-scope corrections, and reran the required gates. The
+implementer's original record above remains the delivery-time account; the
+following is the authoritative post-review state.
+
+- The database lock order is now clinic (`for key share`) → caller's exact
+  `clinic_staff` membership row (`for key share`) → conversation (`for no key
+  update`, human-handoff path only) → work item (`for update`). The function
+  explicitly rejects a null caller before comparing the locked membership,
+  closing a SQL three-valued-logic authorization gap exposed by the real
+  fixture run.
+- The historical repair target is materialized and deterministically locked
+  in `(clinic_id, conversation_id)` order. It still includes only exact
+  `handoff`/`human_handoff` conversations with at least one resolved
+  human-handoff item and no non-resolved human-handoff item.
+- The `/staff` client validates the coherent `kind`/`reason` pairs before it
+  offers a resolution action. Normal handoff uses one explicit fresh-
+  conversation/safety-restart confirmation, emergency handoff uses two, and
+  malformed or unknown pairs make no RPC call. `delivery_failure` keeps its
+  separate generic confirmation and never changes a conversation.
+- The rollback fixture was strengthened to prove the exact lock markers and
+  order after stripping SQL comments; preserve linked owner, pet, message and
+  confirmed-appointment records; use real strict-allowlist routes for the
+  synthetic contacts; exercise known opaque work-item IDs across unauthenticated,
+  non-member and cross-tenant callers; and report post-rollback residue for
+  13 synthetic datasets.
+- Required local checks passed: frozen install; typecheck; full test suite
+  **1966 passed / 2 skipped / 0 failed**; `test/staffPage.test.ts`
+  **113/113**; Worker dry-run; and `git diff --check` with no whitespace
+  errors.
+- Codex verified the linked project as disposable `vetai-test`
+  (`cyjpiapxvalqltcsywam`), applied the migration there by direct SQL query
+  (not as a migration-history entry), and ran the corrected rollback fixture
+  to PASS. All 13 post-rollback residue counters were `0`; an independent
+  residue query also returned `0`. An independent catalog query confirmed
+  `p_work_item_id uuid`, `SECURITY DEFINER`, `VOLATILE`, `TABLE(result text)`
+  and empty `search_path`.
+- `vetai-staging` and production were not modified. No Worker was deployed,
+  no live WhatsApp/Meta/OpenAI action was performed, and nothing was committed
+  or pushed during review.
+
+### Mandatory Claude Opus review and closeout — 2026-09-05
+
+Claude Opus completed the required read-only architecture, authorization,
+tenant, concurrency, backfill and clinical-safety review and returned
+**PASS** with no blocker. It independently confirmed the public function
+contract, exact lock order, null-caller rejection, indistinguishable tenant
+denial, single-increment completion, already-completed tolerance,
+delivery-failure isolation, historical-repair predicate, fresh-conversation
+ingest behavior, preservation set, fail-closed UI pairing and evidence-level
+documentation.
+
+Codex accepted the review's informational note that `v_reason` is an
+intentional authoritative reread protected by the existing database
+kind/reason coherence constraint. The remaining low findings were closed
+without changing product behavior:
+
+- §22 now requires a quiet staging migration window and a post-apply read-only
+  check for handoff conversations that still have an open handoff item;
+- the fixture no longer overclaims that its ordinary delivery-failure setup
+  proves the backfill kind predicate;
+- the copied backfill block explicitly requires synchronized maintenance with
+  the migration;
+- the `/staff` documentation now distinguishes coherent delivery-failure
+  pairs from unknown pairs that make no RPC call; and
+- scenario 05 now proves `state_version` is unchanged across every negative
+  authorization path.
+
+The amended rollback fixture was rerun only on disposable `vetai-test` and
+passed again with all 13 residue counters at `0`. Because the post-PASS edits
+were documentation plus fixture assertions only, the already-green 1,966-test
+TypeScript suite was not repeated; the directly affected SQL fixture and
+`git diff --check` were the proportionate closeout gates. Staging activation
+remains a separate owner-approved operation under `docs/staging-runbook.md`
+§22. Production remains unchanged.
 
 ---
 

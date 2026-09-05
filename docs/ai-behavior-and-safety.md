@@ -360,3 +360,27 @@ reported symptom, and cases asserting no unexpected explicit-red signal and
 no cancellation-mutation authority in model output — the six gates required
 before Codex's Luna-only paid eval run. No real OpenAI call was made while
 extending them.
+
+## Safe terminal-handoff recovery (Task 051)
+
+`resolve_staff_work_item` (see `docs/database-schema.md` and
+`docs/staff-workflow.md`) lets clinic staff move a conversation from
+`handoff` to `completed`. No prompt, extraction schema, intent, safety
+signal, or deterministic gate changes. Two things stay true across the
+change:
+
+- **A `completed` conversation stays terminal.** It is never reopened,
+  re-scored, or resumed by the model or the deterministic gate; a resolved
+  conversation is simply done. If the same owner writes again, that message
+  starts a genuinely new conversation row (see
+  [`docs/inbound-queue.md`](inbound-queue.md#fresh-conversation-after-a-resolved-handoff-task-051)),
+  and safety-first intake runs in full from the default stage exactly as for
+  a first-time contact — no prior safety signal, extraction, or stage is
+  inherited from the closed conversation.
+- **Resolving is operational, not medical.** `resolve_staff_work_item` only
+  records that a staff member finished handling the work item; it makes no
+  medical judgment, asserts no safety signal, and does not touch
+  `intake_data`, `reported_safety_signals`, or any other extracted fact.
+  Whether the underlying situation was in fact handled safely remains a
+  staff/clinic responsibility outside the model's scope, unchanged from every
+  other `human_handoff` case in this document.

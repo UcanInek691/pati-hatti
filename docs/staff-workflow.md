@@ -415,9 +415,12 @@ no mutation; if the assignee was erased (see identity and erasure, above),
 the caller becomes the new assignee and the result is `claimed` (a reclaim).
 From `resolved` it returns `already_resolved`.
 
-### `public.resolve_staff_work_item` (replaced; signature unchanged)
+### `public.resolve_staff_work_item` (replaced by Task 051; signature unchanged)
 
-Replaced in the same migration — same `p_work_item_id uuid` signature and
+Replaced again in
+`supabase/migrations/20260904000200_handoff_conversation_recovery.sql` — same
+`p_work_item_id uuid` signature, public result set
+(`resolved | already_resolved | not_claimed | not_owner | not_found`), and
 grant shape as the version Task 021 added in
 `supabase/migrations/20260809000500_staff_workflow.sql`. From `resolved` it
 returns `already_resolved`. From any other status where the item is not
@@ -428,7 +431,41 @@ no mutation. From `in_progress` assigned to a *different* user it returns
 assignee of an `in_progress` item does it set `status = 'resolved'`,
 `resolved_at = pg_catalog.now()`, and `resolved_by` to the caller, and return
 `resolved`. Concurrent calls on the same row still serialize on the row
-lock.
+lock, locked in a fixed order (clinic, exact caller membership, then — for
+`human_handoff` only — the conversation, then the work item) to avoid the
+known inverted-order deadlock cycle against the intake trigger.
+
+Since Task 051, resolving a `kind = 'human_handoff'` item also completes its
+linked conversation in the same transaction: a conversation that is exactly
+`status = 'handoff'` / `intake_stage = 'human_handoff'` moves to
+`completed`/`completed` with `state_version` incremented once. A conversation
+already exactly `completed`/`completed` (a resolve racing a second path to
+the same terminal state) resolves the item without a second increment. Any
+other status/stage pairing fails closed with an exception and no mutation at
+all — this never happens through this migration's own code paths, and would
+mean an unrelated bug elsewhere. Completing the conversation this way means a
+later inbound message from the same contact starts a brand new conversation
+at the default intake stage instead of being silently dropped by the
+now-terminal one; see the ingest upsert behavior in
+[inbound-queue.md](inbound-queue.md). Resolving a `kind = 'delivery_failure'`
+item is unaffected — the linked conversation is never touched. A one-time
+backfill in the same migration repairs conversations left stuck by the
+pre-Task-051 behavior (exactly `handoff`/`human_handoff`, at least one linked
+`human_handoff` item already resolved, and none still open); it never closes
+a conversation with a non-resolved handoff item or one represented only by
+delivery-failure work.
+
+`/staff` asks for confirmation before calling this RPC, and the copy depends
+on the claimed item's `reason`: a normal `human_handoff` item shows one
+truthful Turkish confirmation stating the conversation will complete and that
+a further message starts a new one; an `emergency_handoff` item requires two
+separate confirmations (first, that staff actually handled the escalation;
+second, the same closure/fresh-conversation warning) and calls no RPC if
+either is cancelled — an added operator-safety guard on top of, not instead
+of, the database's current-assignee authorization. A coherent
+`delivery_failure` kind/reason pair keeps the original single generic
+confirmation; every other kind/reason pairing shows no prompt and makes no
+RPC call.
 
 ## Known limitations
 

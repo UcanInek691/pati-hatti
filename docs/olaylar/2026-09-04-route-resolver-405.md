@@ -461,3 +461,33 @@ Not: seçenek 1 ve 2, terminal-durum invaryantını gevşetmeyi gerektirir. Bu
 invaryant bilinçli bir güvenlik kararıdır ve gevşetilmesi **Opus güvenlik
 kapısından** geçmelidir; özellikle `emergency_handoff` ile devredilmiş bir
 konuşmanın AI'a geri dönmesi ayrı ve daha katı bir karar olmalıdır.
+
+## Task 051 çözümü — yalnız bu yerel takip kapandı
+
+Yukarıdaki "Karar gerektiren nokta" bölümünde **seçenek 1** seçildi: personel
+iş kaydını `resolve_staff_work_item` ile çözdüğünde konuşma artık `completed`
+olur, ve bu durum `conversations_one_open_per_owner_idx`'in kapsamı
+(`where status in ('active', 'handoff')`) dışında kaldığı için aynı sahipten
+gelen sonraki mesaj yeni bir konuşma başlatır ve safety-first intake en
+baştan çalışır (bkz. `docs/database-schema.md` "Safe terminal-handoff
+recovery (Task 051)", `docs/staff-workflow.md` ve
+[`docs/inbound-queue.md`](../inbound-queue.md#fresh-conversation-after-a-resolved-handoff-task-051)).
+Seçenek 2'deki ayrı, denetim kayıtlı "AI'a geri ver" eylemi bu görevin
+kapsamında değildir; `emergency_handoff` ile devredilmiş bir konuşma için de
+ek bir kolaylaştırma yoktur — yalnız personelin bilinçli çözüm eylemi
+konuşmayı kapatır, tıpkı normal `human_handoff` gibi.
+
+Bu not yalnız bu belgedeki devir-kilitlenmesi bulgusunu (§"Bulgu" ve devamı)
+kapatır. Asıl 405 kök nedeni Task 049 migration'ı ve Task 050 canlı staging
+kanıtıyla kapatılmıştır. Açık kalan bağımsız olay kalemi yalnız açıklanamayan
+yaklaşık 50 dakikalık gecikmenin Task 052 kapsamında incelenmesidir.
+
+Implementasyon aşamasında (Claude Sonnet) migration veya fixture hiçbir
+veritabanına karşı çalıştırılmamıştır. Codex bunları 2026-09-05'te yalnız
+disposable `vetai-test` üzerinde direct-query yoluyla doğruladı; rollback
+fixture 13 sıfır kalıntı sayacıyla PASS verdi ve bağımsız artık sorgusu da 0
+döndü. Bu işlem migration history'ye kayıt eklemedi; staging ve production
+değişmedi. Claude Opus'un zorunlu salt-okunur incelemesi 2026-09-05'te PASS
+verdi. Ayrı sahip onayı olmadan hiçbir staging aktivasyonu yapılmaz (bkz.
+`docs/staging-runbook.md` §22, `docs/production-readiness.md`); production
+ayrıca kendi kapıları kapalı kaldığı sürece değişmez.

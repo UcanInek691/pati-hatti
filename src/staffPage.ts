@@ -256,6 +256,8 @@ const REPLY_RESULT_MESSAGES = {
 let config = null;
 let currentUserId = null;
 let currentWorkItemId = null;
+let currentWorkItemKind = null;
+let currentWorkItemReason = null;
 let queueLoadInFlight = false;
 let knownWorkItemIds = null;
 let pollIntervalId = null;
@@ -340,6 +342,8 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
   currentUserId = null;
   currentWorkItemId = null;
+  currentWorkItemKind = null;
+  currentWorkItemReason = null;
   selectedAccountId = null;
   accountSelect.textContent = "";
   routeList.textContent = "";
@@ -490,7 +494,7 @@ async function callWorkItemRpc(rpcName, workItemId, allowedResults) {
 
 async function fetchWorkItemState(workItemId) {
   const res = await authedFetch(
-    "/rest/v1/staff_work_items?id=eq." + encodeURIComponent(workItemId) + "&select=status,assigned_to,kind",
+    "/rest/v1/staff_work_items?id=eq." + encodeURIComponent(workItemId) + "&select=status,assigned_to,kind,reason",
     { headers: { Accept: "application/json" } }
   );
   if (!res.ok) {
@@ -504,6 +508,8 @@ async function fetchWorkItemState(workItemId) {
 }
 
 function applyWorkItemState(state, preserveReplyDraft = false) {
+  currentWorkItemKind = state.kind;
+  currentWorkItemReason = state.reason;
   const statusLabel = STATUS_LABELS[state.status] || state.status;
   workItemStatusRegion.textContent = statusLabel + " \\u2014 " + ownershipLabel(state.assigned_to);
   const claimable =
@@ -524,9 +530,14 @@ function applyWorkItemState(state, preserveReplyDraft = false) {
 
 function validateWorkItemState(value) {
   if (
-    !isExactRecord(value, ["status", "assigned_to", "kind"]) ||
+    !isExactRecord(value, ["status", "assigned_to", "kind", "reason"]) ||
     ["open", "seen", "in_progress", "resolved"].indexOf(value.status) === -1 ||
     ["human_handoff", "delivery_failure"].indexOf(value.kind) === -1 ||
+    ["human_handoff", "emergency_handoff", "send_attempts_exhausted", "provider_failed"].indexOf(value.reason) === -1 ||
+    (value.kind === "human_handoff" && value.reason !== "human_handoff" && value.reason !== "emergency_handoff") ||
+    (value.kind === "delivery_failure" &&
+      value.reason !== "send_attempts_exhausted" &&
+      value.reason !== "provider_failed") ||
     (value.assigned_to !== null &&
       (typeof value.assigned_to !== "string" || !UUID_PATTERN.test(value.assigned_to)))
   ) {
@@ -799,6 +810,8 @@ function renderDetail(owner, pet, conversation, messages) {
 
 async function openDetail(workItemId, conversationId) {
   currentWorkItemId = workItemId;
+  currentWorkItemKind = null;
+  currentWorkItemReason = null;
   resetReplyDraftState();
   replyStatusRegion.textContent = "";
   replyErrorRegion.textContent = "";
@@ -1777,6 +1790,8 @@ notifyButton.addEventListener("click", async () => {
 
 backButton.addEventListener("click", () => {
   currentWorkItemId = null;
+  currentWorkItemKind = null;
+  currentWorkItemReason = null;
   showQueueView();
 });
 
@@ -1795,6 +1810,8 @@ claimButton.addEventListener("click", async () => {
     ]);
     if (result === "not_found" || result === "already_resolved") {
       currentWorkItemId = null;
+      currentWorkItemKind = null;
+      currentWorkItemReason = null;
       showQueueView();
       await refreshQueue();
       return;
@@ -1813,8 +1830,39 @@ resolveButton.addEventListener("click", async () => {
   if (!currentWorkItemId) {
     return;
   }
-  const confirmed = window.confirm("Bu i\\u015fi \\u00e7\\u00f6z\\u00fcld\\u00fc olarak i\\u015faretlemek istedi\\u011finize emin misiniz?");
-  if (!confirmed) {
+  if (currentWorkItemKind === "human_handoff" && currentWorkItemReason === "emergency_handoff") {
+    // Decision 7: two truthful confirmations for an emergency handoff.
+    // Cancelling either one must make no RPC call.
+    if (!window.confirm("Klinik personeli bu acil durumla ilgilendi mi?")) {
+      return;
+    }
+    if (
+      !window.confirm(
+        "Bu konu\\u015fma kapanacak ve sonraki mesaj g\\u00fcvenlik sorular\\u0131n\\u0131 yeniden ba\\u015flatacak. Onayl\\u0131yor musunuz?"
+      )
+    ) {
+      return;
+    }
+  } else if (currentWorkItemKind === "human_handoff" && currentWorkItemReason === "human_handoff") {
+    // Decision 6: one truthful confirmation for a normal human handoff,
+    // explaining the closure and fresh-conversation behavior.
+    if (
+      !window.confirm(
+        "Bu i\\u015fi \\u00e7\\u00f6zmek konu\\u015fmay\\u0131 tamamlayacak; m\\u00fc\\u015fteri yeniden yazarsa yeni bir konu\\u015fma ba\\u015flar ve g\\u00fcvenlik sorular\\u0131 yeniden sorulur. Devam etmek istedi\\u011finize emin misiniz?"
+      )
+    ) {
+      return;
+    }
+  } else if (
+    currentWorkItemKind === "delivery_failure" &&
+    (currentWorkItemReason === "send_attempts_exhausted" || currentWorkItemReason === "provider_failed")
+  ) {
+    // delivery_failure: existing generic confirmation. Resolving this never
+    // touches the linked conversation.
+    if (!window.confirm("Bu i\\u015fi \\u00e7\\u00f6z\\u00fcld\\u00fc olarak i\\u015faretlemek istedi\\u011finize emin misiniz?")) {
+      return;
+    }
+  } else {
     return;
   }
   resolveButton.disabled = true;
@@ -1828,6 +1876,8 @@ resolveButton.addEventListener("click", async () => {
     ]);
     if (result === "not_found" || result === "already_resolved") {
       currentWorkItemId = null;
+      currentWorkItemKind = null;
+      currentWorkItemReason = null;
       showQueueView();
       await refreshQueue();
       return;
@@ -1838,6 +1888,8 @@ resolveButton.addEventListener("click", async () => {
       return;
     }
     currentWorkItemId = null;
+    currentWorkItemKind = null;
+    currentWorkItemReason = null;
     showQueueView();
     await refreshQueue();
   } catch {

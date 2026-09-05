@@ -410,6 +410,52 @@ randevu slot envanterini kendi kendine yönetir
   uygulandı ve `/staff` yüzeyi staging'de açıldı. Production değişmedi; gerçek
   klinik saatlerinin kurulması ayrı onboarding kapısıdır.
 
+## 10d. Task 051 (yerel/Codex/disposable/Opus tamamlandı; staging bekliyor)
+
+Task 051, `docs/olaylar/2026-09-04-route-resolver-405.md`'de bulunan ayrı bir
+üründeki boşluğu kapatır: bir konuşma `human_handoff`'a düştüğünde, personel
+iş kaydını çözse bile sahip kalıcı olarak AI hizmetinden kopuyordu — hiçbir
+desteklenen geri dönüş yolu yoktu.
+
+- `public.resolve_staff_work_item`, aynı imza/sonuç şekli, `SECURITY DEFINER`
+  ve `authenticated`-only grant korunarak yeniden yazıldı: artık iş kaydını
+  çözerken, hâlâ `handoff`/`human_handoff` durumundaysa aynı işlemde
+  konuşmayı da `completed` yapıyor (kilit sırası: klinik → çağıranın tam
+  üyelik satırı → konuşma → iş kaydı; bu sıra bilinen ters-kilit çevrimini
+  önler);
+  ([`docs/database-schema.md`](database-schema.md#safe-terminal-handoff-recovery-task-051));
+- `completed` durumu `conversations_one_open_per_owner_idx`'in kapsamı
+  dışında kaldığından, aynı sahipten gelen sonraki mesaj artık yeni bir
+  konuşma başlatıyor ve safety-first intake en baştan çalışıyor — hiçbir
+  güvenlik sinyali, aşama ya da veri eski konuşmadan miras kalmıyor
+  ([`docs/inbound-queue.md`](inbound-queue.md#fresh-conversation-after-a-resolved-handoff-task-051),
+  [`docs/ai-behavior-and-safety.md`](ai-behavior-and-safety.md#safe-terminal-handoff-recovery-task-051));
+- `/staff` çözüm butonu artık doğrulanmış `kind`/`reason` çiftine göre farklı,
+  doğru onay metni gösteriyor: `emergency_handoff` için iki ayrı onay,
+  `human_handoff` için tek onay; iptalin ikisinde de hiçbir RPC çağrısı
+  yapmadığı test edildi;
+- Task 049 örneğindeki gibi tek seferlik, dar kapsamlı bir tarihsel onarım
+  UPDATE'i migration'a eklendi — yalnız iş kaydı zaten `resolved` olup
+  konuşması hâlâ tam eşleşen `handoff`/`human_handoff` çiftinde takılı kalan
+  satırları düzeltir; başka hiçbir tabloya, sütuna ya da index'e dokunulmadı;
+- `emergency_handoff` ile devredilmiş bir konuşmayı AI'a geri döndürecek ayrı
+  bir "AI'a geri ver" eylemi (olay kaydındaki seçenek 2) bu görevin kapsamında
+  değil — yalnız personelin bilinçli çözüm eylemi konuşmayı kapatıyor;
+- implementer (Claude Sonnet) tarafından migration
+  (`supabase/migrations/20260904000200_handoff_conversation_recovery.sql`) ve
+  rollback fixture (`supabase/tests/051_handoff_conversation_recovery.sql`)
+  hiçbir veritabanına uygulanmadı/çalıştırılmadı; hiçbir gerçek Supabase,
+  Cloudflare, Meta, OpenAI ya da WhatsApp çağrısı yapılmadı; hiçbir commit,
+  push ya da deploy yapılmadı. Codex daha sonra migration'ı 2026-09-05'te
+  yalnız disposable `vetai-test` üzerinde direct-query yoluyla uyguladı;
+  düzeltilmiş rollback fixture 13 sıfır kalıntı sayacıyla PASS verdi ve
+  bağımsız artık sorgusu 0 döndü. Migration history'ye kayıt eklenmedi,
+  staging/production değişmedi. Claude Opus'un kilit sırası, tenant izolasyonu
+  ve tarihsel onarım incelemesi 2026-09-05'te PASS verdi. Ayrı sahip onayı
+  alınmadan `vetai-staging`'e uygulanmaz
+  ([`docs/staging-runbook.md`](staging-runbook.md) §22,
+  [`docs/production-readiness.md`](production-readiness.md)).
+
 ## 11. Kaynak ve yeniden doğrulama notu
 
 - Cloudflare Worker secret'ları: https://developers.cloudflare.com/workers/configuration/secrets/

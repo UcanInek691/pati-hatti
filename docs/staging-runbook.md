@@ -1017,3 +1017,68 @@ kayıtlar inbound webhook'u, olayın kalıcılaştırılmasını,
 `vetai-intake-staging` Queue çalışmasını ve durum callback'lerini gösterdi;
 sahip yanıtın cihazda geldiğini doğruladı. İçerik veya kimlik belirleyici bu
 kayda alınmadı. Production değiştirilmedi.
+
+## 22. Task 051 aktivasyon kontrol listesi — güvenli terminal-handoff kurtarma
+
+Bu bölüm, Task 051'in (`public.resolve_staff_work_item`, bkz.
+`docs/database-schema.md` ve `docs/staff-workflow.md`) staging'e aktive
+edilmesi için izlenecek, sınırlı bir kontrol listesidir. Task 051 yerel olarak
+implemente edilmiş ve disposable veritabanı kapısını geçmiştir; migration
+(`supabase/migrations/20260904000200_handoff_conversation_recovery.sql`) ve
+rollback-only fixture (`supabase/tests/051_handoff_conversation_recovery.sql`)
+implementasyon sırasında (Claude Sonnet tarafından) hiçbir veritabanına karşı
+çalıştırılmamıştır. Codex bunları 2026-09-05'te yalnız disposable `vetai-test`
+üzerinde direct-query yoluyla doğrulamıştır; staging ve production değişmemiştir.
+
+Ön koşullar (ikisi de sağlanmadan §22'nin geri kalanı çalıştırılmaz):
+
+- [x] Fixture (`supabase/tests/051_handoff_conversation_recovery.sql`),
+      disposable `vetai-test` üzerinde Codex tarafından çalıştırılmış ve tüm
+      senaryolar dahil sıfır kalıntıyla (`rollback;` sonrası tüm
+      13 `select count(*)` sonucu 0) geçmiştir (2026-09-05). Bağımsız artık
+      sorgusu da 0 dönmüş; migration direct-query ile uygulanmış ve migration
+      history'ye kayıt eklenmemiştir.
+- [x] Claude Opus'un salt-okunur incelemesi, en az kilit sırası (clinic →
+      exact clinic_staff membership → conversation (yalnız human_handoff) →
+      work item), tenant izolasyonu
+      (cross-clinic/non-member/anon reddi) ve tarihsel-onarım backfill'inin
+      tam olarak §"Decision 10" koşullarıyla eşleştiği konularında PASS
+      sonucu vermiştir (2026-09-05; bloklayıcı bulgu yok).
+
+Sıra (yalnız Codex tarafından, ayrı sahip onayından sonra):
+
+1. Migration, güncel `wrangler.staging.toml` hedefiyle yalnız `vetai-staging`
+   üzerinde ve aynı konuşma için eşzamanlı intake trafiği olmayan kısa bir
+   bakım penceresinde uygulanır. Uygulama sonrası, `status = 'handoff'` ve
+   `intake_stage = 'human_handoff'` olduğu halde açık bir `human_handoff` işi
+   bulunan konuşmalar salt-okunur sorguyla kontrol edilir; bulunan satırlar
+   otomatik olarak değiştirilmez ve ayrı incelemeye alınır.
+2. Katalog kontrolü: `public.resolve_staff_work_item`'ın kimliği, `VOLATILE`,
+   `SECURITY DEFINER`, boş `search_path`, ve grant durumu (`authenticated`
+   izinli; `PUBLIC`/`anon`/`service_role` reddedilir) staging'de salt-okunur
+   sorgularla doğrulanır — fixture'daki Section 1/2 kontrollerinin aynısı,
+   gerçek veri değiştirmeden.
+3. Staging'de gerçek klinik/sahip verisi kullanılmadan, sabit sentetik bir
+   `human_handoff` iş kaydı üretilir (ör. mevcut bir test kliniğinde sentetik
+   bir konuşma el ile `handoff` durumuna alınarak). Mevcut bir staff hesabı bu
+   kaydı `/staff` sayfasından üstlenir ve çözer; konuşmanın `completed`/
+   `completed` durumuna, iş kaydının `resolved` durumuna geçtiği ve
+   `state_version`'ın tam olarak bir artışla değiştiği doğrulanır.
+4. Aynı sentetik sahipten (gerçek WhatsApp mesajı göndermeden, doğrudan
+   `ingest_whatsapp_text_message` ile) ikinci bir mesaj işlenir; bunun yeni ve
+   ayrı bir konuşma satırı oluşturduğu, önceki `completed` satırın
+   değişmeden kaldığı doğrulanır (bkz.
+   [`docs/inbound-queue.md`](inbound-queue.md#fresh-conversation-after-a-resolved-handoff-task-051)).
+5. `/staff` sayfasında `emergency_handoff` ve normal `human_handoff`
+   nedenleri için çözüm butonunun sırasıyla iki ve tek onay metnini
+   gösterdiği, iptalin hiçbir RPC çağrısı yapmadığı elle spot-check edilir.
+6. Whitelist'li gerçek staging test numarasıyla normal (acil olmayan) bir
+   `human_handoff` oluşturulur, iş `/staff` üzerinden üstlenilip çözülür ve aynı
+   numaradan yeni bir WhatsApp mesajı gönderilir. Yeni mesajın eski terminal
+   konuşmaya eklenmediği, farklı bir konuşma kimliği oluşturduğu ve müşteriye
+   güvenlik sorularının yeniden ulaştığı doğrulanır. Bu canlı kanıtın içeriği,
+   telefon numarası veya mesaj metni runbook'a/loga kopyalanmaz. Bu adım §19'u
+   da karşılar; doğrudan SQL/RPC ile yapılan 4. adım onun yerine geçmez.
+
+Bu adımların tamamı yalnız Codex tarafından, ayrı sahip onayından sonra
+çalıştırılır; hiçbiri bu görevin implementasyon aşamasında çalıştırılmamıştır.

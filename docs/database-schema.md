@@ -501,6 +501,42 @@ disposable PostgreSQL 17 `vetai-test` on 2026-08-14 and the rollback fixture
 `PASS 0/0/0/0`. They have not been applied to production or recorded in
 Supabase migration history.
 
+### Safe terminal-handoff recovery (Task 051)
+
+`supabase/migrations/20260904000200_handoff_conversation_recovery.sql`
+replaces `public.resolve_staff_work_item` again — same `p_work_item_id uuid`
+signature, `SECURITY DEFINER`, `VOLATILE`, empty `search_path`, and result
+set. Resolving a `kind = 'human_handoff'` item now atomically completes its
+linked conversation in the same transaction (`status = 'completed'`,
+`intake_stage = 'completed'`, `state_version` incremented once) when that
+conversation is exactly `handoff`/`human_handoff`; a conversation already
+exactly `completed`/`completed` resolves the item without a second
+increment; any other status/stage pairing fails closed with an exception and
+zero mutation. Locking follows a fixed order — the clinic row (`for key
+share`), the caller's exact `clinic_staff` membership row (`for key share`),
+then, for the human-handoff path only, the conversation row (`for no key
+update`), and finally the work item row (`for update`). This preserves the
+known trigger-compatible order and avoids the previously identified inverted-
+order deadlock cycle; it is not a universal guarantee about arbitrary future
+code. Resolving a `kind = 'delivery_failure'` item still
+never touches `conversations`. A one-time backfill in the same migration
+repairs conversations left stuck by the pre-Task-051 behavior (exactly
+`handoff`/`human_handoff`, at least one linked `human_handoff` item already
+resolved, and none still non-resolved), so a later inbound message from the
+same contact reaches a fresh conversation instead of the permanently-`handoff`
+one; see [`docs/staff-workflow.md`](staff-workflow.md) for the full behavior
+and the `/staff` confirmation copy this depends on. No table, column, index,
+or grant changed. The implementer (Claude Sonnet) did not run either SQL
+file. Codex subsequently applied the migration by direct SQL query only to
+disposable `vetai-test` on 2026-09-05 (not as a migration-history entry), and
+the paired rollback fixture
+(`supabase/tests/051_handoff_conversation_recovery.sql`) passed with all 13
+post-rollback residue counters at zero. An independent residue query also
+returned zero and the catalog identity/security/volatility checks matched the
+contract. Mandatory read-only Claude Opus review returned PASS on 2026-09-05.
+Staging and production remain unchanged; separate owner approval still
+precedes staging activation.
+
 ## Appointment booking engine
 
 Defined in `supabase/migrations/20260810000100_appointment_booking_engine.sql`:

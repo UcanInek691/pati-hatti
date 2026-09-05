@@ -135,6 +135,20 @@ itself.
       checkbox stays unchecked until staging
       activation (`docs/staging-runbook.md`) and this production gate both
       complete.
+- [ ] Task 051 (`resolve_staff_work_item` safe terminal-handoff recovery; see
+      `docs/database-schema.md` and `docs/staff-workflow.md`) must be locally
+      verified, Codex/Opus-reviewed and staging-activated. Its
+      migration (`supabase/migrations/20260904000200_handoff_conversation_recovery.sql`)
+      and rollback-only fixture
+      (`supabase/tests/051_handoff_conversation_recovery.sql`) were not run by
+      the implementer. Codex applied them only to disposable `vetai-test` on
+      2026-09-05 by direct SQL query; the fixture passed with 13 zero residue
+      counters and an independent residue query returned zero. Claude Opus's
+      mandatory read-only review of lock ordering, tenant isolation and the
+      historical-repair backfill returned PASS on 2026-09-05. Staging
+      activation and its live smoke remain outstanding.
+      This checkbox stays unchecked until staging activation
+      (`docs/staging-runbook.md`) and this production gate both complete.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

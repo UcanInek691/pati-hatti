@@ -316,6 +316,24 @@ lease still completes and the corrupt snapshot cannot cause an infinite
 retry loop. The conversation's persisted messages remain the true record;
 only the bounded working snapshot is replaced.
 
+### Fresh conversation after a resolved handoff (Task 051)
+
+When `resolve_staff_work_item` completes a linked terminal handoff (see
+`docs/database-schema.md`), the conversation reaches `completed`. That status
+falls outside
+`conversations_one_open_per_owner_idx`'s scope (`where status in ('active',
+'handoff')`, `supabase/migrations/20260806000100_ingest_whatsapp_text_message.sql`),
+so it no longer blocks a new conversation row for the same
+`(clinic_id, owner_id)`. The next inbound message from that owner is ingested
+as a brand-new conversation at the default intake stage, not a continuation:
+none of the terminal conversation's persisted messages, pet selection, or
+safety signals carry over, and the consumer-level exemptions above that key
+off an existing `completed` conversation (bounded previous-question context,
+the no-progress fallback, the unsupported-media marker path, and the
+poison-snapshot handoff) do not apply to this new row, because it is not the
+same conversation. Safety-first intake runs in full from message one, exactly
+as it would for an owner who had never messaged the clinic before.
+
 ### Selected-pet conflict and second-pet registration (Task 037)
 
 An explicit pet name with zero exact normalized matches is a

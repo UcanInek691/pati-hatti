@@ -860,7 +860,7 @@ describe("handleStaffScript: Personel yanit kompozeri (Task 048)", () => {
       'composerEligible =\n    state.kind === "human_handoff" && state.status === "in_progress" && state.assigned_to === currentUserId;',
     );
     expect(STAFF_APP_JS).toContain("replyComposer.hidden = !composerEligible;");
-    expect(STAFF_APP_JS).toContain("&select=status,assigned_to,kind");
+    expect(STAFF_APP_JS).toContain("&select=status,assigned_to,kind,reason");
   });
 
   it("resets an ineligible reply draft unless an authoritative refresh explicitly preserves it", () => {
@@ -1120,6 +1120,141 @@ describe("handleStaffScript: Personel yanit kompozeri (Task 048)", () => {
     expect(clearedTimer).toBe("timer-048");
   });
 
+  it("branches resolveButton's confirmation copy on the coherent work-item kind/reason pair", () => {
+    const clickBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf('resolveButton.addEventListener("click"'),
+      STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+    );
+    expect(clickBody).toContain(
+      'if (currentWorkItemKind === "human_handoff" && currentWorkItemReason === "emergency_handoff") {',
+    );
+    expect(clickBody).toContain('window.confirm("Klinik personeli bu acil durumla ilgilendi mi?")');
+    expect(clickBody).toContain(
+      'window.confirm(\n        "Bu konu\\u015fma kapanacak ve sonraki mesaj g\\u00fcvenlik sorular\\u0131n\\u0131 yeniden ba\\u015flatacak. Onayl\\u0131yor musunuz?"\n      )',
+    );
+    expect(clickBody).toContain(
+      '} else if (currentWorkItemKind === "human_handoff" && currentWorkItemReason === "human_handoff") {',
+    );
+    expect(clickBody).toContain(
+      'window.confirm(\n        "Bu i\\u015fi \\u00e7\\u00f6zmek konu\\u015fmay\\u0131 tamamlayacak; m\\u00fc\\u015fteri yeniden yazarsa yeni bir konu\\u015fma ba\\u015flar ve g\\u00fcvenlik sorular\\u0131 yeniden sorulur. Devam etmek istedi\\u011finize emin misiniz?"\n      )',
+    );
+    expect(clickBody).toContain(
+      'window.confirm("Bu i\\u015fi \\u00e7\\u00f6z\\u00fcld\\u00fc olarak i\\u015faretlemek istedi\\u011finize emin misiniz?")',
+    );
+
+    const emergencyIndex = clickBody.indexOf('currentWorkItemReason === "emergency_handoff"');
+    const humanHandoffIndex = clickBody.indexOf('currentWorkItemReason === "human_handoff"');
+    const rpcCallIndex = clickBody.indexOf('await callWorkItemRpc("resolve_staff_work_item"');
+    expect(emergencyIndex).toBeGreaterThan(-1);
+    expect(humanHandoffIndex).toBeGreaterThan(emergencyIndex);
+    expect(rpcCallIndex).toBeGreaterThan(humanHandoffIndex);
+    expect(clickBody.match(/await callWorkItemRpc\("resolve_staff_work_item"/g)).toHaveLength(1);
+  });
+
+  describe("resolveButton confirmation branches", () => {
+    type ResolveClickButton = {
+      listener?: () => Promise<void>;
+      disabled?: boolean;
+      addEventListener: (event: string, listener: () => Promise<void>) => void;
+    };
+    type CallRpc = (rpcName: string, workItemId: string, allowedResults: string[]) => Promise<string>;
+
+    function installResolveHandler(kind: string, reason: string, confirmResults: boolean[], rpcCalls: string[]) {
+      const clickSource = STAFF_APP_JS.slice(
+        STAFF_APP_JS.indexOf('resolveButton.addEventListener("click"'),
+        STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
+      );
+      const button: ResolveClickButton = {
+        addEventListener(_event, listener) {
+          this.listener = listener;
+        },
+      };
+      const windowStub = { confirm: () => confirmResults.shift() ?? false };
+      const callWorkItemRpc: CallRpc = async (rpcName) => {
+        rpcCalls.push(rpcName);
+        return "resolved";
+      };
+      const install = new Function(
+        "resolveButton",
+        "window",
+        "callWorkItemRpc",
+        "showQueueView",
+        "refreshQueue",
+        "refreshWorkItemState",
+        "showError",
+        `"use strict";
+         let currentWorkItemId = "48800000-0000-4000-8000-000000000301";
+         let currentWorkItemKind = ${JSON.stringify(kind)};
+         let currentWorkItemReason = ${JSON.stringify(reason)};
+         ${clickSource}`,
+      ) as (
+        resolveButtonArg: ResolveClickButton,
+        windowArg: { confirm: () => boolean },
+        callWorkItemRpcArg: CallRpc,
+        showQueueViewArg: () => void,
+        refreshQueueArg: () => Promise<void>,
+        refreshWorkItemStateArg: () => Promise<void>,
+        showErrorArg: (message: string) => void,
+      ) => void;
+      install(
+        button,
+        windowStub,
+        callWorkItemRpc,
+        () => {},
+        async () => {},
+        async () => {},
+        () => {},
+      );
+      return button;
+    }
+
+    it("requires both emergency confirmations and calls no RPC unless both are accepted", async () => {
+      const cancelledFirst: string[] = [];
+      await installResolveHandler("human_handoff", "emergency_handoff", [false], cancelledFirst).listener!();
+      expect(cancelledFirst).toEqual([]);
+
+      const cancelledSecond: string[] = [];
+      await installResolveHandler("human_handoff", "emergency_handoff", [true, false], cancelledSecond).listener!();
+      expect(cancelledSecond).toEqual([]);
+
+      const acceptedBoth: string[] = [];
+      await installResolveHandler("human_handoff", "emergency_handoff", [true, true], acceptedBoth).listener!();
+      expect(acceptedBoth).toEqual(["resolve_staff_work_item"]);
+    });
+
+    it("requires exactly one truthful confirmation for a normal human handoff before calling the RPC", async () => {
+      const cancelled: string[] = [];
+      await installResolveHandler("human_handoff", "human_handoff", [false], cancelled).listener!();
+      expect(cancelled).toEqual([]);
+
+      const accepted: string[] = [];
+      await installResolveHandler("human_handoff", "human_handoff", [true], accepted).listener!();
+      expect(accepted).toEqual(["resolve_staff_work_item"]);
+    });
+
+    it("keeps the original single generic confirmation for a delivery_failure reason", async () => {
+      const cancelled: string[] = [];
+      await installResolveHandler("delivery_failure", "send_attempts_exhausted", [false], cancelled).listener!();
+      expect(cancelled).toEqual([]);
+
+      const accepted: string[] = [];
+      await installResolveHandler("delivery_failure", "send_attempts_exhausted", [true], accepted).listener!();
+      expect(accepted).toEqual(["resolve_staff_work_item"]);
+    });
+
+    it("makes no RPC call for an absent or incoherent kind/reason pair", async () => {
+      for (const [kind, reason] of [
+        ["human_handoff", "provider_failed"],
+        ["delivery_failure", "emergency_handoff"],
+        ["", ""],
+      ] as const) {
+        const rpcCalls: string[] = [];
+        await installResolveHandler(kind, reason, [true, true], rpcCalls).listener!();
+        expect(rpcCalls).toEqual([]);
+      }
+    });
+  });
+
   it("never invokes resolve_staff_work_item from the composer path", () => {
     const clickBody = STAFF_APP_JS.slice(
       STAFF_APP_JS.indexOf('replySendButton.addEventListener("click"'),
@@ -1158,13 +1293,54 @@ describe("handleStaffScript: Personel yanit kompozeri (Task 048)", () => {
 
   it("validates work-item state and message-history origin shapes before enabling or rendering the composer", () => {
     expect(STAFF_APP_JS).toContain("return validateWorkItemState(rows[0]);");
-    expect(STAFF_APP_JS).toContain('isExactRecord(value, ["status", "assigned_to", "kind"])');
+    expect(STAFF_APP_JS).toContain('isExactRecord(value, ["status", "assigned_to", "kind", "reason"])');
+    expect(STAFF_APP_JS).toContain(
+      '["human_handoff", "emergency_handoff", "send_attempts_exhausted", "provider_failed"].indexOf(value.reason) === -1',
+    );
+    expect(STAFF_APP_JS).toContain(
+      '(value.kind === "human_handoff" && value.reason !== "human_handoff" && value.reason !== "emergency_handoff")',
+    );
     expect(STAFF_APP_JS).toContain(
       'isExactRecord(message, ["direction", "content", "created_at", "outbound_origin"])',
     );
     expect(STAFF_APP_JS).toContain(
       '(message.direction !== "outbound" && message.outbound_origin === null)',
     );
+  });
+
+  it("behaviorally fails closed for a malformed work-item kind or reason", () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function validateWorkItemState(value) {"),
+      STAFF_APP_JS.indexOf("function replyCodePointLength(value) {"),
+    );
+    const makeValidator = new Function(
+      "isExactRecord",
+      "UUID_PATTERN",
+      `"use strict";
+       ${source}
+       return validateWorkItemState;`,
+    ) as (
+      exactRecord: (value: unknown, keys: string[]) => boolean,
+      uuidPattern: RegExp,
+    ) => (value: unknown) => unknown;
+    const validate = makeValidator(
+      (value, keys) => typeof value === "object" && value !== null && Object.keys(value as object).length === keys.length,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    const base = { status: "in_progress", assigned_to: null, kind: "human_handoff", reason: "human_handoff" };
+
+    expect(validate(base)).toEqual(base);
+    expect(() => validate({ ...base, kind: "not_a_real_kind" })).toThrow("malformed work item state");
+    expect(() => validate({ ...base, reason: "not_a_real_reason" })).toThrow("malformed work item state");
+    expect(() => validate({ ...base, reason: "provider_failed" })).toThrow("malformed work item state");
+    expect(() =>
+      validate({ ...base, kind: "delivery_failure", reason: "emergency_handoff" }),
+    ).toThrow("malformed work item state");
+    expect(validate({ ...base, kind: "delivery_failure", reason: "provider_failed" })).toEqual({
+      ...base,
+      kind: "delivery_failure",
+      reason: "provider_failed",
+    });
   });
 
   it("behaviorally accepts long inbound history while retaining the 4096 outbound cap", () => {

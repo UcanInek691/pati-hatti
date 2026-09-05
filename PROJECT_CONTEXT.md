@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-09-04 by Codex.
+Last verified: 2026-09-05 by Codex.
 
 ## Product
 
@@ -1087,10 +1087,32 @@ occurred.
   Queue execution and delivery callbacks appeared, and the owner confirmed
   receipt of the reply on the device. No sensitive content or identifier was
   recorded in repository evidence. Production is unchanged.
-- The next active work is Task 051: terminal handoff recovery under an explicit
-  product decision and Opus safety review. Task 052 owns the real PostgREST
-  regression proof and the unexplained roughly 50-minute delivery-delay
-  investigation.
+- Task 051 (safe terminal-handoff recovery) is complete at repository and
+  disposable-database gates as of 2026-09-05. Resolving the exact assigned
+  `human_handoff` work item now atomically completes its terminal conversation;
+  the next inbound message creates a fresh conversation and restarts the
+  safety-first intake instead of permanently excluding that owner from AI.
+  Already-completed conversations are idempotently tolerated, inconsistent
+  status/stage pairs fail closed, and `delivery_failure` resolution never
+  changes the conversation or outbox.
+- The replacement RPC preserves its public signature/result/grant boundary and
+  locks clinic, exact staff membership, conversation and work item in the
+  reviewed order. A one-time deterministic repair includes only exact legacy
+  handoff conversations with at least one resolved and no non-resolved
+  human-handoff item. `/staff` requires coherent kind/reason pairs, one normal
+  or two emergency confirmations, and makes no resolution call for malformed
+  pairs.
+- Frozen install, typecheck, 1,966 local tests (two pre-existing opt-in skips),
+  Worker dry-run, whitespace validation, Codex review and mandatory Claude
+  Opus review passed. The corrected migration and rollback fixture passed only
+  on disposable `vetai-test`; all 13 residue counters and an independent
+  residue query returned zero. This direct-query proof did not add migration
+  history. Staging and production remain unchanged; staging requires separate
+  owner approval and the §22 migration/catalog/synthetic/live smoke sequence.
+- The next active work is Task 052: investigate the unexplained roughly
+  50-minute delivery delay and add the remaining real PostgREST regression
+  evidence. The agreed risk-based model/testing protocol should be formalized
+  in that next task rather than altering completed Task 051 scope.
 
 ## Context maintenance
 
