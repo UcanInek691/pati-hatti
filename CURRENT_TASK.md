@@ -1,4 +1,110 @@
-# Current task — 051 Safe terminal-handoff recovery
+# Current task — 052 Delivery-latency investigation and technical pilot gate
+
+Status: `READY`
+
+Created by Codex on 2026-09-05 after Task 051 passed local, disposable-
+database, Opus, staging synthetic and live WhatsApp gates. Task 051's complete
+record is preserved below. Production remains unchanged.
+
+## Goal
+
+Investigate the previously observed roughly 50-minute gap between inbound
+staging activity and related handoff/reply evidence. Establish a single,
+privacy-safe event timeline from authoritative timestamps, determine whether
+the gap was actual system latency or a correlation/clock/operator artifact,
+and issue a precise technical-pilot go/no-go verdict.
+
+Also make the agreed risk-calibrated Codex model and verification policy a
+durable repository rule. This policy changes development workflow only; it
+must not change VetAI's runtime OpenAI model or customer behavior.
+
+## Fixed decisions
+
+1. Evidence first. Do not invent a root cause or implement a speculative fix.
+2. Use only read-only staging queries and existing privacy-safe logs for the
+   investigation. Never print or record message text, phone numbers, names,
+   tokens, signatures, provider payloads, or stable customer identifiers.
+3. Correlate one event chain with opaque equality/inequality and time deltas:
+   provider timestamp, webhook receipt/persistence, intake claim/completion,
+   usage event, outbox creation/claim/acceptance, status callbacks and staff
+   work-item creation where available.
+4. Normalize every timestamp to UTC before comparison and identify its clock
+   source. Provider-supplied time must not be treated as server time.
+5. Check Queue retry/batch/Cron settings, lease expiry, attempt counts and
+   Cloudflare invocation timing against the database chain. Distinguish system
+   processing delay, provider delivery/callback delay, user/operator delay,
+   and incorrect event correlation.
+6. Reconfirm the route-resolver regression boundary through the already-live
+   PostgREST `/ready` path and catalog metadata; SQL Editor success alone is
+   not sufficient evidence.
+7. If the cause is proven and the smallest fix is unambiguously bounded,
+   record the proposed change but do not implement it in this task. Codex must
+   create a separate follow-up contract for any runtime/schema mutation.
+8. If historical evidence cannot prove the cause, say `INCONCLUSIVE`, record
+   exactly what evidence is missing, and define the smallest privacy-safe
+   measurement needed for the next occurrence.
+9. Production and real customer resources remain out of scope.
+
+## Development workflow policy
+
+Update `AGENTS.md` with the approved default split:
+
+- Sol medium: contracts, docs, reconciliation and small deterministic edits;
+- Sol high: normal bounded implementation/debugging;
+- Astra high: incident root cause, architecture, auth/RLS/tenant,
+  concurrency, clinical safety and irreversible migration decisions;
+- Opus: independent read-only review only when the contract requires it.
+
+Testing is proportional to risk. Documentation-only work does not require a
+full suite. Runtime/database/security changes require affected tests plus the
+repository's required full gate once before commit; broad gates are repeated
+only after relevant changes or failures. A stronger model never substitutes
+for a test, database proof, or independent review.
+
+## Required outputs
+
+- A sanitized timeline table containing only stage names, UTC timestamps or
+  relative deltas, status/attempt counts, and evidence source.
+- A root-cause verdict: `PROVEN`, `DISPROVEN`, or `INCONCLUSIVE`, with the
+  decisive evidence and competing explanations.
+- A technical pilot verdict listing only genuine blockers. Legal/KVKK,
+  veterinarian approval, contracts/pricing, custom domain and production
+  onboarding remain separate commercial launch gates.
+- Narrow updates to the incident record, staging runbook, production-readiness
+  checklist and SaaS roadmap. Do not rewrite unrelated historical evidence.
+
+## Allowed changes
+
+- `CURRENT_TASK.md`
+- `AGENTS.md`
+- `PROJECT_CONTEXT.md` (Codex only after review)
+- `docs/olaylar/2026-09-04-route-resolver-405.md`
+- `docs/staging-runbook.md`
+- `docs/production-readiness.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `docs/olaylar/2026-09-05-delivery-latency.md` (new, only if a separate
+  sanitized report materially improves clarity)
+
+Everything else is forbidden. In particular, do not change source code,
+migrations, fixtures, runtime model configuration, secrets, external service
+configuration, production resources, `.gitignore`, or
+`docs/043-opus-inceleme.md`.
+
+## Verification and closure
+
+1. Codex performs the read-only evidence collection and source call-path audit.
+2. `git diff --check` is required. No full TypeScript suite is required for
+   this documentation/protocol-only task unless executable code changes.
+3. Use Astra high for the final incident/concurrency interpretation when the
+   interface permits; otherwise record the model actually used. Opus review is
+   required only if the investigation creates a new security, tenant,
+   concurrency or clinical-safety decision.
+4. Codex updates `PROJECT_CONTEXT.md`, commits only allowed files, and states
+   the technical-pilot and remaining commercial-production gates separately.
+
+---
+
+# Completed task record — 051 Safe terminal-handoff recovery
 
 Status: `COMPLETE` (closed 2026-09-05 after local verification, Codex review,
 disposable-database proof, mandatory read-only Claude Opus PASS and separately

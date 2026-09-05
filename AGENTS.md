@@ -31,6 +31,22 @@ After a verified commit, conversation context may be compacted. Never compact wh
 - **Codex:** creates task contracts, reviews diffs and call paths, runs checks, applies targeted fixes, updates context, and commits verified work.
 - **Claude Opus:** read-only reviewer for critical architecture, RLS/multi-tenant security, triage safety, and KVKK decisions. It does not implement by default.
 
+## Risk-calibrated model and verification protocol
+
+- Use `gpt-5.6-sol` at medium effort for contracts, documentation, status
+  reconciliation, and small deterministic changes.
+- Use `gpt-5.6-sol` at high effort for ordinary bounded implementation and
+  debugging.
+- Use `gpt-6-astra` at high effort for incident root-cause analysis and for
+  architecture, authentication, RLS/tenant, concurrency, clinical-safety, or
+  irreversible migration decisions. Keep Claude Opus as the independent
+  read-only reviewer when the task contract requires it.
+- Model choice never replaces evidence or relaxes a required gate. Verify in
+  proportion to risk: documentation-only changes get focused static checks;
+  affected tests run first; runtime/database/security changes get the required
+  full suite once before commit. Repeat a broad gate only after a relevant
+  change, failure, or unresolved concern.
+
 ## Engineering rules
 
 - Make the smallest complete change that satisfies `CURRENT_TASK.md`.
