@@ -1116,10 +1116,29 @@ occurred.
   conversation; the owner confirmed renewed safety questions on the device
   and a read-only proof found one matching old/new pair. Production remains
   unchanged.
-- The next active work is Task 052: investigate the unexplained roughly
-  50-minute delivery delay and add the remaining real PostgREST regression
-  evidence. The agreed risk-based model/testing protocol should be formalized
-  in that next task rather than altering completed Task 051 scope.
+- Task 052's read-only staging investigation located three historical delayed
+  reply chains' 61–74-minute gap before successful DB persistence. Receipt to
+  Meta acceptance took 18.301–22.738 seconds, each on its first outbound
+  attempt. Historical Worker logs independently show quick HTTP 503 responses
+  with `outcome=ok`; exception-only monitoring can therefore miss this outage.
+  Exact message-by-message provider retry attribution remains INCONCLUSIVE;
+  recovery re-delivery after the resolver incident is an inference, not proof.
+  See `docs/olaylar/2026-09-05-delivery-latency.md` for clocks and sample limits.
+- Task 052 reconfirmed resolver volatility `v` and real HTTP `/ready`
+  200/ready. Four newer matched staging replies averaged 21.782 seconds
+  after persistence, maximum 23.951, all first outbound attempt. The final
+  DB snapshot contained no in-flight outbox, expired processing intake lease
+  or pending intake older than ten minutes; it is not a Queue backlog/SLA
+  guarantee. No runtime change or production activation was made.
+- The model/testing split is already committed in AGENTS.md and was retained:
+  Sol medium for docs/contracts, Sol high for bounded development, Astra high
+  for critical analysis; independent Opus when required. Runtime model is
+  unchanged. Task 052 required focused document checks, not a full code suite.
+- The next priority is the existing operational launch gate: HTTP 5xx and
+  dependency-readiness alarms, Queue/DLQ monitoring, accountable staff-handoff
+  follow-up and staff-send rate-limit verification before production-target
+  onboarding. No new implementation contract is active yet. Supervised
+  allowlisted staging tests may continue; real-clinic launch is not approved.
 
 ## Context maintenance
 

@@ -1,6 +1,6 @@
 # VetAI SaaS ürünleştirme ve ticari yol haritası
 
-Son doğrulama: 2026-08-30.
+İlk doğrulama: 2026-08-30. Son dar durum güncellemesi: Task 052, 2026-09-05.
 
 Bu belge, Task 039 sonrasındaki doğrulanmış ürün durumunu, Claude Opus'un
 çok-kiracılı mimari incelemesini ve VetAI'nin ticari hedeflerini tek bir
@@ -43,13 +43,28 @@ gereksinim çıktığında değerlendirilir.
 | Pet ve randevu akışı | Kayıt, düzeltme, randevu oluşturma, mevcut randevuyu bildirme ve iptal staging'de doğrulandı. |
 | Hızlı ardışık mesajlar | Task 039 ile tek sınırlı burst olarak işleniyor. |
 | Seçmeli otomasyon | Strict AI allowlist, manual/personal yollar ve grup dışlama mevcut. |
-| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme ve temel rota yönetimi var; composer (Task 048) yerel kontrolleri ve disposable `vetai-test` migration/rollback kanıtını geçti, staging'de doğrulanmadı ve commit edilmedi; ticari ürün için gerçek bildirim hâlâ eksik. |
+| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme, rota yönetimi ve composer (Task 048) staging'de mevcut. Task 051 ile çözüm sonrası yeni konuşmaya dönüş staging'de doğrulandı; ticari ürün için gerçek bildirim/sorumlu takip yolu ve gönderim hız sınırı doğrulaması hâlâ açık. |
 | İnsan onay paketleri | Veteriner ve KVKK taslakları üretildi; dış uzman onayı hâlâ üretim kapısıdır. |
 | Production | Kurulmadı ve hiçbir Task 039 değişikliği production'a uygulanmadı. |
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
 | Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
 | Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` artık sentetik sabit kontakla gerçek PostgREST rota çözümleme çağrısını (Worker isolate başına 30 sn cache + eşzamanlı probe birleştirme ile) kontrol ediyor; Wrangler Workers Observability tam invocation örneklemesi ve query-string redaction ile etkinleştirildi. Yerel kontroller ve Codex/Opus incelemeleri geçti; staging deploy, `/health`, `/ready`, redaksiyon ve gerçek WhatsApp mesaj/cevap smoke'u 2026-09-04'te geçti. Production değişmedi. |
+
+Task 052 gecikme araştırması tamamlandı: eşleşen üç eski yanıtın 61–74
+dakikalık farkı başarılı kayıttan önce; kayıt sonrası kabul 18–23 saniyedir.
+Önceki 405/503 kesintisinden sonraki yeniden teslim açıklaması güçlü bir
+çıkarımdır; her mesajın eski retry zinciri kanıtlanamadı. Dört yeni yanıtın
+kayıt sonrası maksimumu 23.951 saniyedir; bu küçük örneklem SLA değildir.
+Bkz. [salt-okunur rapor](olaylar/2026-09-05-delivery-latency.md).
+
+Sonraki öncelik yeni bir gecikme yaması değil, mevcut satışa çıkış kapılarıdır:
+HTTP 5xx/readiness ve Queue/DLQ alarmı, personel işlerinin gerçek takibi,
+gönderim hız sınırı doğrulaması, üretim hedefinin kurulum/canary/rollback
+kanıtı. Veteriner/KVKK onayı ve ticari sözleşme/tarife ayrıca tamamlanır.
+Mevcut gözetimli staging testlerine devam edilebilir; Task 052'nin bitmesi
+gerçek klinik veya ücretli üretim açılışı onayı değildir. Özel alan adı bu
+gecikme incelemesinin teknik ön koşulu değildir.
 
 Önceki bir incelemedeki “tanınmayan WhatsApp hesabı 503 üretir” bulgusu güncel
 değildir. Worker tanınmayan hesabı artık başarılı biçimde kabul edip hiçbir iş

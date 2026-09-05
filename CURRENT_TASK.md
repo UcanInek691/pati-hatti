@@ -1,6 +1,7 @@
 # Current task — 052 Delivery-latency investigation and technical pilot gate
 
-Status: `READY`
+Status: `COMPLETE` (2026-09-05; read-only investigation and documentation
+closure only, no runtime change or production approval)
 
 Created by Codex on 2026-09-05 after Task 051 passed local, disposable-
 database, Opus, staging synthetic and live WhatsApp gates. Task 051's complete
@@ -101,6 +102,55 @@ configuration, production resources, `.gitignore`, or
    concurrency or clinical-safety decision.
 4. Codex updates `PROJECT_CONTEXT.md`, commits only allowed files, and states
    the technical-pilot and remaining commercial-production gates separately.
+
+---
+
+## Task 052 observed context
+
+- Starting HEAD: `00a4aaa` (Task 052 contract); Task 051 staging closure is
+  recorded in `25bb031`. Only the previously excluded `.gitignore` and
+  `docs/043-opus-inceleme.md` were dirty/untracked; both remain untouched.
+- The approved risk-calibrated model/testing policy was already in AGENTS.md
+  at task start. No duplicate policy or runtime model change was needed.
+- Read-only staging DB checks, the real `/ready` HTTP path, and historical
+  Cloudflare UI logs were available. RTK was unavailable; native tools used.
+- Historical matched messages place the long delay before successful
+  persistence, not inside the completed intake/outbound chain. The report
+  distinguishes provider time, DB transaction time and invocation log time.
+
+## Task 052 delivery record
+
+- Added `docs/olaylar/2026-09-05-delivery-latency.md`: sanitized five-row
+  timeline, usage/status/work-item correlation limits, independent Worker
+  timing, live catalog/readiness checks, and separate pilot/production verdicts.
+- Narrow updates: this contract, PROJECT_CONTEXT.md, original incident,
+  staging runbook, production readiness and SaaS roadmap. AGENTS.md's already
+  committed policy was verified and retained without another edit.
+- Verdict: delayed samples' pre-persistence boundary PROVEN; roughly
+  50-minute post-persistence Queue/outbound explanation DISPROVEN for those
+  samples; exact historical provider-retry attribution INCONCLUSIVE. Prior
+  resolver outage/re-delivery is a strong inference, not a claimed proof.
+- Read-only evidence: resolver volatility `v`; `/ready` HTTP 200/ready;
+  one old webhook HTTP 503 with `outcome=ok`, wall time 457 ms; three delayed
+  reply chains took 18.301–22.738 seconds after DB receipt. Four newer
+  accepted replies averaged 21.782 seconds, maximum 23.951, first outbound
+  attempt each. At 2026-09-05 12:04:49 UTC: no in-flight outbox, expired
+  processing intake lease or pending intake older than ten minutes.
+- Source checks covered ingress routing/persistence, Queue/Cron settings,
+  outbound sender and usage-ledger correlation. No full per-attempt history
+  exists; DB counts are not Cloudflare backlog measurements; no SLA claimed.
+- Final interpretation performed with the user's selected Astra high.
+  No new auth/tenant/concurrency/clinical decision or runtime fix was made,
+  so this contract does not require another Opus review.
+- Verification: documentation-only scope; Codex reviewed the report against
+  collected DB/log output and source paths; `git diff --check` passed. Only
+  the seven allowed Markdown files are included in the closure commit.
+  Full suite, paid evals, migration/fixtures, fault injection, deploy,
+  external configuration changes and push NOT RUN (outside this task).
+- Technical verdict: existing supervised allowlisted staging tests may
+  continue; real-clinic unattended launch remains NO-GO pending the existing
+  operational and production-target gates. Legal/veterinarian/commercial
+  approvals remain separate. No next implementation task started here.
 
 ---
 

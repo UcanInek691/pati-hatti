@@ -1,14 +1,14 @@
 # Production readiness runbook
 
-Last verified: 2026-08-10.
+Original checklist: 2026-08-10. Latest narrow reconciliation: Task 052,
+2026-09-05; this is not a fresh verification of every historical checkbox.
 
-This is an executable checklist, not a claim of approval. Nothing in this
-document marks any gate below as complete, and completing every code-level
-task in this repository (through Task 024) is not production approval by
-itself. It closes the last **code-level** MVP blocker (a dead-letter handoff
-consumer and a configuration-only `/ready` endpoint); the gates below are
-human decisions and operational setup that this codebase cannot make for
-itself.
+This is an executable checklist, not production approval. Recorded staging
+checks do not authorize a production target. The Task 024 baseline has since
+been extended: `/ready` now checks the real PostgREST resolver boundary
+(Task 050), and Tasks 051–052 record handoff recovery and latency evidence.
+Completing a numbered code task does not complete the human, operational or
+production-target gates below.
 
 ## 1. Human gates
 
@@ -135,7 +135,7 @@ itself.
       checkbox stays unchecked until staging
       activation (`docs/staging-runbook.md`) and this production gate both
       complete.
-- [x] Task 051 (`resolve_staff_work_item` safe terminal-handoff recovery; see
+- [ ] Task 051 (`resolve_staff_work_item` safe terminal-handoff recovery; see
       `docs/database-schema.md` and `docs/staff-workflow.md`) must be locally
       verified, Codex/Opus-reviewed and staging-activated. Its
       migration (`supabase/migrations/20260904000200_handoff_conversation_recovery.sql`)
@@ -149,7 +149,18 @@ itself.
       owner approval, the staging migration/catalog/deploy, bounded synthetic
       `/staff` recovery with zero residue, and final allowlisted live handoff →
       resolve → fresh safety-screening smoke all passed on the same date.
-      Production remains unchanged.
+      Production remains unchanged. The checkbox is reserved for the
+      production target; recorded staging acceptance is retained above.
+
+Task 052's read-only latency investigation found no new post-persistence
+runtime blocker in the matched staging samples. Three historically delayed
+replies took 18–23 seconds from DB receipt to Meta acceptance; the 61–74-minute
+gap preceded successful persistence. Exact earlier retry attribution remains
+INCONCLUSIVE. See [`the sanitized report`](olaylar/2026-09-05-delivery-latency.md).
+This permits continued supervised allowlisted staging testing, not unattended
+real-clinic operation or an SLA claim. No production box was closed by this
+investigation; staff-send rate-limit verification and the existing operational
+gates remain outstanding.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
@@ -345,8 +356,12 @@ from its expected result.
 
 ## 6. Operations
 
-- [ ] Alert on Worker exceptions/error-rate (Cloudflare dashboards or Logpush
-      to an external sink).
+- [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
+      plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
+      with invocation `outcome=ok`; exception/outcome counters alone missed
+      this failure class. Monitoring needs an owner and a verified notification
+      path, not just an enabled log dashboard. `/ready` is cached for up to
+      30 seconds per isolate and is not a Meta/OpenAI end-to-end probe.
 - [ ] Alert on backlog depth for all three queues: `vetai-intake`,
       `vetai-intake-dlq`, and `vetai-intake-terminal-dlq`. A non-zero
       `vetai-intake-terminal-dlq` backlog is the last-resort signal that a

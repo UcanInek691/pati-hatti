@@ -491,3 +491,24 @@ değişmedi. Claude Opus'un zorunlu salt-okunur incelemesi 2026-09-05'te PASS
 verdi. Ayrı sahip onayı olmadan hiçbir staging aktivasyonu yapılmaz (bkz.
 `docs/staging-runbook.md` §22, `docs/production-readiness.md`); production
 ayrıca kendi kapıları kapalı kaldığı sürece değişmez.
+
+## Task 052 gecikme araştırması — 2026-09-05 kapanış eki
+
+Yukarıdaki tarihsel anlatım korunmuştur. Daha sonraki Task 051 staging
+aktivasyonu ve normal handoff → çözüm → yeni güvenlik soruları kanıtı
+`docs/staging-runbook.md` §22'de kayıtlıdır; production değişmemiştir.
+
+Yaklaşık 50 dakika olarak bildirilen gecikme, salt-okunur DB zinciri ve
+Cloudflare kayıtlarıyla incelendi. Eşleşen üç eski yanıtta sağlayıcı zamanı
+ile ilk başarılı kayıt arasında **61–74 dakika**, kayıt ile Meta kabulü
+arasında yalnız **18–23 saniye** vardır; her gönderi ilk outbound denemede
+kabul edilmiştir. Bu örneklerde uzun Queue/outbox bekleme açıklaması elendi.
+Eski bir webhook ayrıca HTTP 503 / `outcome=ok` / 457 ms olarak bağımsız
+görüldü: yalnız exception metriği bu arızayı güvenilir biçimde göstermez.
+
+Önceki kesinti sonrasında yeniden teslim açıklaması güçlü çıkarımdır;
+başarısız denemeler aynı mesaja kimlik-korumalı biçimde bağlanamadığından
+**tam retry kök nedeni INCONCLUSIVE** kalır. Bu ayrım, araştırmanın
+tamamlanmasını engellemez; yeni bir runtime yaması veya üretim onayı değildir.
+Saat kaynakları, beş örnek, son durum ve tekrarında gereken en küçük ölçüm
+[Task 052 raporunda](2026-09-05-delivery-latency.md) kayıtlıdır.

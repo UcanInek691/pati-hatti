@@ -1091,3 +1091,47 @@ handoff → personel çözümü → yeni mesaj akışında güvenlik soruları c
 salt-okunur veritabanı kanıtı eski konuşmanın kapalı, yeni konuşmanın farklı ve
 aktif olduğunu doğruladı. Hassas içerik veya kimlik kaydedilmedi. Production
 değişmedi.
+
+## 23. Task 052 — salt-okunur gecikme ayrıştırması ve kapanış
+
+2026-09-05 araştırması tamamlandı; ayrıntılı, kimliksiz kanıt
+[olay raporundadır](olaylar/2026-09-05-delivery-latency.md). Bu görev migration,
+deploy, rota değişimi veya yeni bir canlı mesaj gönderimi yapmadı. §22'nin
+önceki kabul kayıtları yeni test yapılmış gibi yeniden işaretlenmedi.
+
+Tekrarlanabilir inceleme sırası:
+
+1. Önce doğru staging hedefini salt-okunur doğrula. Yalnız olayın sınırlı
+   zaman penceresini oku; telefon/içerik/provider kimliğini sonuçlara çıkarma.
+2. Mesaj, webhook ve outbox'ı aynı klinik + aynı provider-event ilişkisiyle
+   bağla. Çıktıya yalnız örnek sırası, zamanlar, durum ve deneme sayısı koy.
+   Konuşmaya ait ilk personel işini her mesaja aitmiş gibi eşleştirme.
+3. Sağlayıcı zamanını (`messages.created_at`), DB işlem zamanını
+   (`webhook_events.received_at`) ve Worker `event received` zamanını ayır.
+   Dashboard GMT+3 ise UTC'ye çevir. Duplicate kayıt zamanı yenilenmez.
+4. Intake tamamlanması, varsa kullanım kaydı, outbox oluşumu/Meta kabulünü
+   karşılaştır. Kabul edilen outbox'ın temizlenmiş lease'inden claim zamanı
+   çıkarma. Son sağlayıcı durum zamanı ilk teslim/callback receipt değildir.
+5. HTTP yanıt kodunu incele: `outcome=ok` veya sıfır exception, 503'ü dışlamaz.
+   Batch/retry/Cron ayarını kaynakla karşılaştır; Queue invocation log zamanı
+   Queue'ya giriş zamanı veya her denemenin başlangıcı diye sunulmaz.
+6. Resolver katalog etiketi ve gerçek HTTP `/ready` yolunu birlikte kontrol
+   et. Olumlu sonuç en çok 30 saniyelik isolate cache'i içerir; Meta/OpenAI
+   canlı smoke'un veya olumsuz durum testinin yerine geçmez.
+7. Kimliksiz pending/processing/expired sayımlarıyla anlık durumu kontrol et;
+   DB sayaçlarını Cloudflare Queue/DLQ backlog değeri olarak sunma. Neden
+   belirsizse INCONCLUSIVE yaz; spekülatif düzeltme veya veri temizliği yapma.
+
+Kapanış kanıtı: üç tarihsel gecikmiş zincirin uzun farkı başarılı kayıttan
+önce, kayıt → kabul 18.301–22.738 sn; yeni dört yanıt maksimum 23.951 sn.
+HTTP 503 ile `outcome=ok` birlikte görüldü (457 ms). Resolver `v`, `/ready`
+200/ready; 12:04:49 UTC anında in-flight outbox, süresi geçmiş processing
+intake lease ve 10 dakikadan eski pending intake sayıları sıfırdı. Eski failed
+outbox silinmedi. Tam tarihsel retry korelasyonu yok; rapor bunu çıkarım olarak
+bırakır. Yeni mesaj-bazlı telemetri gerekirse ayrı, gizlilik-incelemeli görev
+gerekir.
+
+Karar: gözetimli allowlist staging testlerine **GO**; gözetimsiz gerçek-klinik
+üretimine **NO-GO**. Sonraki kapı `production-readiness.md` §6'daki gerçek
+alarm/sorumlu takip yolları, staff-send hız sınırı ve üretim hedefi kanıtıdır;
+veteriner/KVKK ve ticari onaylar ayrıca gereklidir.
