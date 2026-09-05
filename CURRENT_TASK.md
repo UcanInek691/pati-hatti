@@ -1,7 +1,7 @@
 # Current task — 053 Operational alerts and staff-notification activation plan
 
-Status: `IN_REVIEW` — Phase A `COMPLETE`; Phase B contract amendment and owner
-decisions pending; no external activation authorized.
+Status: `READY` — Phase A `COMPLETE`; Phase B repository implementation
+authorized under the contract below; external/staging activation is not.
 
 Created by Codex on 2026-09-05 after Task 052 closure (`c112eb6`). The owner
 approved preparing the next contract. All completed records below are history,
@@ -140,6 +140,222 @@ links/check dates, unresolved prerequisites, NOT RUN activation evidence and
 risks for Codex. Leave status READY. Codex must review Phase A before any
 Phase B authorization or implementation scope amendment; do not start a
 second numbered task or present operational delivery as completed.
+
+## Phase B repository implementation contract — 2026-09-05
+
+### Owner-approved decisions
+
+- Provider: use the Resend transactional Email API through native `fetch`; do
+  not add its SDK or another dependency. Start with the current Free-plan
+  ceiling as an implementation budget, not an entitlement or SLA: $0/month,
+  3,000 messages/month, 100/day, one sending domain and 30-day provider data
+  retention, checked against Resend's official pricing on 2026-09-05. No paid
+  purchase is authorized. Stop activation if the live account differs.
+- The platform operator/first escalation owner is the product owner. Never put
+  their real address in Git: activate it later through the reviewed platform-
+  recipient operation using an address supplied out of band.
+- Urgent clinic notification observation is 7/24 for the pilot. This is an
+  operational setting, not a veterinarian-approved response-time promise or
+  customer SLA. Normal-work timing remains the reviewed four-hour proposal.
+- Clinic recipients come only from an explicit, tenant-bound authorized list;
+  never infer them from Supabase Auth email, a message, clinic metadata or an
+  environment-wide recipient list.
+- Prefer Cloudflare Standalone Health Checks for independent `/ready`
+  monitoring only if the live account supports it. Official documentation
+  checked 2026-09-05 says standalone checks are unavailable on Free and offer
+  10 checks on Pro. This contract authorizes no plan purchase. If unavailable,
+  external monitor selection remains a blocker rather than silently falling
+  back to the Worker itself.
+
+Primary references checked for this contract:
+
+- `https://resend.com/docs/api-reference/emails/send-email`
+- `https://resend.com/docs/dashboard/emails/idempotency-keys`
+- `https://resend.com/pricing`
+- `https://developers.cloudflare.com/health-checks/`
+- `https://developers.cloudflare.com/api/resources/queues/methods/get_metrics/`
+- `https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/`
+
+### Phase B goal and boundaries
+
+Implement the smallest durable alert/email path described by Phase A without
+creating a generic notification framework. The repository result must be safe
+to deploy migration-first but remains disabled until a later Codex-owned
+staging activation record supplies real provider/account evidence.
+
+This implementation does **not** purchase a plan, create a Resend/Cloudflare
+account or token, add a real recipient/sender/domain/account/queue UUID, send an
+email, call a real Cloudflare API, run a database migration/fixture, deploy,
+commit or push. It does not authorize production or a real clinic. It never
+resolves a work item, messages a pet owner or changes clinical priority.
+
+### Required database behavior
+
+Create `supabase/migrations/20260905000100_operational_alerting.sql` and a
+rollback-only `supabase/tests/053_operational_alerting.sql`.
+
+1. Add separate service-role-only recipient stores:
+   - clinic recipients are keyed to an existing `(clinic_id, user_id)`
+     `clinic_staff` membership and contain one explicitly supplied normalized
+     email address plus enabled/audit timestamps;
+   - platform recipients are keyed to an existing `platform_admins.user_id`
+     and contain one explicitly supplied normalized address plus enabled/audit
+     timestamps;
+   - no table/policy permits anon/authenticated direct writes or cross-clinic
+     reads. Removal/disable is an audited database mutation and immediately
+     prevents new claims; it requires no deploy.
+2. Add a closed `staff_work_items` provenance value that distinguishes normal
+   workflow handoff from `intake_dead_letter`. Preserve every existing row and
+   constraint. `finalize_intake_dead_letter` must set the exact tenant/work-item
+   provenance atomically for both empty-first-turn and existing-snapshot paths.
+   Backfill only rows whose existing conversation boolean marker proves the
+   origin; never guess provenance for historical unmarked rows.
+3. Reconcile the current terminal handoff drift: the intake consumer may
+   acknowledge the exact existing dead-letter marker state without OpenAI or a
+   reply, while any other malformed persisted state still fails closed. Update
+   `docs/inbound-queue.md` to match the implemented behavior; never claim a
+   later message replaces the marker unless code and tests prove it.
+4. Add the minimum durable alert/delivery state required for deduplication,
+   retry, recovery and audit. Do not persist email bodies, names, phone numbers,
+   message text, medical reason, patient identifiers or raw external payloads.
+   A dedupe identity must be database-enforced and stable across Cron overlap.
+   Delivery rows reference the current recipient record rather than copying an
+   address into every queued row.
+5. Provide predefined service-role RPCs for recipient enable/disable, candidate
+   synchronization, platform-signal recording, delivery claim/accept/release,
+   and monitor heartbeat/health. Use closed inputs/results, database time,
+   tenant constraints, leases and deterministic lock order. Reuse one request
+   or delivery UUID as the Resend idempotency key; Resend's documented key
+   window is 24 hours, so database uniqueness remains authoritative beyond it.
+6. Candidate synchronization must implement mutually exclusive routing:
+   - terminal `delivery_failure`: immediate clinic + platform notification;
+   - unresolved urgent `human_handoff`: immediate clinic notification;
+   - `intake_dead_letter` provenance: immediate clinic + platform notification,
+     described as unassessed and never relabelled clinically urgent;
+   - other unresolved normal `human_handoff`: only after four hours.
+   Resolved/disabled/wrong-tenant rows cannot be newly claimed. Repeated scans
+   do not create duplicate first notices. Recovery and repeat scheduling are
+   explicit closed states, not inferred from provider acceptance.
+7. Store one environment-local scheduled-monitor heartbeat using database time.
+   It advances only after every mandatory source for that run was queried and
+   its results durably recorded; a provider-send failure is recorded but must
+   not fabricate successful delivery. Expose only a boolean/fresh-or-stale
+   readiness result—never counts, recipient data or identifiers.
+8. All new functions that write or lock are `VOLATILE`; verify the outermost
+   PostgREST-exposed caller too. Use empty `search_path`, schema-qualified names,
+   explicit grants/revokes and fail-closed three-valued logic. The SQL fixture
+   must prove RLS/grants, tenant isolation, provenance, exact routing,
+   deduplication, overlapping claims, retry/accept/recovery, recipient disable,
+   heartbeat staleness and zero residue. State the single-session concurrency
+   limitation honestly.
+
+### Required Worker behavior
+
+1. Add a small `src/operationalAlerts.ts` module using native `fetch`. No new
+   dependency. Extend `Env` only with strictly validated values needed when
+   alerting is enabled: feature flag, Resend API key/from address, Cloudflare
+   account identifier, least-privilege monitoring token and deployment name.
+   Tokens are secret bindings; deployment/queue names and sender address are
+   non-secret configuration supplied outside Git. No real value is committed.
+2. The scheduled handler keeps `drainOutboundMessages` as an independent safety
+   net. Run the alert monitor in a separate `ctx.waitUntil`; one path failing
+   must not suppress the other. Database leasing must make overlapping Cron
+   invocations safe across isolates.
+3. Resolve the three real Queue UUIDs fail-closed from the existing environment-
+   specific queue names with Cloudflare's read-only List Queues endpoint, then
+   call Get Queue Metrics. Require exactly one match for each expected name;
+   cache only per isolate for a short bounded period and never treat missing,
+   ambiguous, unauthorized or malformed data as backlog zero.
+4. Query Workers Observability telemetry for the actual returned status of
+   `POST /webhooks/whatsapp`, not invocation outcome. Separately recognize 5xx
+   and 401. Validate the real response shape strictly; unknown field/query/token
+   behavior records the source unavailable and keeps activation blocked.
+5. Add one privacy-safe structured signal for repeated OpenAI extraction
+   failures if current telemetry cannot distinguish them. It may contain only a
+   fixed event name/category—no prompt, response, message, phone, clinic,
+   conversation, provider ID or token. The monitoring query must not claim
+   completeness until staging evidence proves it.
+6. Send fixed Turkish plain-text Resend emails only. Clinic mail contains a
+   generic `/staff` link and the permitted urgency class; platform mail contains
+   only signal class, environment, aggregate count/time and a fixed `/admin`
+   link. No stable clinic UUID is included until KVKK explicitly approves that
+   optional Phase A alternative. Provider acceptance is recorded as accepted,
+   not delivered or acknowledged. Use the durable delivery UUID as
+   `Idempotency-Key`, a 10-second timeout, bounded retries and no raw error-body
+   logging.
+7. When alerting is disabled, existing runtime behavior is byte-for-byte
+   equivalent at its public boundaries and no monitoring network/DB/email call
+   occurs. When enabled with missing/malformed config, `/ready` returns 503 and
+   Cron records no false success. `/health` stays dependency-free.
+8. Extend `/ready` with only the closed monitor-heartbeat freshness result once
+   alerting is enabled. This lets a separately operated external health check
+   detect a stopped Cron. It must not expose why, which clinic or any count.
+
+### Activation semantics that remain NOT RUN
+
+- The implementation must add/update the nine-row evidence matrix but leave
+  every cell `NOT RUN`.
+- Cloudflare plan/Health Checks availability, Queue IDs, Queues/Observability
+  token permissions, query field name/retention/sampling and actual queue
+  retention remain live-account evidence.
+- Resend account, verified sending domain, API token, approved out-of-band
+  platform recipient and clinic recipient, provider retention/processor and
+  possible international-transfer approval remain live/legal evidence.
+- Phase B repository PASS requires local checks, Codex review, disposable DB
+  proof and mandatory Opus review. Staging mutation requires a later explicit
+  owner approval, migration-first order, canary recipients, synthetic signals,
+  received-email proof, wrong-tenant denial, duplicate suppression, stale-Cron
+  external alert and rollback proof. Production remains out of scope.
+
+### Allowed changes for the implementation
+
+- `supabase/migrations/20260905000100_operational_alerting.sql` (new)
+- `supabase/tests/053_operational_alerting.sql` (new)
+- `src/operationalAlerts.ts` (new)
+- `src/env.ts`
+- `src/index.ts`
+- `src/intakeConsumer.ts`
+- `test/operationalAlerts.test.ts` (new)
+- `test/index.test.ts`
+- `test/intakeConsumer.test.ts`
+- `wrangler.toml`
+- `wrangler.staging.toml`
+- `.dev.vars.example`
+- `docs/operational-alerting.md`
+- `docs/inbound-queue.md`
+- `docs/staff-work-items.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/database-schema.md`
+- `docs/kvkk-inceleme-paketi.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` — Sonnet may edit only the Task 053 observed-context and
+  delivery-record sections; Codex owns status/contract/history.
+- `PROJECT_CONTEXT.md` — Codex only.
+
+No other file, dependency, UI, route content, migration history, real secret or
+external resource may change. If the smallest correct implementation needs a
+different file or contract decision, stop and report it rather than widening
+scope.
+
+### Required verification and delivery
+
+Read the active contract and all affected callers/migrations first. Then run:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+Do not run the migration or SQL fixture against any database. Record both as
+`NOT RUN`. Fill only the existing Task 053 observed-context and delivery-record
+sections with changed files, exact results, non-run checks, limitations and the
+specific RLS/tenant/lock/provenance/dedup/secret/KVKK risks for Codex/Opus.
+Leave top status `READY`. Do not commit, push, deploy or call a real service.
 
 ## Task 053 observed context
 

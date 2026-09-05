@@ -1146,13 +1146,22 @@ occurred.
   auditable scopes; and records unmarked later-turn dead-letter provenance plus
   the `docs/inbound-queue.md` / `src/intakeConsumer.ts` marker-replacement drift
   as Phase B blockers rather than assuming complete routing.
-- Task 053 remains active for Phase B. Before Codex may authorize implementation,
-  the owner must select the email service/account and approved recipients,
-  platform/clinic response owners and hours, independent readiness provider,
-  Queue ID/configuration path and actual plan/retention. Recipient storage and
-  the provider require KVKK/processor and possible international-transfer
-  review. No runtime implementation, external activation or production approval
-  has occurred; supervised allowlisted staging tests may continue.
+- Task 053 remains active for Phase B. On 2026-09-05 the owner selected Resend
+  without an SDK, themselves as the platform/first escalation owner, 7/24
+  urgent pilot observation, explicit tenant-bound clinic recipients and
+  Cloudflare Standalone Health Checks as the preferred independent `/ready`
+  path when the live plan supports it. No paid plan is authorized; current
+  Cloudflare documentation says standalone Health Checks are unavailable on
+  Free, so lack of account support remains a blocker rather than permission to
+  use the Worker as its own outage detector.
+- Codex authorized only the Phase B repository implementation contract: durable
+  recipient/routing/dedup/delivery/heartbeat state, native Resend fetch,
+  least-privilege read-only Cloudflare Queue/Observability measurement, a
+  privacy-safe OpenAI failure signal and monitor freshness in `/ready`. Real
+  recipients, verified sender domain, tokens, account capabilities, KVKK/
+  processor review, disposable DB proof, Opus review and a separately approved
+  migration-first staging activation remain mandatory. No external activation
+  or production approval has occurred.
 
 ## Context maintenance
 
