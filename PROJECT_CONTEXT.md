@@ -1137,8 +1137,13 @@ occurred.
 - The next priority is the existing operational launch gate: HTTP 5xx and
   dependency-readiness alarms, Queue/DLQ monitoring, accountable staff-handoff
   follow-up and staff-send rate-limit verification before production-target
-  onboarding. No new implementation contract is active yet. Supervised
-  allowlisted staging tests may continue; real-clinic launch is not approved.
+  onboarding. Task 053 is now READY for Sonnet's documentation-only Phase A:
+  a native-first operational alarm/staff-notification activation specification.
+  The owner selected email plus urgent-work responsible-person follow-up;
+  sender service/recipients and actual account capabilities are not yet
+  approved/verified. No runtime implementation or external activation
+  is authorized by that phase. Supervised allowlisted staging tests may
+  continue; real-clinic launch is not approved.
 
 ## Context maintenance
 

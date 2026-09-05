@@ -1,4 +1,156 @@
-# Current task — 052 Delivery-latency investigation and technical pilot gate
+# Current task — 053 Operational alerts and staff-notification activation plan
+
+Status: `READY` — Sonnet Phase A only; no external activation authorized.
+
+Created by Codex on 2026-09-05 after Task 052 closure (`c112eb6`). The owner
+approved preparing the next contract. All completed records below are history,
+not concurrent active specifications. Production remains unchanged.
+
+## Goal
+
+Turn the existing operational launch gates into an executable, privacy-safe
+alarm and notification plan: platform HTTP/dependency/Queue failures reach
+the platform operator, and clinic work reaches the correct clinic staff.
+Do not build another monitoring framework where platform features suffice.
+Phase A produces the bounded activation specification, not working alerts.
+Phase B is a separately approved activation step under this same task; any
+runtime/schema implementation requires Codex to amend the contract first.
+
+## Verified starting facts
+
+- Task 052 found a real HTTP 503 with invocation `outcome=ok`; counting
+  exceptions alone is insufficient. Logs enabled does not mean alarms enabled.
+- `/ready` checks one real resolver boundary, cached 30 seconds per isolate;
+  `/health` is dependency-free. Neither replaces a live WhatsApp smoke.
+- There are primary, DLQ and terminal queues. Obtain actual queue metrics,
+  not outbox counts as a proxy; a missing/stale measurement is not zero.
+- `src/staffPage.ts` / `docs/staff-workflow.md` already implement a 30-second
+  active-page poll and opt-in generic browser notification. First load is a
+  silent baseline; tab closure and browser suspension are not covered.
+- No email/Telegram/push delivery adapter or recipient configuration is
+  present in `src/env.ts`. On 2026-09-05 the owner explicitly selected email
+  plus a responsible-person follow-up plan for urgent work. Sender service,
+  verified sending domain, recipients and operational timing are not selected.
+- `.gitignore` and untracked `docs/043-opus-inceleme.md` are pre-existing,
+  excluded changes. Do not touch, stage or attribute them to this task.
+
+## Roles and authority
+
+- Sonnet: Phase A research/documentation, no commit/push/deploy or service
+  mutation. Public official documentation may be read; no real account/API,
+  email, Meta/OpenAI call, DB query or fixture execution in this phase.
+- Codex: review feasibility and exact sources, reconcile owner decisions,
+  run focused checks, update context and selectively commit reviewed docs.
+  This contract also permits Codex's contract-only preparation commit.
+- Opus: required before approving any new cross-tenant recipient routing,
+  credential surface, data export, durable delivery semantics or clinical
+  escalation decision. No mandatory rereview of unchanged code just for docs.
+- Activation requires a written scope naming staging target, selected service,
+  authorized recipient, expected cost/plan, test method and rollback. No
+  production, destructive fault injection or purchasing is authorized here.
+
+## Phase A deliverables and acceptance criteria
+
+Create `docs/operational-alerting.md` in clear Turkish, with:
+
+1. **Signal-to-action matrix.** Each row has source, scope, proposed threshold
+   and observation window, freshness/unknown handling, intended recipient role,
+   action, notification dedup/repeat/recovery behavior and proof required.
+   Cover webhook HTTP 5xx independent of outcome, `/ready` failure/timeouts,
+   primary backlog age/count, DLQ and terminal backlog, new failed outbound
+   sends, and non-resolved urgent/normal staff work. Do not relabel unassessed
+   dead-letter handoffs as low clinical risk. Thresholds are proposed pilot
+   settings, not approved clinical response times or customer SLAs.
+2. **Smallest supported path.** Prefer existing/native platform capabilities;
+   cite current primary documentation and check dates. Separate documented
+   capability from availability on the actual account/plan (NOT VERIFIED if
+   not inspected). A saved query/dashboard is not a delivered alarm. Do not
+   invent an alert type, unsupported API, plan entitlement or free pricing.
+   Where native coverage is absent, describe one minimal fallback and its
+   permission/cost prerequisite; do not implement or install it.
+3. **Independence.** `/ready` monitoring must still detect the app stopping:
+   the app's own Cron cannot be its only outage detector. Metric-source/auth
+   failure must surface as unknown/unavailable rather than a healthy zero.
+   Inspect current Queue retention before specifying a deadline; do not copy
+   an old four-day assumption as a universal current platform guarantee.
+4. **Staff notification boundary.** Keep platform alerts separate from clinic
+   notifications. The selected clinic channel is email with a responsible-
+   person follow-up plan for urgent work. Propose one minimal email path with
+   verified-sender, credential, cost and recipient-authorization prerequisites;
+   do not add Telegram, SMS, push or a multi-provider abstraction. Do not reuse
+   Supabase Auth password-recovery mail as an operational notification channel.
+   Provider/account choice remains a decision before implementation. Only
+   authorized clinic recipients may receive its alert; never broadcast tenant
+   work to a shared destination. A generic notification contains no names,
+   phone, message, medical reason, patient or work-item identifier. The fixed
+   login link confers no authority; RLS still controls access. No new staff
+   subscription, automatic Auth-email reuse or assumed consent is authorized.
+5. **Truthful delivery and escalation.** Browser display, provider acceptance,
+   delivery, human acknowledgement and actual work resolution are distinct.
+   An alert must never resolve a work item or message a pet owner. Specify
+   failed-send retry limits, duplicate suppression, recipient removal and a
+   fallback responsible person; outstanding decisions stay open. Do not claim
+   background delivery from the existing active-page Notification API.
+6. **Activation evidence matrix.** Rows include configured / synthetic trigger
+   / delivered to approved destination / acknowledged / recovery / rollback,
+   initially NOT RUN. Include 503 with outcome=ok, unavailable or stale metrics,
+   one isolated failed-work sample, notification permission denied/tab closed,
+   wrong-clinic recipient denial, and duplicate trigger. Use separate canary
+   data or provider test facilities; never break the active staging webhook,
+   suspend a real clinic, poison credentials or purge queues to test alarms.
+   Mark cases requiring future implementation rather than inventing a test
+   that current code cannot perform. A test email alone does not prove routing.
+7. **Owner decisions and exit.** List only unresolved prerequisites: platform
+   alarm recipient, staff recipients, email service/plan, operational hours,
+   response/escalation owner, retention and approval where applicable. No real
+   email, phone, token, project ID or patient data in repository examples.
+   Phase A PASS means reviewed activation plan, not sales or production PASS.
+
+Make narrow cross-references/status updates to `docs/production-readiness.md`,
+`docs/staging-runbook.md` (new section 24) and
+`docs/saas-urunlestirme-yol-haritasi.md`. Preserve historical proof; do not
+check any production/activation boxes. Existing staff-send rate limiting,
+veterinarian/KVKK approvals and production-target onboarding stay separate.
+
+## Allowed changes
+
+- `docs/operational-alerting.md` (new)
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` — Sonnet only the two Task 053 sections below
+- `PROJECT_CONTEXT.md` — Codex contract/closure reconciliation only
+
+No source, test, migration, fixture, dependencies, Wrangler configuration,
+AGENTS.md, secrets, plugin, account or service changes. Do not widen scope
+because a desired alarm requires missing infrastructure; report that gap.
+
+## Required verification and delivery
+
+Read AGENTS.md, PROJECT_CONTEXT.md, this contract, Task 052 report, affected
+docs and the existing staff/readiness/ingress/Queue/outbound callers first.
+Cross-check all proposed measurements and status names against source.
+Run `git diff --check`; verify only allowed files changed and all source/doc
+references exist. No full TypeScript suite, dependency install, paid eval,
+database run or Worker dry-run for this documentation-only phase.
+
+Fill Observed context and Delivery record with exact changes/checks, source
+links/check dates, unresolved prerequisites, NOT RUN activation evidence and
+risks for Codex. Leave status READY. Codex must review Phase A before any
+Phase B authorization or implementation scope amendment; do not start a
+second numbered task or present operational delivery as completed.
+
+## Task 053 observed context
+
+To be filled by Sonnet from repository evidence.
+
+## Task 053 delivery record
+
+To be filled by Sonnet after Phase A. Activation remains NOT RUN.
+
+---
+
+# Completed task record — 052 Delivery-latency investigation and technical pilot gate
 
 Status: `COMPLETE` (2026-09-05; read-only investigation and documentation
 closure only, no runtime change or production approval)
