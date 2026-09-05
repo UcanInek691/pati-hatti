@@ -1135,3 +1135,23 @@ Karar: gözetimli allowlist staging testlerine **GO**; gözetimsiz gerçek-klini
 üretimine **NO-GO**. Sonraki kapı `production-readiness.md` §6'daki gerçek
 alarm/sorumlu takip yolları, staff-send hız sınırı ve üretim hedefi kanıtıdır;
 veteriner/KVKK ve ticari onaylar ayrıca gereklidir.
+
+## 24. Task 053 Faz A — işletimsel alarm ve personel bildirim planı
+
+Bu bölüm, Task 053'ün 2026-09-05'te tamamlanan Faz A'sının kaydıdır. Faz A
+salt belge üretimidir; bu görev migration, deploy, gerçek e-posta gönderimi
+veya rota/konfigürasyon değişikliği yapmadı. Sonuç
+[`docs/operational-alerting.md`](operational-alerting.md)'dedir: sinyal-eylem
+matrisi, en küçük desteklenen yol araştırması (güncel Cloudflare Notifications/
+Observability/Health Checks/Queues-metrik belgeleri, kontrol 2026-09-05),
+bağımsızlık gereksinimi, e-posta + sorumlu-takip personel bildirim sınırı,
+doğru teslim/eskalasyon kuralları, tamamı NOT RUN aktivasyon kanıt matrisi ve
+açık sahip kararları listesi.
+
+Bu bölümde işaretlenecek hiçbir staging adımı yoktur — Faz A'nın kendisi bir
+staging aktivasyonu değildir. §19'daki zorunlu canlı gelen mesaj testi bu
+görevle tetiklenmedi ve tetiklenmesi gerekmiyor. Faz B (`Queues Read` kapsamlı
+Cloudflare API token'ının oluşturulması, e-posta sağlayıcı entegrasyonu,
+Health Checks kurulumu gibi implementasyon adımları) yalnız Codex'in Faz A'yı
+inceleyip sözleşmeyi ayrıca genişletmesinden sonra, ayrı bir aktivasyon
+kaydıyla buraya eklenir. Production ve staging bu görevle değişmedi.

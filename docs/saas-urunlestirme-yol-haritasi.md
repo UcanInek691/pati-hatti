@@ -43,7 +43,7 @@ gereksinim çıktığında değerlendirilir.
 | Pet ve randevu akışı | Kayıt, düzeltme, randevu oluşturma, mevcut randevuyu bildirme ve iptal staging'de doğrulandı. |
 | Hızlı ardışık mesajlar | Task 039 ile tek sınırlı burst olarak işleniyor. |
 | Seçmeli otomasyon | Strict AI allowlist, manual/personal yollar ve grup dışlama mevcut. |
-| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme, rota yönetimi ve composer (Task 048) staging'de mevcut. Task 051 ile çözüm sonrası yeni konuşmaya dönüş staging'de doğrulandı; ticari ürün için gerçek bildirim/sorumlu takip yolu ve gönderim hız sınırı doğrulaması hâlâ açık. |
+| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme, rota yönetimi ve composer (Task 048) staging'de mevcut. Task 051 ile çözüm sonrası yeni konuşmaya dönüş staging'de doğrulandı; ticari ürün için gerçek bildirim/sorumlu takip yolu ve gönderim hız sınırı doğrulaması hâlâ açık — Task 053 Faz A (2026-09-05) bunun için incelenecek bir plan üretti ([`docs/operational-alerting.md`](operational-alerting.md)), henüz aktive edilmedi. |
 | İnsan onay paketleri | Veteriner ve KVKK taslakları üretildi; dış uzman onayı hâlâ üretim kapısıdır. |
 | Production | Kurulmadı ve hiçbir Task 039 değişikliği production'a uygulanmadı. |
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
@@ -61,7 +61,10 @@ Bkz. [salt-okunur rapor](olaylar/2026-09-05-delivery-latency.md).
 Sonraki öncelik yeni bir gecikme yaması değil, mevcut satışa çıkış kapılarıdır:
 HTTP 5xx/readiness ve Queue/DLQ alarmı, personel işlerinin gerçek takibi,
 gönderim hız sınırı doğrulaması, üretim hedefinin kurulum/canary/rollback
-kanıtı. Veteriner/KVKK onayı ve ticari sözleşme/tarife ayrıca tamamlanır.
+kanıtı. İlk maddenin (alarm/bildirim) Faz A planı hazır ve incelemeyi
+bekliyor ([`docs/operational-alerting.md`](operational-alerting.md), Task 053);
+gerçek aktivasyon (Faz B) ayrı sahip onayı gerektirir. Veteriner/KVKK onayı ve
+ticari sözleşme/tarife ayrıca tamamlanır.
 Mevcut gözetimli staging testlerine devam edilebilir; Task 052'nin bitmesi
 gerçek klinik veya ücretli üretim açılışı onayı değildir. Özel alan adı bu
 gecikme incelemesinin teknik ön koşulu değildir.
@@ -156,6 +159,8 @@ için gerekli sıra:
 1. Acil ve normal iş kuyruğu; sahiplenme, çözme ve denetim bilgisi.
 2. Personelin Cloud API üzerinden yanıt yazabileceği güvenli composer.
 3. PII içermeyen gerçek bildirim (örneğin “kliniğinizde acil iş var” + link).
+   Faz A planı: [`docs/operational-alerting.md`](operational-alerting.md) §4
+   (Task 053, 2026-09-05) — e-posta kanalı seçildi, aktivasyon henüz yapılmadı.
 4. AI/manual/personal rota yönetimi ve strict allowlist görünümü.
 5. Randevu takvimi ve slot yönetimi.
 6. Aylık kullanım göstergesi.

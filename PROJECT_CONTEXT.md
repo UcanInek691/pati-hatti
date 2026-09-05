@@ -1134,16 +1134,25 @@ occurred.
   Sol medium for docs/contracts, Sol high for bounded development, Astra high
   for critical analysis; independent Opus when required. Runtime model is
   unchanged. Task 052 required focused document checks, not a full code suite.
-- The next priority is the existing operational launch gate: HTTP 5xx and
-  dependency-readiness alarms, Queue/DLQ monitoring, accountable staff-handoff
-  follow-up and staff-send rate-limit verification before production-target
-  onboarding. Task 053 is now READY for Sonnet's documentation-only Phase A:
-  a native-first operational alarm/staff-notification activation specification.
-  The owner selected email plus urgent-work responsible-person follow-up;
-  sender service/recipients and actual account capabilities are not yet
-  approved/verified. No runtime implementation or external activation
-  is authorized by that phase. Supervised allowlisted staging tests may
-  continue; real-clinic launch is not approved.
+- Task 053 Phase A completed Codex review and mandatory Claude Opus review on
+  2026-09-05. `docs/operational-alerting.md` is the reviewed native-first
+  specification for actual webhook-HTTP-status and dependency-readiness alarms,
+  all three Queue backlogs, failed outbound sends, and tenant-scoped staff-work
+  notification by email with responsible-person follow-up. Phase A changed
+  documentation only; all nine activation evidence rows remain `NOT RUN`.
+- The plan treats missing/stale measurements as unknown, not healthy zero;
+  requires an external `/ready` monitor and a separately observed Worker-Cron
+  heartbeat; keeps platform and clinic recipients in distinct revocable,
+  auditable scopes; and records unmarked later-turn dead-letter provenance plus
+  the `docs/inbound-queue.md` / `src/intakeConsumer.ts` marker-replacement drift
+  as Phase B blockers rather than assuming complete routing.
+- Task 053 remains active for Phase B. Before Codex may authorize implementation,
+  the owner must select the email service/account and approved recipients,
+  platform/clinic response owners and hours, independent readiness provider,
+  Queue ID/configuration path and actual plan/retention. Recipient storage and
+  the provider require KVKK/processor and possible international-transfer
+  review. No runtime implementation, external activation or production approval
+  has occurred; supervised allowlisted staging tests may continue.
 
 ## Context maintenance
 

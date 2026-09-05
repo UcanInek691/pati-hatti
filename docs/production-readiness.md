@@ -344,37 +344,61 @@ from its expected result.
    dead-letter consumer picks it up, and the conversation reaches
    `human_handoff` (or the appropriate closed result) via
    `finalize_intake_dead_letter`.
-11. Confirm that recovery step happens **before** the four-day retention
-    window on an unconsumed queue elapses — see §6's DLQ monitoring
-    requirement. Cloudflare documents that a queue without an active
-    consumer, or a dead-letter queue configured on the DLQ itself
-    (`vetai-intake-terminal-dlq` here), retains messages for four days; see
+11. Confirm that recovery step happens **before** the retention window on an
+    unconsumed queue elapses — see §6's DLQ monitoring requirement. Cloudflare
+    documents that a queue without an active consumer, or a dead-letter queue
+    configured on the DLQ itself (`vetai-intake-terminal-dlq` here), retains
+    messages for `message_retention_period` (default 4 days/345,600s when
+    unconfigured, configurable up to 14 days/1,209,600s); see
     [Cloudflare's dead-letter queues documentation](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/).
-    `vetai-intake-terminal-dlq` is temporary recovery storage for that
-    four-day window, not an audit archive — nothing in this codebase reads
-    from it.
+    Codex's 2026-09-05 Phase A review of Task 053 found that default/ceiling
+    applies to plans where retention is configurable; Cloudflare's Queues
+    pricing page separately documents that the **Workers Free plan carries a
+    fixed 24-hour retention**, and this Worker's actual Workers plan tier and
+    each queue's effective retention are **not verified** in this codebase.
+    Until verified, treat the recovery deadline as **24 hours, not four days**;
+    `vetai-intake-terminal-dlq` is temporary recovery storage for that window,
+    not an audit archive — nothing in this codebase reads from it. See
+    [`docs/operational-alerting.md`](operational-alerting.md#3-bağımsızlık) §3
+    for the exact sources, dates checked, and the conservative-default
+    rationale.
 
 ## 6. Operations
+
+Faz A aktivasyon planı: [`docs/operational-alerting.md`](operational-alerting.md)
+(Task 053, 2026-09-05). Bu bir kod/altyapı teslimi değildir — aşağıdaki
+kutuların hiçbiri bu planla karşılanmış sayılmaz; yalnız Codex incelemesi ve
+ayrı sahip onayıyla yürütülen gerçek Faz B aktivasyonundan sonra işaretlenir.
 
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
       with invocation `outcome=ok`; exception/outcome counters alone missed
       this failure class. Monitoring needs an owner and a verified notification
       path, not just an enabled log dashboard. `/ready` is cached for up to
-      30 seconds per isolate and is not a Meta/OpenAI end-to-end probe.
+      30 seconds per isolate and is not a Meta/OpenAI end-to-end probe. A
+      real HTTP-5xx alert path does not exist yet — see
+      [`docs/operational-alerting.md`](operational-alerting.md#2-en-küçük-desteklenen-yol)
+      §2 for the two smallest supported fallback options and the open Phase B
+      blocker on choosing between them.
 - [ ] Alert on backlog depth for all three queues: `vetai-intake`,
       `vetai-intake-dlq`, and `vetai-intake-terminal-dlq`. A non-zero
       `vetai-intake-terminal-dlq` backlog is the last-resort signal that a
-      message is about to age out of its four-day retention window and needs
-      manual recovery.
+      message is about to age out of its retention window (conservatively
+      24 hours until the account's Workers plan/effective retention is
+      verified — see §5 step 11) and needs manual recovery.
 - [ ] Alert on failed outbox sends (`docs/outbound-delivery.md`).
 - [ ] Alert on, or at minimum regularly review, open/urgent
       `staff_work_items` rows per clinic — **a staff work item being created
       is not the same as anyone being notified**; someone must actually watch
       `/staff` or a query against `staff_work_items` for this to have any
-      effect. A normal-priority item created from the
+      effect. Urgent items must notify immediately on first observation, not
+      after a delay. A normal-priority item created from the
       `{ "dead_letter_handoff": true }` marker represents **unassessed** risk,
-      not low risk, and must also be reviewed promptly.
+      not low risk, and must be routed to its own immediate notification path
+      separate from the ordinary normal-priority digest — without being
+      clinically labeled "urgent" — and reviewed promptly; see
+      [`docs/operational-alerting.md`](operational-alerting.md#1-sinyal-eylem-matrisi)
+      §1 rows 7-9.
 - [ ] Alert on webhook signature-verification failures and repeated Meta
       webhook delivery failures.
 - [ ] Alert on repeated OpenAI extraction failures.

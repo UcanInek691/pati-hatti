@@ -1,6 +1,7 @@
 # Current task — 053 Operational alerts and staff-notification activation plan
 
-Status: `READY` — Sonnet Phase A only; no external activation authorized.
+Status: `IN_REVIEW` — Phase A `COMPLETE`; Phase B contract amendment and owner
+decisions pending; no external activation authorized.
 
 Created by Codex on 2026-09-05 after Task 052 closure (`c112eb6`). The owner
 approved preparing the next contract. All completed records below are history,
@@ -142,11 +143,663 @@ second numbered task or present operational delivery as completed.
 
 ## Task 053 observed context
 
-To be filled by Sonnet from repository evidence.
+Read before drafting: this contract, AGENTS.md, PROJECT_CONTEXT.md, Task 052's
+report (`docs/olaylar/2026-09-05-delivery-latency.md`) and the 2026-09-04
+incident report, `docs/production-readiness.md` (§5 step 11, §6),
+`docs/staging-runbook.md` (full file, incl. §17.1–23 for section-numbering/
+evidence-format convention), `docs/saas-urunlestirme-yol-haritasi.md`,
+`docs/staff-workflow.md`, `docs/outbound-delivery.md`, `docs/staff-work-items.md`,
+and source: `src/index.ts` (webhook 5xx paths, `queue()`/`scheduled()` wiring),
+`src/readiness.ts`, `src/health.ts`, `src/env.ts`, `src/intakeDeadLetter.ts`,
+`wrangler.toml` (confirmed no `message_retention_period` set on any of the
+three queues; only `vetai-intake` has a producer binding, `vetai-intake-dlq`/
+`vetai-intake-terminal-dlq` have none).
+
+Fresh external checks (all 2026-09-05, cited with URLs/dates in
+`docs/operational-alerting.md`'s References section):
+Cloudflare Notifications has no Workers- or Queues-specific alert type today;
+Workers Observability (last updated 2026-08-03) is log/trace/metric/query
+only, no native alerting; Queues gained real backlog metrics
+(`backlogCount`/`backlogBytes`/`oldestMessageTimestamp` via a producer-binding
+`metrics()` call and GraphQL Analytics API) per the 2026-04-28 changelog and
+the JS API reference (`dateModified: 2026-07-06`); Standalone Health Checks
+(last updated 2026-08-14) can externally probe `/ready` independent of the
+app's own Cron but requires Pro plan+ (account/plan NOT VERIFIED — no account
+access this phase); Cloudflare Queues message retention defaults to 4 days
+(345,600s) when unconfigured and is configurable up to 14 days
+(1,209,600s) on plans where retention is configurable. Resend's send-email
+API was checked as one illustrative minimal-email-path example only, not a
+vendor selection.
+
+Codex's 2026-09-05 Phase A review (`CHANGES_REQUIRED`) found the above
+retention claim incomplete: Cloudflare's Queues pricing page separately
+documents that the **Workers Free plan carries a fixed 24-hour retention**,
+and this account's actual Workers plan tier and each queue's effective
+retention remain **unverified**. The existing "four-day" figure in
+`docs/production-readiness.md` and `docs/operational-alerting.md` was
+therefore not a safe universal assumption. Both docs, plus this file, now
+treat the recovery deadline **conservatively as 24 hours until the plan/
+effective retention is verified**, with 4 days (default)/14 days (max)
+remaining correct only for plans where retention is configurable. See
+`docs/operational-alerting.md` §3 for the full reconciliation and sources.
+
+Changes made (all within Allowed changes):
+- `docs/operational-alerting.md` (new) — full Phase A spec per the seven
+  required subsections.
+- `docs/production-readiness.md` — one clarifying note on the four-day
+  retention figure (§5 step 11) and one pointer to the new plan under §6;
+  no checkbox state changed.
+- `docs/staging-runbook.md` — new §24 recording that Phase A is
+  documentation-only, no staging steps executed, §19's live-message gate not
+  triggered by this task.
+- `docs/saas-urunlestirme-yol-haritasi.md` — three narrow pointers (§2 status
+  table row, §2 next-priorities paragraph, §6.1 item 3) to the new plan;
+  none of the described gaps marked closed.
+- `CURRENT_TASK.md` — only these two sections.
+
+Post-review remediation (2026-09-05, responding to Codex's `CHANGES_REQUIRED`
+below, all within Allowed changes, no new files beyond the original two):
+- `docs/operational-alerting.md` — §3 retention finding corrected (Free-plan
+  24h fixed retention vs. configurable-plan 4-day default/14-day max;
+  conservative 24h recovery budget until plan/effective retention verified);
+  §1 matrix row 7 changed so the urgent first email sends immediately on
+  first observation (15 min is now only the unapproved escalation-repeat
+  proposal, not a first-send gate); row 8 split so `dead_letter_handoff`-
+  marked normal-priority items get their own immediate, non-"urgent"-labeled
+  notification path separate from the ordinary 4-hour digest (new row 9,
+  evidence-matrix row 9 added); §2 gained an explicit webhook-HTTP-5xx
+  subsection naming the two smallest supported fallback paths (self-
+  instrumentation via existing Supabase connection, or a new Cloudflare
+  Analytics API token) with permission/cost/dedup/failure-mode limits, framed
+  as an open Phase B blocker since neither is implemented; §2/§4/§7 corrected
+  so only the email API key (and, if chosen, the Analytics API token) is an
+  `Env` secret — platform alarm recipient and per-clinic staff recipient
+  lists are explicitly *not* `Env` secrets and must live in a tenant-scoped,
+  revocable/auditable data design consistent with §5's existing "recipient
+  removal needs no deploy" requirement.
+- `docs/production-readiness.md` — §5 step 11 and §6's queue/5xx/
+  `dead_letter_handoff` bullets updated to match the above (24h conservative
+  retention language, pointers to §2's 5xx fallback options and §1 rows 7-9);
+  no checkbox state changed.
+- No changes were needed in `docs/staging-runbook.md` or
+  `docs/saas-urunlestirme-yol-haritasi.md` for this remediation pass; their
+  Task 053 pointers still resolve correctly.
+
+No source, test, migration, fixture, dependency, Wrangler, secret, account or
+service change was made in either pass. No email was sent; no DB, Meta,
+OpenAI or Cloudflare account call was made — only public documentation was
+fetched (read-only, via `WebFetch`/`WebSearch`).
+
+Second remediation pass (2026-09-05, responding to Codex's Phase A
+**re-review** below — `CHANGES_REQUIRED` a second time — all within Allowed
+changes, no new files):
+- `docs/operational-alerting.md`:
+  - §1 matrix rows 3–5: field names corrected from the producer-binding JS
+    API's `backlogCount`/`backlogBytes`/`oldestMessageTimestamp` to the
+    read-only REST metrics endpoint's `backlog_count`/`backlog_bytes`/
+    `oldest_message_timestamp_ms`.
+  - §1 matrix rows 8–9 plus a new explanatory paragraph after the table:
+    corrected to reflect that `finalize_intake_dead_letter`
+    (`src/intakeDeadLetter.ts`) writes `{"dead_letter_handoff": true}` into
+    the linked `conversations.intake_data`, not onto the `staff_work_items`
+    row itself; both rows' Kaynak column now name the tenant-safe join
+    (matching `clinic_id` **and** `conversation_id`) an open staff item must
+    make to its own conversation before the marker can be checked.
+  - §2 Queues bullet rewritten: removed the claim that reading
+    `vetai-intake-dlq`/`vetai-intake-terminal-dlq` backlog requires a new
+    Wrangler producer binding (unneeded `send()`/`sendBatch()` write
+    authority). Replaced with the read-only REST endpoint
+    `GET /accounts/{account_id}/queues/{queue_id}/metrics` (fields
+    `backlog_count`/`backlog_bytes`/`oldest_message_timestamp_ms`), usable
+    with a `Queues Read`-scoped API token against all three queues'
+    `queue_id`s (not secret) with no producer binding; the same token can
+    also call "Get Queue" for §3's retention verification. "Unknown, never
+    zero" on failure preserved.
+  - §2 webhook-5xx bullet reordered so the Cloudflare Workers Observability
+    telemetry query API (`POST /accounts/{account_id}/workers/observability/
+    telemetry/query`) is the primary candidate, since GraphQL/invocation
+    `outcome` status does not reflect the Worker's actual returned HTTP
+    status — cited against this repo's own
+    `docs/olaylar/2026-09-05-delivery-latency.md` (lines 83-88: `outcome=ok`
+    recorded for a request that returned HTTP 503). Required API-token
+    permission, account/plan availability, retention, sampling and cost kept
+    explicitly **NOT VERIFIED**. Self-instrumentation reframed as a
+    supplementary/helper signal only, never an acceptable sole path, because
+    `docs/olaylar/2026-09-04-route-resolver-405.md` shows the dependency
+    that actually failed in that incident was Supabase/PostgREST itself —
+    writing failure evidence into the same dependency that failed is
+    circular. `/ready`'s independent total-outage coverage unchanged.
+  - Field-name note: Codex's re-review text cites `$metadata.statusCode`; an
+    independent `WebFetch` of the live Query Builder page this session
+    (2026-09-05) found `$workers.event.response.status` instead, with no
+    `$metadata.statusCode` visible on that page. Both are documented,
+    attributed to their source, and the exact field name is left explicitly
+    unverified pending real-account testing — flagged for Codex/owner rather
+    than silently picked.
+  - §4 recipient bullet split in two: clinic staff recipients (tenant-scoped,
+    under clinic authority) vs. platform alarm recipient (belongs to no
+    clinic, separate platform-scoped authorization) — previously both were
+    described as living in "the tenant-scoped/RLS data layer," which is
+    wrong for the platform recipient. Neither is an `Env` secret; only the
+    email API key and needed Cloudflare read-only token(s) are.
+  - §6 closing paragraph and §7 owner-decision bullets updated to match all
+    of the above (Queues Read token as the real Phase B blocker rather than
+    a producer binding; Observability telemetry API as the primary 5xx
+    candidate; platform-recipient wording corrected).
+  - New `## Referanslar` entries added for the Queues metrics REST page and
+    the Query Builder page; existing JS-API-reference entry kept as
+    background only, now explicitly marked "not the path used here."
+- `docs/staging-runbook.md` §24: one stale Phase-B example phrase ("gerçek
+  Queue producer binding'i") replaced with "`Queues Read` kapsamlı
+  Cloudflare API token'ının oluşturulması," consistent with the corrected
+  Queues finding above.
+- No changes were needed in `docs/production-readiness.md` or
+  `docs/saas-urunlestirme-yol-haritasi.md` for this pass — grepped for all
+  four stale-statement patterns (producer-binding-required,
+  invocation-status-as-5xx-evidence, marker-on-`staff_work_items`,
+  platform-recipient-tenant-scoped) plus the new REST field names; the one
+  `outcome=ok`/503 mention in `docs/production-readiness.md` (§6) already
+  correctly frames it as a problem statement, not a proposed fix, and needed
+  no edit.
+
+No source, test, migration, fixture, dependency, Wrangler, secret, account or
+service change was made in this pass either. No email was sent; no DB, Meta,
+OpenAI or Cloudflare account call was made — only public Cloudflare
+documentation was fetched (read-only, via `WebFetch`/`WebSearch`) plus this
+repo's own incident reports were read for evidence.
+
+Third remediation pass (2026-09-05, responding to Opus's Phase A review
+triage below — `CHANGES_REQUIRED` — all within Allowed changes, no new
+files, documentation only):
+- `docs/operational-alerting.md`:
+  - §1: new explanatory paragraph after the query-boundary note separates
+    the `dead_letter_handoff` marked first-message subset (detectable via
+    the existing tenant-safe join) from the unmarked later-turn-with-
+    existing-snapshot subset, which has no durable discriminator today and
+    silently falls into row 8's normal digest — recorded as an explicit
+    Phase B data-model/detection blocker with a durable tenant-scoped
+    source/provenance migration named as the safest fix; notes the
+    aggregate Queue backlog metric (rows 3-5) cannot map a message to a
+    clinic; states row 9 covers only the marked subset until that design
+    lands; records the `docs/inbound-queue.md:473-475` vs.
+    `src/intakeConsumer.ts:418-423` automatic-marker-replacement drift Opus
+    found as a separate follow-up item for the next implementation contract
+    (neither file touched, both outside Task 053's allowed files).
+  - §1 rows 8 and 9's Kaynak column and the query-boundary paragraph: added
+    the mandatory `staff_work_items.kind = 'human_handoff'` join condition;
+    row 6 now explicitly reads only `kind = 'delivery_failure'`.
+  - §5: new bullet states the mutually exclusive `kind`-based routing rule
+    so a `delivery_failure` job on a marked conversation can never enter
+    row 8/9 and double-notify with row 6.
+  - §3: new bullet states clinic email delivery currently depends on the
+    same Worker Cron being monitored, that the external `/ready` alarm must
+    say clinic email may also be down, and that Cron's last-success time
+    needs a separate externally observed heartbeat (location/owner left as
+    a Phase B precondition in §7) since a stopped Cron cannot even produce
+    a query-failure "unknown" result.
+  - §2: removed the false claim that `queue_id`s are visible in
+    `wrangler.toml` (only queue **names** are); reworded to state prod
+    (`vetai-intake`, `vetai-intake-dlq`, `vetai-intake-terminal-dlq`) and
+    staging Phase B (`vetai-intake-staging`, `vetai-intake-dlq-staging`,
+    `vetai-intake-terminal-dlq-staging`) queue names explicitly, confirmed
+    against `wrangler.toml`/`wrangler.staging.toml` this session; §1 rows
+    3-5's Kaynak column now names both environments' queue names.
+  - §4: new bullet bounds row 9's platform-operator copy content to two
+    owner/KVKK-decision options (aggregate count + timestamp + fixed login
+    link only, or clinic UUID alone with no name/person/phone/message/
+    medical content) and states this is third-party email-provider data
+    transfer pending KVKK review.
+  - §7: KVKK bullet split into two named preconditions (new clinic-email
+    recipient store design added to `docs/kvkk-inceleme-paketi.md`'s
+    inventory in Phase B scope — that file is not yet an allowed Task 053
+    file and is named for Phase B's allowed-changes list; and a separate
+    provider/processor KVKK review for data location, sub-processors and
+    possible international transfer); new bullet names the two open
+    `docs/production-readiness.md` §6 boxes (webhook signature-verification
+    failures, repeated OpenAI extraction failures) as not covered by the
+    nine-row matrix (signature failure is HTTP 401, outside row 1's 5xx
+    scope; OpenAI failure surfaces only indirectly if it later reaches the
+    DLQ) and left as separately designed Phase B signals; new bullet names
+    the independent `/ready` provider choice (Standalone Health Checks if
+    verified usable for this hostname/plan, else a third-party uptime
+    provider) as an explicit owner decision with a real staging-evidence
+    gate before Phase B activation; the existing `Queues Read` token bullet
+    is followed by two new bullets: resolving/proving the three staging
+    `queue_id`s via the List Queues API or the Cloudflare dashboard (not yet
+    in the repo or account evidence), and deciding in the Phase B contract
+    whether resolved IDs live in a per-environment non-secret configuration
+    source or a fail-closed, name-verifying List Queues lookup at call time.
+  - `## Referanslar`: added the official
+    [Get Queue Metrics API reference](https://developers.cloudflare.com/api/resources/queues/methods/get_metrics/)
+    (Codex accepted this as confirming `Queues Read` is a listed permission,
+    per Opus's A3 finding) alongside the existing Queues observability
+    guide entry; real token creation and staging testing remain explicitly
+    NOT RUN.
+
+No source, test, migration, fixture, dependency, Wrangler, secret, account
+or service change was made in this pass. No email was sent; no DB, Meta,
+OpenAI or Cloudflare account call was made. `docs/043-opus-inceleme.md` and
+`.gitignore` were read for pre-existing-exclusion context only, per this
+task's standing instruction, and were not touched.
 
 ## Task 053 delivery record
 
-To be filled by Sonnet after Phase A. Activation remains NOT RUN.
+Checks run (original pass): `git diff --check` — no whitespace/conflict
+errors (only LF→CRLF autocrlf warnings on Windows, not diff-check failures).
+`git status` confirms only the five files above changed plus the two
+pre-existing, excluded items (`.gitignore`, untracked
+`docs/043-opus-inceleme.md`), neither touched by this task. All internal doc
+cross-references used in `docs/operational-alerting.md` point to files
+confirmed present by direct read this session.
+
+Checks run (post-review remediation pass, same day): `git diff --check`
+rerun — same result, no new whitespace/conflict errors. `git status`
+confirms the changed-file set is unchanged (`docs/operational-alerting.md`
+and `docs/production-readiness.md` edited further; no new files, no source/
+test/migration/Wrangler files touched). Activation remains **NOT RUN** — the
+evidence matrix in `docs/operational-alerting.md` §6 now has **nine** rows
+(row 9 added for the `dead_letter_handoff` separate-notification path), all
+NOT RUN across all six columns.
+
+Codex Phase A review findings closed by this remediation pass (see "Task 053
+Codex Phase A review" below for the original findings): (1) queue retention
+— reconciled to a conservative 24-hour recovery budget pending Workers
+plan/effective-retention verification; (2) urgent first email now sends on
+first observation with no wait, 15 min demoted to an unapproved escalation
+proposal only, and `dead_letter_handoff` given its own immediate,
+non-"urgent"-labeled path separate from the normal 4-hour digest; (3)
+webhook HTTP 5xx now has two named smallest-supported fallback paths with
+permission/cost/dedup/failure-mode limits, explicitly framed as an open
+Phase B blocker rather than an implemented alarm; (4) only the email API key
+(and, if chosen, an Analytics API token) is scoped as an `Env` secret;
+platform and per-clinic staff recipients are explicitly non-secret,
+tenant-scoped, revocable/auditable data, consistent with the existing
+"recipient removal needs no deploy" requirement.
+
+Unresolved prerequisites for Codex/owner (full list in
+`docs/operational-alerting.md` §7): platform alarm recipient and per-clinic
+staff recipient list + authorization mechanism (both to be stored as
+tenant-scoped records, not `Env` secrets); email service/account/plan
+selection (Resend used only as an illustration); webhook HTTP 5xx path
+selection (self-instrumentation vs. Cloudflare Analytics API, §2); this
+Worker's Cloudflare account/Workers plan tier and each queue's effective
+retention (currently unverified — 24h treated as the conservative recovery
+budget until confirmed); operational hours; platform + clinic escalation
+owners; KVKK/data-retention approval (separate, still-open gate, not decided
+here).
+
+Reported gaps/risks for Codex: (1) reading real Queue backlog metrics for
+the DLQ/terminal-DLQ requires adding new Wrangler producer bindings — a
+Wrangler config change outside this task's allowed changes, not made; (2)
+Standalone Health Checks' applicability to this Worker's exact hostname
+setup and the zone's actual plan tier are unverified — needs Codex/owner
+account inspection before it can be relied on for `/ready` independence; (3)
+no delivery-acknowledgement mechanism (state 4 of the 5-state model in §5)
+exists yet for any channel — a human "seen this alert" signal would need new
+implementation; (4) the existing browser-`Notification`-API pilot
+(`docs/staff-workflow.md`) must not be described anywhere as background/
+reliable — verified no wording drift was introduced by either pass's edits;
+(5) neither webhook-5xx fallback option (§2) is implemented or account-
+verified — this remains a named Phase B blocker, not a delivered alarm.
+
+Sonnet-side status: `READY` — Phase A resubmitted for Codex re-review after
+addressing all four `CHANGES_REQUIRED` findings below. Top-of-file `Status`
+stays `IN_REVIEW` (Codex's field to update, not changed by this pass). No
+second task started; no Phase B step executed; no production/activation
+checkbox in any touched file was checked.
+
+Checks run (second remediation pass, same day, 2026-09-05): `git diff
+--check` on `docs/operational-alerting.md` and `docs/staging-runbook.md` —
+no whitespace/conflict errors. `git status` confirms the changed-file set
+for this pass is `docs/operational-alerting.md`, `docs/staging-runbook.md`,
+and this file only; `.gitignore` and `docs/043-opus-inceleme.md` untouched.
+Grep passes across all touched docs plus `docs/production-readiness.md` and
+`docs/saas-urunlestirme-yol-haritasi.md` for the four stale-statement
+patterns named in the re-review (producer binding required, invocation
+status as 5xx evidence, marker on `staff_work_items`, platform recipient
+tenant-scoped) found no remaining occurrences outside corrective ("does NOT
+need...") context. No broader test suite run — no source/test/migration file
+changed. Activation remains **NOT RUN**; all nine evidence-matrix rows in
+`docs/operational-alerting.md` §6 unchanged at NOT RUN across every column.
+
+Codex Phase A re-review findings closed by this pass (full original text in
+"Task 053 Codex Phase A re-review" below): (1) Queues backlog measurement
+rebuilt on the read-only REST metrics endpoint
+(`GET /accounts/{account_id}/queues/{queue_id}/metrics`, fields
+`backlog_count`/`backlog_bytes`/`oldest_message_timestamp_ms`) usable with a
+`Queues Read`-scoped token against all three queues, no producer binding;
+retention still requires the separate Queue Get API call as explicit
+activation evidence (§3, unchanged from round 1, still NOT VERIFIED); (2)
+webhook-5xx evidence source reordered to the Workers Observability telemetry
+query API as primary candidate, with required permission/availability/
+retention/sampling/cost kept NOT VERIFIED, and self-instrumentation demoted
+to a supplementary-only signal; (3) `dead_letter_handoff` matrix rows 8/9
+and the evidence matrix corrected to the real marker location
+(`conversations.intake_data`, via a tenant-safe `clinic_id`+`conversation_id`
+join) instead of `staff_work_items`; (4) recipient scopes split into
+tenant-scoped clinic staff recipients vs. platform-scoped platform alarm
+recipient, neither an `Env` secret.
+
+Unresolved prerequisites for Codex/owner (unchanged in kind from round 1,
+full list in `docs/operational-alerting.md` §7, now including): the `Queues
+Read`-scoped Cloudflare API token's creation and per-queue testing; the
+webhook-5xx path decision (Workers Observability telemetry API vs.
+self-instrumentation as a supplement, or both) with its permission/account/
+retention/sampling/cost verification; the exact Observability field name for
+HTTP status (`$workers.event.response.status` per this session's independent
+check vs. `$metadata.statusCode` per Codex's re-review text — unresolved,
+needs real-account confirmation); platform alarm recipient and per-clinic
+staff recipient storage/authorization design (now explicitly two separate
+scopes); email service/account/plan selection; this account's Workers plan
+tier and each queue's effective retention (still NOT VERIFIED, 24h
+conservative budget unchanged); operational hours; escalation owners;
+KVKK/data-retention approval.
+
+Reported gaps/risks for Codex (in addition to round 1's, still open): the
+Observability telemetry API's exact response-status field name is
+independently disputed between Codex's re-review text and this session's
+live-docs check — flagged rather than silently resolved, needs Codex/owner
+judgment or real-account testing; the tenant-safe join described in §1's new
+explanatory paragraph (staff item → its own conversation via matching
+`clinic_id` and `conversation_id`) has not been run against real data in
+this phase — it is a documentation-level correction of the query boundary,
+not a tested query.
+
+Sonnet-side status (second pass): `READY` — Phase A resubmitted for Codex
+re-review after addressing all four `CHANGES_REQUIRED` findings from the
+re-review. Top-of-file `Status` stays `IN_REVIEW`. No second task started;
+no Phase B step executed; no production/activation checkbox in any touched
+file was checked; all nine activation rows remain NOT RUN.
+
+Checks run (third remediation pass, same day, 2026-09-05, responding to
+Opus's Phase A review triage): focused text review of the changed sections
+in `docs/operational-alerting.md` plus `git diff --check` on the same file
+and this file — no whitespace/conflict errors. `git status` confirms the
+changed-file set for this pass is `docs/operational-alerting.md` and this
+file only; `.gitignore` and `docs/043-opus-inceleme.md` untouched (read-only,
+for pre-existing-exclusion context). Grep passes for the three named stale
+claims (`queue_id`s visible in `wrangler.toml`, all dead-letter handoffs
+marked, Cron alone is independent) found no remaining occurrences after the
+edits. No broader test suite run — no source/test/migration/Wrangler file
+changed, consistent with AGENTS.md's documentation-only verification tier.
+Activation remains **NOT RUN**; all nine evidence-matrix rows in
+`docs/operational-alerting.md` §6 unchanged at NOT RUN across every column;
+top-of-file `Status` unchanged at `IN_REVIEW`.
+
+Opus Phase A review-triage findings closed by this pass (full original text
+in "Task 053 Opus Phase A review triage" below): dead-letter coverage split
+into the marked-subset (row 9) vs. unmarked-existing-snapshot subset (named
+Phase B blocker, migration proposed) with the `inbound-queue.md`/
+`intakeConsumer.ts` marker-replacement drift recorded as a separate
+follow-up (not fixed here, outside allowed files); Cron single-point-of-
+failure for clinic email now stated in §3 with a required independent
+heartbeat as a Phase B precondition; the false `queue_id`-in-`wrangler.toml`
+claim removed and prod/staging queue names separated everywhere the matrix
+names them; rows 8/9 given the mandatory `kind = 'human_handoff'` filter
+with a mutually-exclusive routing rule against row 6's `delivery_failure`
+added to §5; row 9's platform-operator copy bounded to two named owner/KVKK
+content options; the KVKK §7 item split into a recipient-store inventory
+precondition and a separate provider/processor review precondition; the two
+uncovered `docs/production-readiness.md` §6 alarm boxes (signature failures,
+repeated OpenAI failures) named as Phase B-designed signals not covered by
+the nine-row matrix; the independent `/ready` provider choice named as an
+explicit §7 owner decision; and the official Get Queue Metrics API reference
+added to `## Referanslar` per Opus's A3 finding, which Codex's triage
+accepted as confirming `Queues Read` is a listed permission (real token
+creation/staging testing still NOT RUN).
+
+Unresolved prerequisites for Codex/owner (updated list, full detail in
+`docs/operational-alerting.md` §7): the two new queue-identity items (List
+Queues resolution of the three staging `queue_id`s; per-environment
+non-secret storage vs. fail-closed List Queues lookup design); the
+independent `/ready` provider decision with real staging evidence; the split
+KVKK preconditions (recipient-store inventory addition to
+`docs/kvkk-inceleme-paketi.md`, itself not yet an allowed Task 053 file and
+named here for Phase B's allowed-changes list; and the email provider's
+processor/KVKK review); the platform-copy content option (aggregate-only vs.
+clinic UUID) for row 9; the Cron heartbeat's storage location and
+independent checker; all prerequisites carried over from the first two
+passes (unchanged in kind) remain open.
+
+Reported gaps/risks for Codex (in addition to prior passes', still open):
+the unmarked-existing-snapshot dead-letter subset has no implementation path
+until the proposed provenance migration is designed and accepted — this
+documentation pass only names the gap, it does not close it; the
+`inbound-queue.md`/`intakeConsumer.ts` marker-replacement drift needs a
+follow-up implementation-contract decision (retry indefinitely vs. reach the
+poison-snapshot fallback) before Phase B can rely on either document's
+current description.
+
+Sonnet-side status (third pass): `READY` — Phase A resubmitted after
+addressing all nine points in Opus's Phase A review triage. Top-of-file
+`Status` stays `IN_REVIEW`. No second task started; no Phase B step
+executed; no production/activation checkbox in any touched file was
+checked; all nine activation rows remain NOT RUN.
+
+## Task 053 Codex Phase A review — 2026-09-05
+
+Decision: `CHANGES_REQUIRED`. No code, database or service was changed.
+Codex independently rechecked current Cloudflare primary documentation and
+used read-only Wrangler queue inventory; the actual account plan and effective
+retention were not exposed by that inventory and remain unverified.
+
+1. **Retention is overstated.** Current Cloudflare limits explicitly except
+   Workers Free: retention is fixed at 24 hours there. The configuration page
+   states a four-day default and up-to-14-day configurable range, which applies
+   only when the plan permits configuration. The report, production runbook,
+   observed context and open decision must say: actual staging plan/effective
+   retention NOT VERIFIED; conservative deadline 24 hours until verified.
+2. **Clinical first-notice and escalation are conflated.** A newly created
+   urgent work item cannot wait 15 minutes for its first email. Proposed first
+   notice is immediate/on first successful monitor observation; any 15-minute
+   value is only an unapproved escalation proposal. A normal-priority
+   `dead_letter_handoff` is explicitly unassessed, so it cannot share the
+   ordinary four-hour row; give it an immediate separate row/path without
+   calling it clinically urgent.
+3. **Webhook HTTP 5xx has no deliverable path.** The document correctly says
+   Notifications/Workers Observability do not provide this native alert, but
+   the later Cron+email proposal covers Queue/database signals, not historical
+   request response-status logs. Specify one minimal technically supported
+   fallback and its permissions/cost/dedup/failure boundary, or mark this
+   signal a Phase B blocker pending provider/path choice. A dashboard query is
+   not an alarm, and an in-app Cron cannot be the only detector of app death.
+4. **Recipient storage is prematurely and unsafely assumed.** Only the email
+   API credential belongs in an Env secret. Clinic recipient addresses are
+   personal/tenant data requiring a tenant-scoped, revocable, audited and
+   independently reviewed authorization/storage design; do not prescribe a
+   global Env recipient-list secret. Reconcile this with the stated no-deploy
+   removal requirement.
+
+After the corrections, rerun `git diff --check` and update only Task 053's two
+Sonnet sections. Because Phase B will introduce cross-tenant recipient routing,
+a credential boundary and urgent-work escalation semantics, mandatory Opus
+read-only review is required after Codex accepts Phase A and before Phase B is
+authorized. Keep every activation result NOT RUN and status IN_REVIEW.
+
+## Task 053 Codex Phase A re-review — 2026-09-05
+
+Decision: `CHANGES_REQUIRED`. The first four findings above are closed, but
+the corrected plan exposed three factual architecture issues in the proposed
+Phase B paths. No code, database, account or external service was changed.
+
+1. **Queue metrics do not require producer bindings.** Cloudflare's current
+   Queues API exposes
+   `GET /accounts/{account_id}/queues/{queue_id}/metrics`, returning
+   `backlog_count`, `backlog_bytes` and `oldest_message_timestamp_ms`; the
+   endpoint accepts a `Queues Read` API-token permission. The document instead
+   claims the two DLQ metrics require new producer bindings. A producer binding
+   also exposes `send()`/`sendBatch()`, so it would add unnecessary write
+   authority to the monitoring path. Replace the binding plan and every
+   dependent gap/evidence statement with the least-privileged REST metrics
+   path, while retaining best-effort/unknown-not-zero semantics.
+2. **The HTTP-5xx API candidate names the wrong evidence boundary.** The
+   documented `workersInvocationsAdaptive` GraphQL example groups by Worker
+   invocation status (`success`, exception, resource failure), which is the
+   exact distinction that missed the incident's returned HTTP 503. Zone status
+   analytics also is not yet verified for this `workers.dev` deployment. The
+   current Workers Observability telemetry-query API explicitly exposes the
+   Worker's returned `$metadata.statusCode`, matching the dashboard evidence
+   and the required signal. Use that API as the primary candidate, with its
+   precise read permission/account retention/cost still marked NOT VERIFIED.
+   Supabase self-instrumentation may remain only as an optional supplement: it
+   cannot be the sole detector because the actual resolver incident was a
+   Supabase failure and the marker write could fail with the same dependency.
+3. **`dead_letter_handoff` is located on the conversation, not the work item.**
+   `finalize_intake_dead_letter` stores the marker in
+   `conversations.intake_data`; the generated normal-priority
+   `staff_work_items` row has no such column. Rows 8/9 and their evidence must
+   specify a tenant-scoped join from the open work item to its linked
+   conversation and exact JSON marker check. Otherwise Phase B cannot implement
+   the claimed mutually exclusive routing from the stated source.
+4. **Platform and clinic recipients need different scopes.** Clinic staff
+   recipients must be tenant-scoped. The platform alarm recipient is not owned
+   by any clinic and must instead be held in a separately authorized,
+   auditable, revocable platform-scoped record. The current text repeatedly
+   calls both lists tenant-scoped, which either invents a false clinic owner for
+   the operator or makes the authorization boundary ambiguous. Keep both out
+   of `Env` secrets, but document the two distinct scopes.
+
+After these corrections, rerun `git diff --check` and update only Task 053's
+two Sonnet sections. Keep every activation result `NOT RUN` and the task
+`IN_REVIEW`; mandatory Opus review remains the next gate after Codex accepts
+the corrected Phase A.
+
+## Task 053 Codex Phase A final review — 2026-09-05
+
+Decision: `PASS`; mandatory Opus review remains pending. No runtime, database,
+account or service was changed and Phase B is not authorized.
+
+The second remediation closes all four re-review findings: Queue monitoring
+uses the read-only Cloudflare REST metrics path without producer bindings;
+returned webhook HTTP status is sourced from Workers Observability telemetry
+rather than invocation outcome; `dead_letter_handoff` is resolved through an
+exact tenant-scoped work-item/conversation join; and clinic/platform recipients
+have separate authorization scopes while remaining outside `Env` secrets.
+
+Codex applied two documentation-only precision fixes during final review:
+the marker predicate now uses JSONB containment against the boolean value
+instead of comparing `->>` text with a SQL boolean, and recipient lists are
+described as access-controlled personal/operational data rather than as
+non-secret public data. The exact Workers Observability query field and API
+permission remain explicitly account-time `NOT VERIFIED` evidence; that open
+fact does not overstate Phase A and must be resolved before implementation.
+
+`git diff --check` is the required focused gate for this documentation-only
+phase. All nine activation rows remain `NOT RUN`. Mandatory read-only Opus
+review of tenant routing, credential scope, durable delivery/dedup state,
+urgent escalation semantics and KVKK boundaries is the next gate before Codex
+may define or authorize Phase B.
+
+## Task 053 Opus Phase A review triage — 2026-09-05
+
+Opus verdict: `CHANGES_REQUIRED`. Codex independently checked the reported
+repository paths and accepts B1, B2, B3, A1, A2, A4, A5 and A6. No runtime,
+database, account or service was changed, and Phase B remains unauthorized.
+
+- The `dead_letter_handoff` marker is written only when the previous
+  `conversations.intake_data` value is exactly `{}`. A dead-lettered later turn
+  with an existing snapshot is unassessed too but has no durable discriminator;
+  it must not silently enter the ordinary four-hour normal-work path. Phase A
+  must record this as a Phase B data-model/detection blocker rather than claim
+  row 9 is complete.
+- Clinic urgent email delivery is currently proposed on the same Worker Cron
+  being monitored. The external `/ready` alarm must say that clinic email may
+  also be unavailable, and a separately observed last-success heartbeat for
+  the scheduled monitor is a Phase B prerequisite.
+- Wrangler files contain environment-specific queue names, not Cloudflare
+  `queue_id` UUIDs. Staging names must be explicit and Phase B must resolve and
+  carry the three environment-specific IDs through a reviewed non-secret
+  configuration path (or an equivalently fail-closed List Queues lookup).
+- Row 9's platform copy needs a fixed minimal-content rule and explicit
+  third-party disclosure review. The future recipient table and the selected
+  email provider must be added to the KVKK inventory/processor and possible
+  international-transfer review. Rows 8/9 require `kind = 'human_handoff'` so
+  delivery-failure items remain solely in row 6. The existing production gates
+  for signature failures and repeated OpenAI failures must be acknowledged as
+  uncovered Phase B signals. The independent `/ready` provider choice must be
+  an explicit owner decision before Phase B activation.
+
+Codex does **not** accept A3 as an unresolved permission-name claim. The
+current official Cloudflare `Get Queue Metrics` API reference explicitly lists
+`Queues Read` among accepted permissions. The document should add that direct
+API-reference citation (not only the Queues observability guide) and retain
+real-account token creation/testing as `NOT RUN`; it need not relabel the
+documented permission name as unknown.
+
+Opus also identified a truthful-documentation follow-up outside this Phase A
+file set: `docs/inbound-queue.md` says a later message replaces the first-turn
+dead-letter marker, while `src/intakeConsumer.ts`'s existing `human_handoff`
+short-circuit rejects that non-canonical marker before reaching the poison
+fallback. Do not silently expand Task 053's allowed files. Record this for the
+next implementation contract and ensure the operational plan does not rely on
+automatic marker replacement.
+
+After the accepted Phase A corrections, rerun only focused documentation
+checks and `git diff --check`, update the two Task 053 Sonnet sections, and
+request a narrow Opus re-review. Keep all nine activation rows `NOT RUN`, the
+top status `IN_REVIEW`, and Phase B unauthorized.
+
+## Task 053 Codex post-Opus remediation review — 2026-09-05
+
+Decision: `PASS_FOR_OPUS_REREVIEW`; the mandatory narrow Opus closure review
+remains pending. Phase B is not authorized, and no runtime, database, account
+or external service was changed.
+
+Codex verified that the third remediation closes all accepted Opus findings:
+the unmarked later-turn dead-letter subset is explicitly an unresolved Phase B
+data-model blocker; Queue metrics cannot infer its clinic; clinic email and the
+monitor share the Worker Cron and therefore require an independently observed
+heartbeat; production and staging queue names are distinct and their real
+Cloudflare UUIDs plus fail-closed configuration path remain owner decisions;
+rows 8/9 are restricted to `human_handoff` and row 6 to `delivery_failure`;
+platform-copy content has a fixed minimal disclosure boundary; recipient
+storage and the email provider have separate KVKK/processor review gates;
+signature/Meta and repeated OpenAI failures are truthfully listed as uncovered
+signals; and an external `/ready` provider is mandatory before activation.
+The official Get Queue Metrics API reference now directly supports the
+documented `Queues Read` permission while real-account token use remains
+`NOT RUN`.
+
+Focused scope and formatting checks passed: only Task 053's allowed files are
+attributed to this task, the pre-existing `.gitignore` and
+`docs/043-opus-inceleme.md` items remain excluded, `git diff --check` reports
+no whitespace error, and all nine activation evidence rows remain `NOT RUN`.
+The previously reported `docs/inbound-queue.md` versus `src/intakeConsumer.ts`
+marker-replacement drift remains recorded for the next implementation
+contract; it is not silently widened into Phase A.
+
+## Task 053 final Opus closure triage — 2026-09-05
+
+Opus verdict: `CHANGES_REQUIRED` with one bounded documentation finding. The
+substantive remediation was accepted, but two forward references incorrectly
+claimed their open prerequisites were also listed in section 7. Codex accepts
+the finding and applied the smallest documentation-only correction:
+
+- section 7 now explicitly requires an independently observed scheduled-monitor
+  heartbeat, including its scope, storage, permissions, stale threshold and a
+  stopped-Worker staging alarm proof before clinic email is considered active;
+- section 7 now explicitly carries the `docs/inbound-queue.md` versus
+  `src/intakeConsumer.ts` marker-replacement drift into Phase B, requires code
+  and documentation to converge on one verified behavior, and forbids alarm
+  routing from assuming automatic marker replacement.
+
+No code, database, account or external service changed. All nine activation
+rows remain `NOT RUN`, Phase B remains unauthorized, and a final narrow Opus
+closure recheck is required before Phase A can close.
+
+## Task 053 Phase A Opus closure — 2026-09-05
+
+Opus verdict: `PASS`. The final read-only recheck confirmed both missing §7
+entries: the scheduled monitor now requires an independently observed
+heartbeat, and the `docs/inbound-queue.md` / `src/intakeConsumer.ts`
+marker-replacement drift is an explicit Phase B follow-up whose alert routing
+cannot assume automatic replacement. No new blocker was found.
+
+Phase A is complete as a reviewed activation specification only. All nine
+activation evidence rows remain `NOT RUN`; no alert, email, database, Worker,
+account or external service was activated. Phase B remains inside Task 053 but
+requires a Codex contract amendment and the unresolved owner decisions named in
+`docs/operational-alerting.md` §7 before implementation may start.
 
 ---
 
