@@ -48,6 +48,24 @@ stage really succeeds.
 - `.gitignore` and untracked `docs/043-opus-inceleme.md` are pre-existing,
   excluded changes. Do not touch, stage or attribute them to Task 054.
 
+## Codex read-only account preflight — 2026-09-06
+
+- The authenticated staging Observability page reported the Cloudflare Free
+  plan limit as 200,000 events/day and warned that events are sampled after
+  that limit. This is account evidence, not a durable pricing guarantee.
+- A fresh, harmless `GET /staff` invocation was inspected without copying its
+  headers, address data or identifiers. The visible structure confirmed
+  `$workers.event.request.method`, `$workers.event.path`,
+  `$workers.event.response.status`, `$workers.scriptName`,
+  `$workers.eventType = "fetch"`, and `$metadata.origin = "fetch"`.
+  Therefore `$metadata.statusCode` must not be used for this account.
+- Current official API documentation describes aggregate results under
+  `result.calculations[].aggregates[]`, with aggregate `value` and `count`
+  fields, and requires Workers Observability Write for the query endpoint.
+  No API token was created and no authenticated REST aggregate query was run.
+  The exact staging-account aggregate envelope therefore remains unverified;
+  criterion 1 still blocks implementation from guessing its shape.
+
 ## Phase A — repository implementation
 
 Phase A may change only:
