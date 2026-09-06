@@ -1,4 +1,183 @@
-# Current task — 053 Operational alerts and staff-notification activation plan
+# Current task — 054 Verified webhook telemetry and staging alert activation
+
+Status: `READY` — Phase A repository implementation is authorized. Any live
+account change, secret creation, database migration, deploy, email send or
+alert enablement remains separately gated and must not be inferred from this
+status.
+
+Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). Task 053
+delivered and tested the alert-delivery foundation, but alerting is still off
+and the Cloudflare webhook-telemetry stage intentionally returns
+`unavailable`. Production remains unchanged.
+
+## Goal
+
+Replace the intentional webhook-telemetry stub with the smallest verified,
+fail-closed Cloudflare Observability query path, then prepare a controlled
+staging activation of the complete Task 053 alarm pipeline. Do not enable an
+alarm system that can silently lose signals, report an unknown measurement as
+zero, expose request data, or claim a fresh heartbeat before every required
+stage really succeeds.
+
+## Fixed decisions and boundaries
+
+- Use Cloudflare's native Workers Observability REST query API; do not add a
+  monitoring SDK, database mirror or custom telemetry service.
+- The official endpoint is
+  `POST /accounts/{account_id}/workers/observability/telemetry/query`. Current
+  Cloudflare documentation names `Workers Observability Write` as the accepted
+  API-token permission for this query endpoint. Treat that surprisingly broad
+  permission as an activation risk, restrict it to the intended account, and
+  never reuse a global API key.
+- Keep Queue metrics on the existing read-only Queue metrics API and its
+  account-scoped Queues Read permission. Do not combine broader permissions
+  merely for convenience.
+- Continue using the existing native-fetch Resend adapter. Add no dependency.
+  Sending to arbitrary clinic addresses requires a verified owner-controlled
+  domain or subdomain; `resend.dev` is acceptable only for a bounded test sent
+  to the Resend account address, not as pilot delivery evidence.
+- `OPERATIONAL_ALERTS_ENABLED` remains `"false"` throughout repository work
+  and initial staging installation. It may become `"true"` only in the live
+  activation phase after all prerequisites and rollback steps are witnessed.
+- Unknown, malformed, unauthorized, rate-limited, sampled-away or stale
+  telemetry is `unavailable`, never a healthy zero. A platform signal is a
+  successful stage only when the database confirms `recorded` and at least one
+  enabled platform recipient exists.
+- No paid Cloudflare or email plan, domain purchase, new external provider,
+  production change or customer-facing message is authorized by this task.
+- `.gitignore` and untracked `docs/043-opus-inceleme.md` are pre-existing,
+  excluded changes. Do not touch, stage or attribute them to Task 054.
+
+## Phase A — repository implementation
+
+Phase A may change only:
+
+- `CURRENT_TASK.md` (Sonnet: only the Task 054 **Observed context** and
+  **Delivery record** sections);
+- `src/operationalAlerts.ts`;
+- `test/operationalAlerts.test.ts` and, only if the public readiness contract
+  requires it, `test/index.test.ts`;
+- `docs/operational-alerting.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`,
+  `docs/olaylar/2026-09-04-route-resolver-405.md`, and
+  `docs/saas-urunlestirme-yol-haritasi.md`.
+
+No migration, schema, package, lockfile, Wrangler configuration, environment
+type, queue consumer or unrelated documentation change is allowed. Stop and
+return to Codex if repository evidence shows one is required.
+
+### Phase A acceptance criteria
+
+1. **Verify the real contract before coding.** Record sanitized evidence from
+   the staging account's Query Builder or read-only query call for the exact
+   request and response shapes needed to count HTTP `401` and `5xx` responses
+   for `POST /webhooks/whatsapp`. Do not copy an unverified field name from an
+   old note: the repository currently contains both
+   `$workers.event.response.status` and `$metadata.statusCode` hypotheses.
+   Evidence must contain no raw body, phone number, message, token, signature,
+   challenge, email address or other customer data. If the account/API cannot
+   establish the shape, keep the stub and report `BLOCKED`; do not guess.
+2. **Bounded query.** Query only the intended staging Worker dataset and a
+   short documented lookback window. Narrow by request method and pathname,
+   then separately count `401` and `5xx`. The request must use a timeout and
+   must not request or retain raw event bodies or headers.
+3. **Strict parsing.** Accept only the exact verified success envelope and
+   finite non-negative integer counts. Reject non-2xx, timeout/network error,
+   invalid JSON, extra or missing result groups, ambiguous aggregation,
+   truncated/partial responses and any unverified shape as `unavailable`.
+   Never log the token, request payload, response payload or event data.
+4. **Signal recording.** A positive `401` count records only `webhook_401`;
+   a positive `5xx` count records only
+   `webhook_5xx`. A zero count is a successful telemetry stage. Any required
+   positive signal that cannot be recorded as `recorded` makes the stage
+   `unavailable`. Preserve existing hourly deduplication and recipient gates.
+5. **Heartbeat truth.** The monitor heartbeat may advance only after Queue
+   metrics, webhook telemetry, OpenAI signal recording, candidate sync/repeat,
+   and delivery drain all succeed under complete configuration. The current
+   intentional permanent-stale behavior may be removed only by the verified
+   implementation above. `/health` remains dependency-free and alerting-off
+   readiness behavior remains unchanged.
+6. **Tests are discriminating.** Cover verified zero/401/5xx/mixed results;
+   malformed and ambiguous envelopes; non-2xx; timeout/network failure;
+   missing configuration; no enabled recipient; record RPC failure/closed
+   result; no raw-data logging; and heartbeat advancement only on full
+   success. Tests must fail if the stub remains or if unknown data becomes
+   zero. Reuse fresh `Response` objects per fetch read.
+7. **Documentation is evidence-calibrated.** Separate official API
+   capability, sanitized staging-account shape evidence, local mock evidence,
+   staging activation and production activation. Do not mark any Task 053
+   nine-row activation item complete during Phase A.
+
+## Phase B — live staging activation (not yet authorized)
+
+Codex may begin Phase B only after explicit owner approval for the exact
+account mutations and any cost. Before setting the feature flag to true:
+
+1. Confirm the Cloudflare plan and actual retention/sampling behavior; resolve
+   all three production/staging Queue names to exact account Queue IDs.
+2. Create the least-privilege, account-scoped API credentials required for
+   Queues Read and the verified Observability query. Store them only as Worker
+   secrets and prove query-string/body/header redaction in invocation logs.
+3. Select the platform alert recipient and clinic recipient(s). Configure them
+   through the audited tenant/platform RPCs; do not put recipients in Wrangler
+   variables. Obtain the pending KVKK decision for recipient processing and
+   free-text audit reasons.
+4. Select the Resend account and owner-controlled sending subdomain, verify
+   SPF/DKIM, create a restricted API key, set the sender and perform a bounded
+   test to the owner's address. Do not use a real clinic/customer address for
+   the first test.
+5. Apply the already reviewed Task 053 migration to staging through managed
+   migration history, run its rollback-only fixture against the disposable
+   test project, and verify catalog/RLS/grants/residue before Worker deploy.
+6. Deploy staging with the alert flag still false; prove ordinary webhook,
+   Queue, `/health`, `/ready`, `/staff` and `/admin` behavior is unchanged.
+7. Configure an independent external `/ready` check. The Worker's own Cron
+   cannot be its only stopped-Worker detector. If the current Cloudflare plan
+   lacks an appropriate external health-check feature, stop for an owner
+   choice rather than inventing self-monitoring.
+8. Enable alerting in staging, execute all nine rows of the Task 053 activation
+   evidence matrix, verify delivery/dedup/retry/recovery/tenant routing and
+   rollback, then repeat the mandatory live WhatsApp smoke. Record exact
+   timestamps and sanitized evidence; never record message content or tokens.
+9. Roll back immediately by setting `OPERATIONAL_ALERTS_ENABLED="false"` if
+   readiness stays 503, heartbeat is stale, telemetry is ambiguous, an email
+   reaches the wrong scope, or any ordinary product path regresses.
+
+Phase B does not authorize production deployment.
+
+## Required verification and review
+
+Phase A implementer runs, once after the last relevant change:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+Codex reviews the diff and call paths, reruns the affected tests and one full
+suite, and reconciles documentation. Because this changes cross-tenant
+platform alerting, external credentials and heartbeat truth, Claude Opus must
+perform a final read-only security/architecture/KVKK review before Codex may
+mark Phase A complete or authorize Phase B. Sonnet does not commit, push,
+deploy, run a database fixture, inspect live secrets or mutate an account.
+
+## Task 054 observed context
+
+To be filled by the implementer from repository evidence only.
+
+## Task 054 delivery record
+
+To be filled by the implementer. Include changed files, exact checks/results,
+checks not run and why, sanitized account evidence provenance, remaining
+limitations and the points Codex/Opus must inspect.
+
+---
+
+# Completed task — 053 Operational alerts and staff-notification activation plan
 
 Status: `COMPLETE` — Phase A and Phase B repository, local, disposable-
 database, Codex and mandatory Opus gates passed on 2026-09-06. Alerting remains
