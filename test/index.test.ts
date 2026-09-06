@@ -9,6 +9,7 @@ import { signHmacSha256 } from "./signHelper";
 import * as intakeConsumer from "../src/intakeConsumer";
 import * as intakeDeadLetter from "../src/intakeDeadLetter";
 import * as outboundSender from "../src/outboundSender";
+import * as operationalAlerts from "../src/operationalAlerts";
 
 const APP_SECRET = "test-app-secret";
 const CONVERSATION_ID = "5c1f2b9e-9d6a-4c3b-8f21-6f7a2c1d3e4b";
@@ -74,6 +75,79 @@ describe("worker fetch routing", () => {
     expect(await res.json()).toEqual({ status: "unavailable" });
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  // Task 053 Codex review item 1: /ready must fail closed the instant
+  // alerting is enabled but not fully configured -- see the dedicated test
+  // below. The two tests here isolate the RPC-driven fresh/stale path, so
+  // they use a fully configured env rather than the flag alone.
+  const fullyConfiguredAlertEnv: Env = {
+    ...env,
+    OPERATIONAL_ALERTS_ENABLED: "true",
+    RESEND_API_KEY: "resend-test-key",
+    RESEND_FROM_ADDRESS: "alerts@vetai-alerts.test",
+    STAFF_LOGIN_URL: "https://portal.vetai-portal.test/staff",
+    CLOUDFLARE_ACCOUNT_ID: "cf-account-test-id",
+    CLOUDFLARE_ALERTS_MONITORING_TOKEN: "cf-monitoring-test-token",
+    DEPLOYMENT_NAME: "staging",
+    INTAKE_QUEUE_NAME: "intake-queue-test",
+    INTAKE_DLQ_NAME: "intake-dlq-test",
+    INTAKE_TERMINAL_DLQ_NAME: "intake-terminal-dlq-test",
+  };
+
+  it("GET /ready merges a fresh alert heartbeat into the body and stays 200 when alerting is enabled and fully configured (Task 053)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        const result = url.includes("/rpc/is_alert_monitor_heartbeat_fresh") ? { fresh: true } : { result: "ai" };
+        return Promise.resolve(new Response(JSON.stringify([result]), { status: 200, headers: { "content-type": "application/json" } }));
+      }),
+    );
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), fullyConfiguredAlertEnv);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ready", alertMonitorHeartbeat: "fresh" });
+  });
+
+  it("GET /ready merges a stale alert heartbeat into the body and returns 503 when alerting is enabled and fully configured (Task 053)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        const result = url.includes("/rpc/is_alert_monitor_heartbeat_fresh") ? { fresh: false } : { result: "ai" };
+        return Promise.resolve(new Response(JSON.stringify([result]), { status: 200, headers: { "content-type": "application/json" } }));
+      }),
+    );
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), fullyConfiguredAlertEnv);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ status: "ready", alertMonitorHeartbeat: "stale" });
+  });
+
+  it("GET /ready fails closed to 503 when alerting is enabled but the rest of its config is missing, without ever calling the heartbeat RPC (Task 053 Codex review item 1)", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const result = url.includes("/rpc/is_alert_monitor_heartbeat_fresh") ? { fresh: true } : { result: "ai" };
+      return Promise.resolve(new Response(JSON.stringify([result]), { status: 200, headers: { "content-type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), { ...env, OPERATIONAL_ALERTS_ENABLED: "true" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ status: "ready", alertMonitorHeartbeat: "stale" });
+    expect(fetchMock.mock.calls.some((call) => {
+      const input = call[0] as RequestInfo | URL;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      return url.includes("/rpc/is_alert_monitor_heartbeat_fresh");
+    })).toBe(false);
+  });
+
+  it("GET /ready body is byte-for-byte the same as before Task 053 when alerting is disabled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(JSON.stringify([{ result: "ai" }]), { status: 200, headers: { "content-type": "application/json" } })),
+    );
+    const res = await worker.fetch(new Request("https://vetai.test/ready"), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ready" });
   });
 
   it("non-GET /ready returns 405 with Allow: GET and security headers", async () => {
@@ -1053,23 +1127,39 @@ describe("worker scheduled handler", () => {
     vi.restoreAllMocks();
   });
 
-  it("registers the outbound drain with waitUntil", async () => {
+  it("registers the outbound drain and the operational alert monitor as two independent waitUntil calls (Task 053)", async () => {
     const drainSpy = vi.spyOn(outboundSender, "drainOutboundMessages").mockResolvedValue(undefined);
+    const alertSpy = vi.spyOn(operationalAlerts, "runOperationalAlertMonitor").mockResolvedValue(undefined);
     const ctx = fakeExecutionContext();
 
     await worker.scheduled!({} as ScheduledController, env, ctx);
 
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(2);
     expect(drainSpy).toHaveBeenCalledWith(env);
+    expect(alertSpy).toHaveBeenCalledWith(env);
   });
 
   it("contains an unexpected throw from the drain instead of letting it escape", async () => {
     vi.spyOn(outboundSender, "drainOutboundMessages").mockRejectedValue(new Error("boom"));
+    vi.spyOn(operationalAlerts, "runOperationalAlertMonitor").mockResolvedValue(undefined);
     const ctx = fakeExecutionContext();
 
     await worker.scheduled!({} as ScheduledController, env, ctx);
 
     const [waited] = (ctx.waitUntil as ReturnType<typeof vi.fn>).mock.calls[0] as [Promise<unknown>];
     await expect(waited).resolves.toBeUndefined();
+  });
+
+  it("contains an unexpected throw from the alert monitor without blocking the drain (Task 053)", async () => {
+    const drainSpy = vi.spyOn(outboundSender, "drainOutboundMessages").mockResolvedValue(undefined);
+    vi.spyOn(operationalAlerts, "runOperationalAlertMonitor").mockRejectedValue(new Error("boom"));
+    const ctx = fakeExecutionContext();
+
+    await worker.scheduled!({} as ScheduledController, env, ctx);
+
+    const calls = (ctx.waitUntil as ReturnType<typeof vi.fn>).mock.calls as [Promise<unknown>][];
+    expect(calls).toHaveLength(2);
+    await expect(calls[1]![0]).resolves.toBeUndefined();
+    expect(drainSpy).toHaveBeenCalledWith(env);
   });
 });

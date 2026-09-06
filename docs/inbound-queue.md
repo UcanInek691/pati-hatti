@@ -470,9 +470,15 @@ If every first-message attempt failed before a snapshot was persisted, the
 conversation still contains the core `{}` default that the existing advance
 RPC rejects. The dead-letter finalizer replaces only that empty value with
 the fixed, non-sensitive `{ "dead_letter_handoff": true }` terminal marker;
-otherwise it preserves the existing intake document. A later message on the
-handoff conversation reaches the already-reviewed poison-snapshot fallback
-and replaces the marker with a validated current-turn snapshot.
+otherwise it preserves the existing intake document.
+
+> **Corrected (Task 053).** This marker is not a valid schema-versioned
+> snapshot, so a later message used to fail `readCanonicalPersistedSnapshot`
+> and retry forever instead of ever reaching the poison-snapshot fallback.
+> The consumer now recognizes this exact marker while `intakeStage` is
+> `human_handoff` and acks the job without replying or touching the stored
+> document — the conversation stays parked until staff resolve it via
+> `/staff`, it does not self-heal on the next inbound message.
 
 Its disposition table deliberately inverts the primary consumer's parse-step
 row:

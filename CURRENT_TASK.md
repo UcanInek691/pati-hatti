@@ -1,7 +1,8 @@
 # Current task — 053 Operational alerts and staff-notification activation plan
 
-Status: `READY` — Phase A `COMPLETE`; Phase B repository implementation
-authorized under the contract below; external/staging activation is not.
+Status: `COMPLETE` — Phase A and Phase B repository, local, disposable-
+database, Codex and mandatory Opus gates passed on 2026-09-06. Alerting remains
+disabled; external/staging/production activation is a separate future task.
 
 Created by Codex on 2026-09-05 after Task 052 closure (`c112eb6`). The owner
 approved preparing the next contract. All completed records below are history,
@@ -598,6 +599,126 @@ OpenAI or Cloudflare account call was made. `docs/043-opus-inceleme.md` and
 `.gitignore` were read for pre-existing-exclusion context only, per this
 task's standing instruction, and were not touched.
 
+### Phase B implementation — 2026-09-06
+
+Checks run: full re-read of `AGENTS.md`, `PROJECT_CONTEXT.md`, and this
+file's Task 053 Phase B repository implementation contract before writing
+any code. Affected call paths and migration history were examined directly
+from source before implementation, per the contract's own instruction:
+`supabase/migrations/20260806000000_core_tenant_schema.sql` (`clinics`,
+`clinic_staff`, `whatsapp_accounts`, `owners`, `conversations` shapes and
+defaults), `supabase/migrations/20260809000400_staff_work_items.sql`
+(`staff_work_items` table, `vetai_private.sync_human_handoff_work_item()`
+and `vetai_private.sync_delivery_failure_work_item()` triggers,
+`vetai_private.has_true_safety_signal(jsonb)`),
+`supabase/migrations/20260831000300_platform_admin_overview.sql`
+(`platform_admins` has zero direct grants, even to `service_role`; mutable
+only via `set_platform_admin_v1`), and the full new
+`supabase/migrations/20260905000100_operational_alerting.sql` (provenance
+column and constraints on `staff_work_items`, the `clinic_alert_recipients`/
+`platform_alert_recipients` tables and RPCs, the `alert_deliveries` table
+and constraints, `sync_alert_delivery_candidates()`'s four routing branches,
+`record_platform_signal()`'s hourly dedup, `claim_alert_delivery`/
+`accept_alert_delivery`/`release_alert_delivery`, and
+`alert_monitor_heartbeat` with its freshness check). Fixture conventions
+were taken directly from `supabase/tests/024_intake_dead_letter_handoff.sql`,
+`supabase/tests/047_platform_admin_clinic_controls.sql`,
+`supabase/tests/049_route_resolver_volatility.sql` and
+`supabase/tests/020_staff_work_items.sql` (the last supplying the reusable
+`pg_temp.make_outbox_row(...)` ingest-claim-finalize helper, copied
+verbatim into the new fixture rather than hand-building outbox rows).
+
+All six contract verification commands were run for real against this
+working tree (none touch a database, Resend, Cloudflare, Meta, OpenAI or
+WhatsApp): (1) `pnpm install --frozen-lockfile` → `Already up to date`, exit
+0, confirming no dependency was added; (2) `pnpm typecheck` (`tsc --noEmit`)
+→ clean, exit 0; (3) `pnpm test` → `Test Files 38 passed (38)`, `Tests 1999
+passed | 2 skipped (2001)`, 7.15s, exit 0, including the new
+`test/operationalAlerts.test.ts`; (4) `pnpm exec wrangler deploy --dry-run
+--outdir .wrangler/dry-run` → succeeded, confirming
+`OPERATIONAL_ALERTS_ENABLED ("false")`, `RESEND_FROM_ADDRESS`,
+`STAFF_LOGIN_URL`, `CLOUDFLARE_ACCOUNT_ID`, `DEPLOYMENT_NAME
+("production")` and the three intake queue-name vars bind as plain
+(non-secret) environment variables; (5) the same dry-run against
+`wrangler.staging.toml` → succeeded with `DEPLOYMENT_NAME = "staging"` and
+the `-staging`-suffixed queue names; (6) `git diff --check` → exit 0, no
+whitespace/conflict-marker errors (only pre-existing CRLF-normalization
+notices, not errors).
+
+The new fixture `supabase/tests/053_operational_alerting.sql` was written to
+disk following the conventions above but was **not executed** against any
+database, disposable or otherwise — Codex is the only party who runs it, on
+disposable `vetai-test`, paired with the migration. No real Resend,
+Cloudflare, Supabase, Meta, OpenAI or WhatsApp call was made at any point in
+this pass. No commit, push, or deploy was made. No contract conflict was
+found and no required file fell outside the Phase B "Allowed changes" list.
+
+### Phase B Codex review remediation — 2026-09-06
+
+Checks run: re-read the full "Task 053 Phase B Codex review — 2026-09-06"
+`CHANGES_REQUIRED` record below (5 findings) alongside a full re-read of
+`src/operationalAlerts.ts`, `test/operationalAlerts.test.ts`, and
+`test/index.test.ts` line-by-line before writing anything, so every test
+assumption was checked against the real implementation rather than against
+memory of it. All five findings were addressed within the existing Phase B
+"Allowed changes" list; none required a file, dependency, or contract
+decision outside it, so no contract conflict is being reported.
+
+Finding-by-finding: (1) `isAlertingEnabled`/`isAlertingConfigured` split
+confirmed in place — `/ready` fails closed to 503 the instant alerting is
+enabled but not fully configured, without ever calling the heartbeat RPC;
+`runOperationalAlertMonitor` only writes the heartbeat when all five stages
+(queue backlog, webhook telemetry, sync, repeat-schedule, delivery drain)
+report `"success"`; a Resend failure is a completed check only once its
+fixed failure outcome is durably released via `release_alert_delivery`. (2)
+`getQueueMetrics` reads the real `backlog_count`/`backlog_bytes`/
+`oldest_message_timestamp_ms` fields (not the non-existent `result.backlog`);
+`resolveQueueIds` fails closed and caches nothing unless all three queue
+names resolve to exactly one id each; `checkQueueBacklogs` now applies three
+distinct rules (primary: age-or-trend; DLQ: `backlog_count > 0`; terminal
+DLQ: `backlog_count > 0` AND age-gated) replacing the old uniform `>= 50`,
+and the test that pinned the old DLQ-backlog-3-as-non-alerting behavior was
+removed. (3) confirmed `claim_alert_delivery()` (SQL, prior window) rechecks
+tenant-bound work item and unresolved state under the claim transaction, and
+that `schedule_alert_repeat_notifications` is wired into
+`runOperationalAlertMonitor`'s orchestration. (4) confirmed `readAlertClaim`
+validates the exact 10-key claim-row shape (UUID id/recipient/work-item/
+token, known signal-kind, scope with no unknown-to-clinic fallback,
+scope/clinic_id coherence, bounded email, positive-integer occurrence count,
+parseable timestamp) and that `sendAlertEmail` requires Resend's response
+body to parse with a non-empty string `id` before treating the send as
+sent. (5) confirmed `checkWebhookTelemetry` unconditionally returns
+`"unavailable"` regardless of response shape, so the monitor's heartbeat can
+never advance until a real account verifies the telemetry response shape —
+this is a real, currently-permanent operational consequence, not a test gap;
+see the delivery record below.
+
+This session's own work was: (a) a full rewrite of
+`test/operationalAlerts.test.ts` (53 tests) to non-vacuously cover all five
+findings above, verified against the implementation rather than assumed; (b)
+a fix to two pre-existing `test/index.test.ts` tests that had gone stale
+under the new fail-closed `/ready` gate (they exercised the heartbeat RPC
+using a flag-only env, which the new gate now short-circuits before any RPC
+call), plus one new test proving the flag-only-config path fails closed to
+503 without ever calling the RPC; (c) a new dated subsection in
+`docs/operational-alerting.md` §8 documenting all of the above in Turkish
+for the product/ops audience. `src/operationalAlerts.ts` itself required no
+edits this pass — its logic already matched the contract from a prior
+window; this pass's job was verification and test coverage, plus the one
+downstream test fix.
+
+All six contract verification commands were re-run for real against this
+working tree (none touch a database, Resend, Cloudflare, Meta, OpenAI or
+WhatsApp): (1) `pnpm install --frozen-lockfile` → `Already up to date`, exit
+0; (2) `pnpm typecheck` → clean, exit 0; (3) `pnpm test` → `Test Files 38
+passed (38)`, `Tests 2027 passed | 2 skipped (2029)`, exit 0 (the 2 skips
+are pre-existing, unrelated live-eval tests); (4) `pnpm exec wrangler deploy
+--dry-run --outdir .wrangler/dry-run` → succeeded; (5) the same dry-run
+against `wrangler.staging.toml` → succeeded; (6) `git diff --check` → exit
+0 (only pre-existing CRLF-normalization notices, not errors). The migration
+and the SQL fixture were not executed against any database at any point in
+this pass, and no commit, push, or deploy was made.
+
 ## Task 053 delivery record
 
 Checks run (original pass): `git diff --check` — no whitespace/conflict
@@ -791,6 +912,800 @@ addressing all nine points in Opus's Phase A review triage. Top-of-file
 `Status` stays `IN_REVIEW`. No second task started; no Phase B step
 executed; no production/activation checkbox in any touched file was
 checked; all nine activation rows remain NOT RUN.
+
+### Phase B delivery record — 2026-09-06
+
+**Files changed** (all within the Phase B "Allowed changes for the
+implementation" list; `.gitignore` and `docs/043-opus-inceleme.md` were
+read-only for pre-existing-exclusion context and were not modified):
+
+New: `supabase/migrations/20260905000100_operational_alerting.sql` (the
+migration itself, NOT RUN by Sonnet against any database);
+`supabase/tests/053_operational_alerting.sql` (rollback-only fixture, NOT
+RUN by Sonnet against any database); `src/operationalAlerts.ts` (alert
+send/monitor logic, native `fetch`, no Resend SDK, no new dependency);
+`test/operationalAlerts.test.ts`.
+
+Modified: `src/env.ts` (8 Task 053 env vars declared optional);
+`src/index.ts`/`test/index.test.ts` (Worker wiring and its tests);
+`src/intakeConsumer.ts`/`test/intakeConsumer.test.ts` (dead-letter
+provenance tagging integration and its tests); `wrangler.toml`/
+`wrangler.staging.toml` (non-secret `[vars]` additions only —
+`OPERATIONAL_ALERTS_ENABLED="false"`, `RESEND_FROM_ADDRESS`,
+`STAFF_LOGIN_URL`, a bracket-placeholder `CLOUDFLARE_ACCOUNT_ID`,
+`DEPLOYMENT_NAME`, and the three intake queue-name vars reusing real
+pre-existing queue names; `RESEND_API_KEY` and
+`CLOUDFLARE_ALERTS_MONITORING_TOKEN` deliberately excluded, remaining
+`wrangler secret put`-only); `.dev.vars.example` (local secret placeholders
+for the two new secrets); `docs/database-schema.md`, `docs/inbound-queue.md`,
+`docs/staff-work-items.md`, `docs/operational-alerting.md`,
+`docs/production-readiness.md`, `docs/staging-runbook.md`,
+`docs/kvkk-inceleme-paketi.md`, `docs/saas-urunlestirme-yol-haritasi.md`
+(documentation for the new tables/RPCs/provenance behavior, including the
+dead-letter marker doc correction named in Opus's Phase A triage). No
+dependency was added; `package.json`/the lockfile are unchanged, confirmed
+by `pnpm install --frozen-lockfile` reporting `Already up to date`.
+
+**Test counts**: 38 test files passed (38 total), 1999 tests passed, 2
+skipped, 0 failed, 7.15s. `tsc --noEmit` clean. Both Wrangler dry-runs
+(production config and `wrangler.staging.toml`) succeeded.
+
+**NOT RUN** (per this task's hard constraints, none of the following were
+executed by Sonnet): the migration
+`supabase/migrations/20260905000100_operational_alerting.sql`, not applied
+to any database; the fixture `supabase/tests/053_operational_alerting.sql`,
+not executed against any database, disposable or otherwise; any real
+Resend, Cloudflare, Supabase, Meta, OpenAI or WhatsApp API call;
+activation — `OPERATIONAL_ALERTS_ENABLED` stays `"false"` in both Wrangler
+configs; and no commit, push, or deploy was made.
+
+**Risks and open items for Codex/Opus review:**
+
+- **RLS**: the four new tables (`clinic_alert_recipients`,
+  `platform_alert_recipients`, `alert_deliveries`,
+  `alert_monitor_heartbeat`) follow the established repo pattern — RLS
+  enabled, zero policies, revoked from `anon`/`authenticated`/`PUBLIC`,
+  granted only to `service_role` (select+update only on the heartbeat
+  singleton, all on the other three). The fixture asserts this shape via
+  `pg_catalog`/`information_schema` introspection, but Codex must confirm
+  it on a real database — this session could not directly inspect whether
+  `service_role`'s RLS bypass holds as assumed.
+- **Tenant isolation**: `sync_alert_delivery_candidates()`'s clinic-scope
+  fanout joins only on the work item's own `clinic_id`; the fixture proves
+  a clinic-B recipient never receives a clinic-A delivery row (and vice
+  versa) but only within one clinic pair — worth a sanity check with more
+  than two tenants on the disposable database.
+- **Lock/lease**: `claim_alert_delivery`'s `for update skip locked` cannot
+  be exercised for true cross-session concurrency inside a single-session
+  SQL fixture (same limitation as `020`/`047`/`049`); the fixture instead
+  proves the lease/backoff/exhaustion state machine sequentially (5-minute
+  lease, 2-minute backoff, 3-attempt ceiling) and relies on code review of
+  the `skip locked` clause itself for the concurrency claim.
+- **Provenance**: the fixture proves `provenance='intake_dead_letter'` is
+  set by `finalize_intake_dead_letter` on both the empty-first-turn-marker
+  path and the existing-snapshot-preserved path, that ordinary
+  safety-signal/normal handoffs stay `provenance='workflow'`, and that the
+  cross-column check (`intake_dead_letter` provenance can never attach to a
+  non-`human_handoff` kind) rejects a direct attempt. It does not exercise a
+  resolved work item's exclusion from future candidate scans as a separate
+  runtime case — that follows from the `WHERE status <> 'resolved'` clause
+  in each branch's CTE by inspection, not by a dedicated test; flagging so
+  Codex can decide whether inspection is sufficient before activation.
+- **Dedup**: `sync_alert_delivery_candidates()` dedups on `'work_item:' ||
+  work_item_id || ':' || recipient_scope || ':' || recipient_user_id`;
+  `record_platform_signal()` dedups hourly on `'platform_signal:' ||
+  signal_kind || ':' || coalesce(queue_id,'-') || ':' || hour_bucket || ':'
+  || recipient_user_id`. Both are proven idempotent (a second sync/signal
+  call inserts nothing new, or bumps `occurrence_count` instead), but only
+  within one hour bucket and one sync cycle — an hour-boundary rollover was
+  not exercised (would require manipulating `now()`, out of scope for a
+  rollback-only fixture).
+- **Secrets**: `RESEND_API_KEY` and `CLOUDFLARE_ALERTS_MONITORING_TOKEN` are
+  never written to `wrangler.toml`/`wrangler.staging.toml`/this repo — only
+  placeholder names in `.dev.vars.example`, to be set via `wrangler secret
+  put` at real activation time. No token, account UUID, or real email/domain
+  was written anywhere; the fixture and configs use the
+  `example.invalid`/`.invalid`-domain/synthetic-UUID convention throughout.
+- **KVKK**: unchanged from Phase A's open item — the recipient-store
+  inventory addition to `docs/kvkk-inceleme-paketi.md` and the email
+  provider's processor/KVKK review remain owner/Codex decisions; this Phase
+  B pass implements the storage and delivery mechanics only and does not
+  resolve either KVKK precondition.
+- Carried over from Phase A, still unresolved and outside this pass's
+  scope: the exact Cloudflare Observability field name for webhook-5xx
+  evidence, the ambiguous-queue-name fail-closed-vs-config-source decision,
+  the `occurrence_count` mechanism's real-world tuning, the platform-copy
+  content option (aggregate-only vs. clinic UUID) for row 9, and the
+  independent `/ready` provider decision.
+
+Sonnet-side status: implementation complete, all six contract verification
+commands green, **NOT** activated (`OPERATIONAL_ALERTS_ENABLED` stays
+`"false"`), **NOT** committed. No contract conflict was found; no mandatory
+file fell outside the allowed list. Ready for Codex database-application and
+fixture execution on disposable `vetai-test`, followed by Opus closure
+review, per the contract's own verification and delivery requirements.
+
+### Phase B Codex review remediation delivery record — 2026-09-06
+
+**Files changed this pass** (all within the Phase B "Allowed changes" list;
+`.gitignore` and `docs/043-opus-inceleme.md` were not touched):
+
+Modified: `test/operationalAlerts.test.ts` (fully rewritten to
+non-vacuously cover all 5 Codex findings below, verified line-by-line
+against the current `src/operationalAlerts.ts`, not against memory of it);
+`test/index.test.ts` (two pre-existing `/ready` tests retargeted to a fully
+configured alerting env, since the new fail-closed `isAlertingConfigured`
+gate now short-circuits before the heartbeat RPC on a flag-only env; one
+new test added proving that flag-only path fails closed to 503 without ever
+calling the RPC); `docs/operational-alerting.md` (new dated §8 subsection
+documenting the fixes below for the product/ops audience). No other allowed
+file needed a change this pass — in particular `src/operationalAlerts.ts`
+was re-read in full and found to already implement all 5 findings
+correctly from a prior window; this pass's job was verifying that against
+ground truth and adding the missing non-vacuous test coverage, plus the one
+downstream test fix it exposed. `wrangler.toml`, `wrangler.staging.toml`,
+`.dev.vars.example`, `src/env.ts`, and `test/intakeConsumer.test.ts` were
+checked and needed no change.
+
+**Test counts**: `test/operationalAlerts.test.ts` alone: 53 tests, all
+passing. Full suite: `Test Files 38 passed (38)`, `Tests 2027 passed | 2
+skipped (2029)` (the 2 skips are pre-existing, unrelated live-eval tests,
+not new). `tsc --noEmit` clean. Both Wrangler dry-runs (production config
+and `wrangler.staging.toml`) succeeded. `git diff --check` exit 0.
+
+**NOT RUN** (per this task's hard constraints, none of the following were
+executed this pass): the migration
+`supabase/migrations/20260905000100_operational_alerting.sql`, not applied
+to any database; the fixture `supabase/tests/053_operational_alerting.sql`,
+not executed against any database; any real Resend, Cloudflare, Supabase,
+Meta, OpenAI or WhatsApp API call; no commit, push, or deploy was made.
+
+**Risks and open items for Codex/Opus review:**
+
+- **Heartbeat is now permanently blocked by telemetry unavailability**:
+  Finding 5 requires `checkWebhookTelemetry` to always return
+  `"unavailable"` until a real account verifies its response shape, and
+  Finding 1 requires the heartbeat to advance only when all five monitor
+  stages report `"success"`. The direct, intended consequence is that
+  `alert_monitor_heartbeat` can **never** go fresh in the current
+  deployment — `/ready` will report `alertMonitorHeartbeat: "stale"`
+  indefinitely once `OPERATIONAL_ALERTS_ENABLED` and the rest of the config
+  are turned on, even though queue/sync/drain may all genuinely be healthy.
+  This is contract-mandated, not a bug, but it means `/ready` cannot be
+  activated in this alerting-enabled form without either (a) a real
+  Cloudflare Observability account verifying the telemetry response shape
+  so `checkWebhookTelemetry` can return real `"success"`/`"unavailable"`
+  results, or (b) an explicit owner decision to exclude telemetry from the
+  heartbeat gate. Flagging this prominently before the next activation
+  decision, since it directly affects whether `/ready` can ever return 200
+  with alerting enabled.
+- **No contract conflict found**: all 5 Codex findings were addressable
+  within the existing Phase B "Allowed changes" list and existing fixed
+  decisions; none required narrowing scope or a new owner decision, so
+  none is being escalated here beyond the telemetry point above (which is
+  a consequence of an already-fixed decision, not an open question).
+- All risks/open items listed in the original Phase B delivery record above
+  (RLS, tenant isolation, lock/lease, provenance, dedup, secrets, KVKK, and
+  the carried-over Phase A items) remain unchanged and unresolved by this
+  pass — this pass only touched TypeScript tests and documentation, not the
+  SQL migration or fixture.
+
+Sonnet-side status: Codex-review remediation complete, all six contract
+verification commands re-run and green, **NOT** activated, **NOT**
+committed. Ready for Codex re-review.
+
+### Phase B Codex re-review remediation delivery record — 2026-09-06
+
+Fixed all five `CHANGES_REQUIRED` findings from the Phase B Codex re-review
+below (items 1-5, expanding to the ten numbered sub-requirements in that
+section). Changed files: `supabase/migrations/20260905000100_operational_alerting.sql`
+(`alert_deliveries` gains a `recovered_at timestamptz` column plus a check
+constraint, and a new partial unique index
+`alert_deliveries_active_series_idx` on `(work_item_id, recipient_scope,
+recipient_user_id) where delivery_status in ('pending','claimed')` enforces
+the series/dedup relationship as a real constraint, not an application
+convention; `claim_alert_delivery()` now takes a `for no key update` lock on the
+work item row and re-reads its status after acquiring it, ordered after the
+existing `alert_deliveries for update skip locked` lock so it cannot
+deadlock against `resolve_staff_work_item`'s own lock order;
+`accept_alert_delivery()`'s recovery branch sets `recovered_at` explicitly
+instead of leaving it inferred; `schedule_alert_repeat_notifications()` no
+longer reopens the original row in place — it inserts a brand-new row per
+due repeat with its own id and a per-repeat `dedup_key`, swallows a
+`unique_violation` against the new index, and leaves the original row as
+immutable history; `alert_monitor_heartbeat.last_run_at` is now nullable
+with no default and the seed row omits it, so the heartbeat starts stale
+until the first real successful run); `src/operationalAlerts.ts` (queue
+metrics treat `oldest_message_timestamp_ms <= 0` or non-finite as unknown,
+reject negative/non-finite `backlog_count`/`backlog_bytes` outright, and
+URL-encode the queue id; the three queue-name env vars are now required,
+mutually distinct and pattern-bound by the enabled-config gate;
+`.invalid`-TLD sender/login values are rejected while alerting is enabled;
+a threshold-triggered queue check that fails to record its platform signal
+now returns `unavailable`, never `success`; the drain loop only continues
+past `accepted`/`already_accepted`, treating `stale_claim`/`not_found` as
+`unavailable`; the observability-telemetry codepath is now a zero-argument
+stub that always returns `unavailable` with no fetch, no RPC and no
+mutation, since it has never been verified against a live account — the
+dead `countRecentResponsesByStatus` helper was deleted outright rather than
+left unused); `test/operationalAlerts.test.ts` (new/rewritten cases for
+each item above, including duplicate/missing queue names, `.invalid`-TLD
+rejection while enabled, raw `oldest_message_timestamp_ms` of `0`/`-1` and
+non-finite backlog counters, a failed `record_platform_signal` on a
+threshold fire, `stale_claim`/`not_found` after a send, and the
+zero-argument telemetry stub — dead `telemetry5xx`/`telemetry401`/
+`telemetryOk` fixture plumbing was deleted with the old stub rather than
+kept around unused); `test/index.test.ts` (the fully-configured alert env
+fixture gained the three `INTAKE_*_NAME` vars now required by the
+distinct-queue-name gate, and its sender/login fixtures moved from
+`.invalid` to `.test`, since `.invalid` is now rejected while enabled);
+`supabase/tests/053_operational_alerting.sql` (section 9c's repeat/recovery
+scenario rewritten end-to-end to assert a fresh id and fresh
+`dedup_key`/`repeat_count`/`occurrence_count` on the new repeat row, byte-
+for-byte immutability of the original accepted row across the whole chain,
+an explicit `recovered_at` on recovery, and a direct
+`unique_violation`-on-`alert_deliveries_active_series_idx` check for a
+duplicate live row in the same series; section 9b gained a comment
+documenting that a single-session pgTAP script cannot itself hold the
+concurrent lock the new claim-time recheck defends against, and what the
+existing sequential assertion does still prove; section 10 rewritten to
+assert the seed heartbeat starts with a null `last_run_at` and reads stale
+under both a narrow and a wide `max_age_seconds` window, only becoming
+fresh after a real `record_alert_monitor_heartbeat()` call).
+
+No provider abstraction or new dependency was introduced; all edits stayed
+within the Task 053 allowed-changes list; `.gitignore` and
+`docs/043-opus-inceleme.md` were not touched.
+
+All six contract verification commands were re-run for real against this
+working tree (none touch a database, Resend, Cloudflare, Meta, OpenAI or
+WhatsApp): (1) `pnpm install --frozen-lockfile` → `Already up to date`, exit
+0; (2) `pnpm typecheck` → clean, exit 0; (3) `pnpm test` → `2039 passed | 2
+skipped`, exit 0 (the 2 skips are the same pre-existing, unrelated
+live-eval tests as every prior pass); (4) `pnpm exec wrangler deploy
+--dry-run --config wrangler.toml` → succeeded, confirming the disabled-by-
+default production config still ships its `.invalid` placeholders
+unchanged (intentional — alerting is off there, so the new `.invalid`
+rejection never triggers); (5) the same dry-run against
+`wrangler.staging.toml` → succeeded, same placeholders; (6) `git diff
+--check` → exit 0 (only pre-existing CRLF-normalization notices, not
+errors). The migration and the SQL fixture were **NOT RUN** against any
+database at any point in this pass — the fixture file was edited as plain
+text only and never executed — and no commit, push, or deploy was made.
+
+Known limitations / risks for Codex to inspect: (a) the new claim-time work-
+item lock's true concurrent-race behavior is asserted by code inspection of
+the lock ordering plus a documented note in the SQL fixture, not by an
+actual two-transaction race, since a single-session pgTAP script cannot
+open two overlapping transactions — Codex should independently confirm the
+lock ordering in `claim_alert_delivery()` (work item locked strictly after
+`alert_deliveries`, mirroring `resolve_staff_work_item`) if a stronger
+guarantee than static analysis is required; (b) all risks/open items listed
+in the original Phase B delivery record and the first Phase B Codex-review
+remediation record above (RLS, tenant isolation, provenance, secrets, KVKK,
+and carried-over Phase A items) remain unchanged and unresolved by this
+pass, which only targeted the ten re-review sub-requirements.
+
+Sonnet-side status: Codex re-review remediation complete, all six contract
+verification commands re-run and green, **NOT** activated, **NOT**
+committed. Ready for Codex re-review.
+
+### Phase B Codex second re-review remediation delivery record — 2026-09-06
+
+Fixed both `CHANGES_REQUIRED` blockers from the Phase B Codex second
+re-review below. Changed files: `src/operationalAlerts.ts`
+(`drainAlertDeliveries`'s failed-send release branch at the former line 580
+no longer continues on `stale_claim`/`not_found` — only `retrying`,
+`exhausted` and `already_terminal` count as a durably-recorded completed
+check; `stale_claim`, `not_found` and any unrecognized/malformed release
+result now return `unavailable`, matching the accept-path behavior from the
+first re-review's item 8); `test/operationalAlerts.test.ts` (added the
+release-path equivalents of the existing accept-path tests: an
+`it.each(["stale_claim", "not_found"])` case proving a failed send followed
+by either result is never treated as durably recorded — one claim, one
+Resend call, one release call carrying `p_failure_reason: "send_failed"`,
+no heartbeat recorded — plus a standalone case for an unrecognized release
+result stopping the drain the same way); `supabase/migrations/20260905000100_operational_alerting.sql`
+(all four `alert_deliveries` foreign keys — to `staff_work_items` twice, to
+`clinic_alert_recipients`, and to `platform_alert_recipients` via the
+generated `platform_recipient_ref` column — gained `on delete cascade`, and
+`alert_recipient_audit.clinic_id` gained a new `references public.clinics
+(id) on delete cascade` foreign key it previously lacked entirely; SET NULL
+was not viable on `platform_recipient_ref` since it is a generated column
+that would simply recompute back to the same non-null value); `supabase/tests/053_operational_alerting.sql`
+(new section 12: a dedicated synthetic clinic and platform admin, isolated
+from every other section's fixture data, carrying a clinic-scope delivery
+and a platform-scope delivery on the same work item plus one
+clinic-independent platform-signal delivery, a clinic recipient and its
+audit row; a real `delete from public.clinics` proves zero tenant-derived
+residue in `clinic_staff`, `clinic_alert_recipients`, `alert_recipient_audit`,
+`staff_work_items` and both work-item-bound `alert_deliveries` rows, while
+the unrelated platform signal and the pre-existing fixture clinics/admins
+are confirmed untouched; a subsequent real `delete from public.platform_admins`
+proves the platform recipient and its own signal delivery are removed
+without any FK block).
+
+No provider abstraction or new dependency was introduced; all edits stayed
+within the Task 053 allowed-changes list; `.gitignore` and
+`docs/043-opus-inceleme.md` were not touched.
+
+All six contract verification commands were re-run for real against this
+working tree (none touch a database, Resend, Cloudflare, Meta, OpenAI or
+WhatsApp): (1) `pnpm install --frozen-lockfile` → `Already up to date`, exit
+0; (2) `pnpm typecheck` → clean, exit 0; (3) `pnpm test` → `2042 passed | 2
+skipped`, exit 0 (same 2 pre-existing, unrelated live-eval skips as every
+prior pass); (4) `pnpm exec wrangler deploy --dry-run --config
+wrangler.toml` → succeeded; (5) the same dry-run against
+`wrangler.staging.toml` → succeeded; (6) `git diff --check` → exit 0 (only
+pre-existing CRLF-normalization notices, not errors). The migration and the
+SQL fixture were **NOT RUN** against any database at any point in this
+pass — both were edited as plain text only and never executed — and no
+commit, push, or deploy was made. Alerting remains disabled by default in
+both configs (`OPERATIONAL_ALERTS_ENABLED = "false"`), unchanged by this
+pass.
+
+Known limitations / risks for Codex to inspect: (a) the new `on delete
+cascade` actions and the new `alert_recipient_audit` foreign key were
+verified by direct inspection of `finalize_clinic_offboarding_v1` and
+`set_platform_admin_v1`'s existing delete statements plus every intermediate
+cascade path (`clinics → clinic_staff → clinic_alert_recipients`, `clinics →
+staff_work_items`, `platform_admins → platform_alert_recipients`) and by the
+new section-12 fixture text, not by an actual database run — Codex's
+disposable-database gate is the first real execution of this cascade;
+(b) all risks/open items listed in the original Phase B delivery record and
+both prior Phase B Codex-review remediation records above (RLS, tenant
+isolation, provenance, secrets, KVKK, and carried-over Phase A items) remain
+unchanged and unresolved by this pass, which only targeted the two
+second-re-review blockers.
+
+Sonnet-side status: Codex second re-review remediation complete, all six
+contract verification commands re-run and green, **NOT** activated, **NOT**
+committed. Ready for Codex re-review.
+
+## Task 053 Phase B Codex review — 2026-09-06
+
+Decision: `CHANGES_REQUIRED`. No database, external service, deployment,
+commit or push was performed. Codex ran the three affected TypeScript test
+files only: 3 files / 283 tests passed. Those tests currently pin several of
+the incorrect behaviors below, so a green result is not acceptance evidence.
+The migration and SQL fixture remain `NOT RUN`.
+
+1. **The monitor can record a false-success heartbeat.**
+   `src/operationalAlerts.ts:107-117` discards both `Promise.allSettled`
+   results, ignores null/unknown results from Queue, telemetry, sync, claim,
+   send/release and then calls `record_alert_monitor_heartbeat` unconditionally.
+   Missing Cloudflare/Resend/deployment configuration also causes an early
+   return inside one stage rather than a failed run. Consequently `/ready`
+   can stay green while every mandatory source or email delivery is broken,
+   contrary to Phase B database item 7 and Worker item 7. Make enabled config
+   validation explicit and fail closed in `/ready`; make every mandatory
+   stage return a closed success/unavailable result; advance the heartbeat
+   only after all sources were successfully queried and their observations
+   durably recorded. A provider-send failure may still count as a completed
+   run only if its fixed failure outcome was durably released/recorded.
+
+2. **Queue monitoring does not implement the real API or reviewed alarm
+   semantics.** `getQueueBacklog` reads `result.backlog`, while the reviewed
+   Get Queue Metrics contract exposes `backlog_count`, `backlog_bytes` and
+   `oldest_message_timestamp_ms`. `resolveQueueIds` also accepts and caches a
+   partial set, silently skips missing queue ids and does not validate ids.
+   Finally, one global `>= 50` threshold is applied to all three queues, so a
+   DLQ or terminal-DLQ backlog of one is missed and primary oldest-message age
+   is ignored. `test/operationalAlerts.test.ts:236-255` currently pins this
+   wrong behavior by treating DLQ backlog 3 as non-alerting. Require exactly
+   one valid id for each configured name, parse the full metrics response
+   strictly and implement the distinct primary/DLQ/terminal rules from
+   `docs/operational-alerting.md` (including unknown rather than zero).
+
+3. **Resolved work can still be newly claimed, and required repeat/recovery
+   states are absent.** Candidate sync filters `status <> 'resolved'`, but
+   `claim_alert_delivery()` rechecks only the recipient. A work item resolved
+   after sync and before claim is therefore newly claimed and emailed, which
+   directly contradicts Phase B database item 6. Recheck the tenant-bound work
+   item and unresolved state under the claim transaction. The delivery model
+   has only `pending/claimed/accepted/failed`; normal/urgent/dead-letter repeat
+   schedules and recovery are neither represented nor executed despite the
+   contract requiring explicit closed repeat/recovery states. Implement the
+   approved Phase A semantics or keep activation blocked behind an explicit
+   owner decision and amend the contract before narrowing them.
+
+4. **Trust-boundary parsing and durable references are not fail closed.**
+   `readAlertClaim()` accepts inherited/extra properties, unbounded values and
+   maps every unknown `recipient_scope` to `clinic`; signal kind, UUIDs, email,
+   timestamp and integer ranges are not closed-validated. Resend any 2xx is
+   accepted without validating its documented response object. In SQL,
+   `alert_deliveries` has no foreign key to the current clinic/platform
+   recipient record or work item, platform rows may carry a clinic id, and
+   recipient enable/disable overwrites one row without an actor/reason/history
+   trail even though the contract requires database-enforced references,
+   tenant constraints and an audited removal/disable mutation. Add exact
+   response/input validation, scope-coherence constraints and the minimum
+   durable audit/reference enforcement.
+
+5. **Observability's unverified response cannot produce a successful run.**
+   The implementation sends ISO-string time bounds and assumes
+   `result.total/events`; both request and response shapes are explicitly
+   marked `NOT VERIFIED`. Until a real account establishes the correct query
+   and field shape, the source must return `unavailable`, suppress the
+   heartbeat and keep activation blocked. Tests must prove malformed/non-2xx/
+   missing-field/token-denied cases never advance heartbeat.
+
+Required remediation evidence: focused tests for each failure path above,
+SQL fixture coverage for resolved-after-sync-before-claim plus repeat/recovery
+and tenant-reference/audit constraints, then the full six local gates. Do not
+run the migration/fixture or activate alerts. Resubmit to Codex before the
+mandatory Opus review and disposable-database gate.
+
+## Task 053 Phase B Codex re-review — 2026-09-06
+
+Decision: `CHANGES_REQUIRED`. The first review's queue field/threshold,
+partial queue resolution, basic claim-shape, recipient-reference/audit and
+sequential resolved-before-claim findings are substantially addressed.
+Codex reran the three affected TypeScript files: 3 files / 311 tests passed.
+The new tests do not cover the blocking cases below. No migration, SQL
+fixture, external call, deploy, commit or push was performed.
+
+1. **Repeat emails reuse the original Resend idempotency key and overwrite
+   their delivery history.** `schedule_alert_repeat_notifications()` reopens
+   the same `alert_deliveries` row and `sendAlertEmail()` always sends that
+   row's unchanged `id` as `Idempotency-Key`. Resend retains a key for 24
+   hours: the same payload returns the original response without sending a
+   second email, while a changed payload returns 409. Therefore the intended
+   urgent 15/30/60-minute reminders cannot be delivered. Reopening also clears
+   `accepted_at`; after three failed repeat attempts the row becomes `failed`,
+   erasing the durable fact that the first notice was accepted. Give every
+   intended email attempt/notice its own durable delivery UUID while keeping a
+   database-enforced series/dedup identity; never recycle an accepted row.
+   Represent recovery explicitly (for example a closed recovered timestamp or
+   state) instead of leaving an accepted row with a permanently stale
+   `next_repeat_at`.
+
+2. **The claim-time unresolved check is still racy under concurrency.**
+   `claim_alert_delivery():756-789` locks only the delivery row. Its correlated
+   `exists` reads `staff_work_items.status` from the statement snapshot without
+   locking that work item. A concurrent staff resolution can therefore commit
+   after the read but before the delivery becomes claimed, and the email is
+   still sent. The sequential fixture at `053:828-854` does not exercise this
+   race. Lock/re-read the tenant-bound work item in a deterministic order that
+   is compatible with `resolve_staff_work_item`, and document the true
+   two-session limitation for the remaining concurrency proof.
+
+3. **Queue unknown/config/durable-result handling is not closed.** Cloudflare
+   documents `oldest_message_timestamp_ms = 0` as unknown; current subtraction
+   treats zero as an epoch timestamp and therefore as an extremely old message,
+   producing false primary/terminal alerts. Reject negative/non-finite counts
+   and translate exactly zero to unknown. `isAlertingConfigured()` omits all
+   three required queue names, permits duplicate names and accepts the checked-
+   in `.invalid` sender/login placeholders once the account id is replaced.
+   Queue ids are not bounded or URL-encoded. Finally, `checkQueueBacklogs()`
+   ignores a failed `record_platform_signal` RPC and still returns `success`,
+   so a threshold breach can be lost while a future verified monitor advances
+   heartbeat. Correct these cases and add non-vacuous tests.
+
+4. **Heartbeat can be fresh before the monitor has ever succeeded, and some
+   delivery failures are not durably recorded.** The heartbeat row is inserted
+   with `last_run_at default now()`, so enabling alerting within three minutes
+   of migration can make `/ready` green without any successful monitor run.
+   Initialize it stale/null and make freshness require a real recorded run.
+   The monitor also treats `stale_claim`/`not_found` after a Resend send and
+   after a failed-send release as successful drain outcomes even though neither
+   acceptance nor the fixed failure was durably recorded by that invocation.
+   Only outcomes that prove the intended durable state may count toward a
+   successful heartbeat.
+
+5. **Unverified Observability data still has side effects.** Although
+   `checkWebhookTelemetry()` correctly returns `unavailable`, it still parses
+   the explicitly unverified guessed response shape and may call
+   `record_platform_signal`, which can send real false-positive email while the
+   feature is enabled. Until the live Cloudflare contract is verified, this
+   source must make no alert mutation. Keeping heartbeat blocked is correct;
+   emitting guessed alerts is not.
+
+Required remediation: fix the five items above with the smallest existing-
+pipeline design; do not add a provider abstraction. Update the SQL fixture for
+immutable per-notice delivery history, explicit recovery, initial stale
+heartbeat and sequential state proofs; add focused Worker tests for Resend key
+uniqueness across repeats, Cloudflare timestamp zero, missing/duplicate queue
+names, failed signal persistence and unverified telemetry with zero mutation.
+Then rerun the six local gates. Migration/fixture execution and external
+activation remain unauthorized. Resubmit to Codex before Opus/disposable DB.
+
+## Task 053 Phase B Codex second re-review — 2026-09-06
+
+Decision: `CHANGES_REQUIRED`. The fresh per-notice repeat UUID/dedup key,
+explicit recovery marker, claim-time work-item lock, stale heartbeat seed,
+queue parsing/configuration and side-effect-free unverified telemetry fixes are
+present. Codex reran the three affected TypeScript files: 3 files / 323 tests
+passed. The tests do not cover the two remaining blocking paths below. No
+migration, SQL fixture, external call, deploy, commit or push was performed.
+
+1. **A failed-send release can still fabricate a successful monitor run.**
+   `src/operationalAlerts.ts:580` continues the drain for
+   `release_alert_delivery = stale_claim | not_found`. In either case this
+   invocation durably recorded neither the fixed send failure nor a known
+   terminal delivery state, yet a later empty claim can make the stage return
+   `success`. This is the still-open release half of the first re-review's item
+   4 (`CURRENT_TASK.md:1317-1321`). Continue only for `retrying`, `exhausted`
+   and `already_terminal`; return `unavailable` for `stale_claim`, `not_found`
+   and every unknown/malformed result. Add the same non-vacuous one-claim,
+   no-heartbeat tests already present for the accept path.
+
+2. **The new foreign keys break existing lifecycle deletion paths.**
+   `alert_deliveries` references `staff_work_items`, the tenant-bound work-item
+   key, `clinic_alert_recipients` and `platform_alert_recipients` without an
+   `ON DELETE` action (`20260905000100_operational_alerting.sql:537-560`). Once
+   an alert row exists, Task 041's `delete from public.clinics` offboarding
+   cascade cannot delete the clinic's staff/work items/recipients; similarly,
+   deleting a platform-admin recipient can be blocked by delivery history.
+   `alert_recipient_audit` also retains clinic/user identifiers after clinic
+   offboarding because it has no tenant FK. Add the minimum cascade/coherence
+   actions needed so clinic offboarding still removes all clinic-derived alert
+   state and platform-admin removal is not blocked, while keeping unrelated
+   platform signals intact. Extend the rollback fixture with real delete
+   behavior: one clinic with recipient/audit/clinic- and platform-scope work-item
+   deliveries must delete cleanly with zero tenant-derived alert residue; a
+   platform recipient with a platform-signal delivery must also delete cleanly.
+   Recheck the resulting multi-FK cascade order rather than relying only on
+   catalog text.
+
+After these two corrections, rerun the affected Worker tests and all six local
+gates. Keep the migration/fixture `NOT RUN` and alerting disabled. Resubmit to
+Codex before the mandatory Opus and disposable-database gates.
+
+## Task 053 Phase B Codex final static re-review — 2026-09-06
+
+Decision: `PASS` for the repository/static gate. The failed-send release path
+now continues only for `retrying | exhausted | already_terminal`; a
+`stale_claim`, `not_found` or unknown/malformed result returns `unavailable`
+and suppresses the heartbeat. The added tests prove one claim, one failed
+Resend attempt, one fixed-reason release and no heartbeat for the two closed
+stale/missing results, plus the unknown-result path.
+
+The four `alert_deliveries` foreign keys now use `ON DELETE CASCADE`, and
+clinic-scope recipient audit rows are tied to `clinics(id) ON DELETE CASCADE`.
+The new fixture section uses actual deletes—not catalog-text matching—to cover
+clinic staff/recipient/audit/work-item cleanup, both clinic- and platform-scope
+deliveries derived from the clinic work item, survival of an unrelated
+platform signal, and later platform-admin/recipient removal without an FK
+block. PostgreSQL permits the two work-item cascade paths; their actual
+execution and the remaining RLS/tenant/concurrency assertions are still
+reserved for the required disposable-database run.
+
+Codex reran the three affected TypeScript files: 3 files / 326 tests passed.
+`git diff --check` also passed with only line-ending warnings. Codex did not
+run the full suite again at this intermediate gate because Sonnet's latest
+delivery already records all six green local gates and the mandatory Opus and
+database gates still precede commit; Codex will run the required full local
+suite once more on the final reviewed tree before commit. No database,
+external service, deploy, commit or push was performed. Alerting remains
+disabled. Next gates: mandatory Opus read-only review, then Codex's authorized
+disposable-database migration/fixture proof with zero residue.
+
+## Task 053 Phase B mandatory Opus review — 2026-09-06
+
+Decision: `CHANGES_REQUIRED`. Opus performed a read-only static review: no
+file, database, external service, test, migration, deployment, commit or push
+was changed/run. Codex independently traced the four blocking paths below and
+accepts them. The intentionally unavailable Workers Observability source
+remains a separate, explicit activation blocker; do not replace it with an
+unverified query merely to make heartbeat green.
+
+1. **No enabled platform recipient must be a closed unavailable state.**
+   `record_platform_signal()` currently returns `recorded` even when its
+   `insert ... select` affects zero rows. Return a distinct closed
+   `no_recipients` result when no enabled platform recipient exists, and make
+   the Worker treat every result except exact `recorded` as `unavailable`.
+   The same invariant must prevent heartbeat from becoming/staying fresh when
+   no enabled platform recipient exists: enforce it in the heartbeat record
+   and freshness RPCs rather than relying only on an activation checklist.
+   Add SQL and Worker tests for zero recipients, recipient removal after a
+   prior heartbeat and a threshold that fires without a recipient.
+
+2. **Incomplete enabled configuration must never consume delivery attempts.**
+   `runOperationalAlertMonitor()` is gated only by the feature flag, while
+   `sendAlertEmail()` can reject missing/placeholder `STAFF_LOGIN_URL` or
+   `DEPLOYMENT_NAME` after a row has already been claimed. Gate the monitor on
+   the existing full `isAlertingConfigured()` predicate, and keep the delivery
+   drain independently fail closed on every configuration value needed by any
+   possible claim. Missing configuration returns `unavailable`; it must make
+   no claim, Resend, accept or `release_alert_delivery('send_failed')` call and
+   cannot terminally exhaust a delivery. Add focused tests with a real-looking
+   Resend key but invalid/missing login/deployment/queue configuration.
+
+3. **The work-item lock must conflict with every resolution writer.**
+   `FOR KEY SHARE` conflicts with `resolve_staff_work_item()`'s `FOR UPDATE`
+   but not with the `FOR NO KEY UPDATE` row lock taken by the two direct
+   delivery-status trigger updates. Change the claim-time authoritative
+   re-read to `FOR NO KEY UPDATE` (the minimum sufficient lock), retain the
+   deterministic delivery-row-then-work-item order, and correct the migration
+   comments/fixture structural assertion. Confirm the outer PostgREST RPC
+   remains `VOLATILE` and state honestly that the real two-session race remains
+   a disposable/staging proof.
+
+4. **Delivery attempts must be bounded at claim time, including crashed
+   leases.** Reuse the already-reviewed outbound-delivery protocol: increment
+   `delivery_attempt_count` when a send is claimed, not only when a failed send
+   is released; `claimed`/`accepted` counts are `1..3`; a third expired claimed
+   lease becomes terminal `failed` with a fixed closed reason instead of being
+   sent a fourth time; release schedules retry without adding another attempt
+   and terminalizes the third failed attempt. Keep the same delivery UUID as
+   the Resend idempotency key for retries of one notice and a fresh UUID for
+   each scheduled repeat notice. Restrict `p_failure_reason`/stored failure
+   reasons to the fixed vocabulary used by the Worker. Add behavioral SQL
+   proofs for initial claim counts, released retries, expired-lease reclaim,
+   third-expiry exhaustion and no fourth claim, plus Worker/result-shape tests
+   affected by the count semantics.
+
+5. **Activation remains blocked, deliberately.** `checkWebhookTelemetry()`
+   must remain zero-side-effect `unavailable` until the real Cloudflare account
+   verifies request/response fields, permissions, retention, sampling and cost.
+   Correct the present-tense document sentence that says the query already
+   exists. The heartbeat assertions in the stale/not-found delivery tests are
+   not independently discriminating while telemetry is always unavailable;
+   keep their one-claim/one-send-or-release assertions as the non-vacuous
+   evidence and do not overstate the heartbeat assertion. Record the low-risk
+   pending-row accumulation, free-text audit-reason KVKK risk and isolate-local
+   backlog trend as known limitations; do not expand this remediation into a
+   new cleanup subsystem or provider abstraction.
+
+After these corrections, run the affected tests and all six local gates. Do
+not run the migration/fixture, query a live Cloudflare account, activate
+alerting, deploy, commit or push. Resubmit to Codex, then mandatory Opus must
+perform one final narrow closure review before the disposable-database gate.
+
+### Task 053 Phase B Opus remediation delivery record — 2026-09-06
+
+Codex implemented the four blocking corrections with the smallest existing
+patterns. `src/operationalAlerts.ts` now gates both the scheduled monitor and
+delivery drain on the complete fail-closed configuration predicate;
+`checkQueueBacklogs` is exported only as a direct test seam for its closed
+stage result. `test/operationalAlerts.test.ts` proves that `no_recipients`
+makes a firing backlog stage unavailable and that missing deployment, staff
+URL, queue or Cloudflare configuration performs no claim/send/release call.
+
+`supabase/migrations/20260905000100_operational_alerting.sql` now returns
+`no_recipients` when a platform signal has no enabled recipient; heartbeat
+record/freshness also require an enabled platform recipient. Delivery attempts
+increment on claim, remain bounded to three across expired leases, use the
+closed stored reasons `send_failed | attempts_exhausted`, and release no longer
+increments the counter. The claim-time work-item recheck uses `FOR NO KEY
+UPDATE` after the delivery-row lock. The outer RPC remains `VOLATILE`.
+`supabase/tests/053_operational_alerting.sql` adds behavioral proofs for zero
+recipients, recipient removal after a fresh heartbeat, fixed failure input,
+claim-time attempt counts, two released retries, third-release exhaustion and
+three expired leases with no fourth claim; its structural assertion pins the
+minimum lock mode while continuing to state that a real two-session race is
+not proven by this fixture.
+
+Documentation was corrected in `docs/operational-alerting.md` and
+`docs/database-schema.md`; `docs/kvkk-inceleme-paketi.md` now records the
+free-text audit-reason risk. The Workers Observability stage deliberately
+remains a zero-call `unavailable` stub, so alerting activation and heartbeat
+freshness remain blocked pending the real-account owner decision. Resolved-work
+pending-row accumulation and isolate-local backlog trend history remain
+documented non-blocking limitations; no cleanup subsystem or provider
+abstraction was added.
+
+Verification actually run: `pnpm install --frozen-lockfile` (up to date),
+`pnpm typecheck` (clean), focused affected tests after the final test correction
+(72/72), `pnpm test` (38 files, 2046 passed, 2 pre-existing skips, 0 failed),
+production Wrangler dry-run (success), staging Wrangler dry-run (success), and
+`git diff --check` (clean apart from line-ending notices). The first focused
+run after adding the no-recipient test exposed a test-only queue-name/id
+expectation mismatch; it was corrected to the actual persisted queue id and
+rerun green.
+
+NOT RUN by contract: the migration and SQL fixture were not executed against
+any database; no live Cloudflare/Resend/Supabase/Meta/OpenAI/WhatsApp call was
+made; alerting stayed disabled; nothing was committed, pushed or deployed.
+Pre-existing `.gitignore` and `docs/043-opus-inceleme.md` state was untouched.
+Status remains `IN_REVIEW` pending the mandatory narrow Opus closure, followed
+by separately authorized disposable-database proof.
+
+### Task 053 Phase B final Opus blocker remediation — 2026-09-06
+
+The narrow Opus closure found one real schema contradiction: the table declared
+`next_attempt_at NOT NULL` while every non-pending status required it to be
+null. Codex made only the two required migration edits: `next_attempt_at` is
+nullable with the existing `now()` default, and the `pending` branch explicitly
+requires it to be non-null. Static transition review now matches the proven
+outbound pattern: pending has a due time; claimed, accepted and failed do not.
+The existing fixture's first real claim will fail loudly if this shape regresses.
+
+No TypeScript or runtime code changed in this final correction, so the already
+green 38-file/2046-test suite and both Wrangler dry-runs were not repeated.
+`git diff --check` was rerun and remains clean apart from line-ending notices.
+Migration/fixture execution, external calls, activation, deploy, commit and
+push remain NOT RUN. Opus's non-blocking observation is retained: clinic
+offboarding cascade can theoretically deadlock with the delivery-row → work-item
+claim order; PostgreSQL abort/retry makes this an availability retry rather than
+silent loss, and the real two-session behavior remains part of the later
+disposable/staging concurrency evidence.
+
+### Task 053 Phase B mandatory Opus closure — 2026-09-06
+
+Decision: `PASS`. Opus performed the requested final narrow read-only check and
+confirmed the two-line `next_attempt_at` correction: the column is nullable
+with its existing `now()` default, the pending branch requires a non-null due
+time, and claimed/accepted/failed branches require null. The claim and release
+transitions are therefore coherent and no blocking finding remains across the
+seven closure items. No file, test, migration, database, external service,
+deploy, commit or push was changed/run by that review.
+
+Two non-blocking observations remain recorded: clinic-offboarding cascade can
+theoretically deadlock with the delivery-row → work-item claim order (PostgreSQL
+aborts one transaction and the monitor retries on a later tick), and the inline
+OpenAI-extraction-failure recorder uses the bare enable flag rather than the
+full scheduled-monitor configuration gate but does not claim or consume a
+delivery attempt. The next gate is Codex's separately authorized disposable
+`vetai-test` migration plus rollback-only fixture proof; staging activation,
+external provider configuration and production remain unauthorized.
+
+## Task 053 Codex disposable-database record — 2026-09-06
+
+After explicit owner approval, Codex verified the linked target as disposable
+`vetai-test` (`cyjpiapxvalqltcsywam`) and applied only
+`20260905000100_operational_alerting.sql` through the direct-query path.
+Staging and production were not touched, alerting stayed disabled, and the
+direct query deliberately added no migration-history row: the latest recorded
+version remains `20260829000600` and `20260905000100` has zero history rows.
+
+The first rollback-fixture attempts failed loudly and rolled back, exposing
+three defects that static/local review had missed. Codex corrected each with a
+bounded source change: the strict-allowlist ingest witness now has an explicit
+synthetic `ai` route; `claim_alert_delivery()` qualifies the third-expired-
+lease terminal update as `d.id = v_id` to avoid the output-column/column-name
+ambiguity; and the repeat witness now uses a dedicated post-sync work item so
+an earlier accepted first notice cannot masquerade as a prematurely-created
+repeat. The offboarding setup also runs under the fixture's administrative
+runner role because `service_role` correctly cannot insert synthetic
+`auth.users`; product RPC authorization is proven in the fixture's dedicated
+role/grant sections.
+
+The corrected rollback-only `supabase/tests/053_operational_alerting.sql`
+then completed successfully on `vetai-test`. Its post-rollback result reported
+zero synthetic clinics, staff work items, contact routes, clinic recipients,
+platform recipients and alert deliveries. A separate Codex query—not the
+fixture's own assertion—confirmed zero `53000000-*` clinics/Auth users/routes,
+zero recipients/deliveries/audit rows, four alert tables with RLS enabled and
+zero policies, nullable `next_attempt_at`, validated delivery status check,
+`staff_work_items.provenance`, a `VOLATILE` claim function containing `FOR NO
+KEY UPDATE`, and exactly one initially-stale heartbeat row.
+
+This is disposable direct-query evidence only. It does not prove migration-
+history application, real two-session concurrency, Worker/PostgREST behavior,
+Resend/Cloudflare delivery, staging activation or production readiness. The
+fixture-affecting corrections require one final narrow read-only Opus check;
+the final local suite and selective commit follow only after that PASS.
+
+## Task 053 final Codex closure — 2026-09-06
+
+The mandatory narrow Opus re-review returned `PASS`. It independently
+confirmed the tenant-scoped synthetic `ai` route, the qualified `d.id = v_id`
+claim update and absence of another reachable PL/pgSQL ambiguity, the isolated
+post-sync repeat witness, the administrative fixture setup role without any
+weakening of the separate real-role grant/RLS proofs, and the documentation's
+disposable-versus-activation evidence boundary. No new blocker was found. The
+no-op trailing `reset role` is cosmetic and was left unchanged under the
+smallest-complete-change rule.
+
+Codex then ran the final local gates on the exact closing tree: `pnpm install
+--frozen-lockfile` was already up to date; `pnpm typecheck` passed; `pnpm test`
+passed 38/38 files with 2,046 tests passed and two pre-existing opt-in skips;
+both production and staging Wrangler deploy dry-runs passed with alerting still
+`false`; and `git diff --check` passed with only line-ending notices. The first
+sandboxed attempts at the four Node-based commands were blocked by a host-path
+permission error before project code ran; the approved normal-host reruns above
+are the actual gate results.
+
+`PROJECT_CONTEXT.md` now records only the durable Phase B behavior, completed
+repository/disposable evidence and remaining activation blockers. The closing
+commit selectively includes only Task 053 files plus that context update;
+pre-existing `.gitignore` and untracked `docs/043-opus-inceleme.md` remain
+outside the commit. No staging/production migration, Worker deploy, real
+recipient, secret, Resend/Cloudflare/Meta/OpenAI/WhatsApp call or alert
+activation occurred. Task 053 is complete as repository work; the next task
+must make explicit owner decisions and authorize staging activation separately.
 
 ## Task 053 Codex Phase A review — 2026-09-05
 

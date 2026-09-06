@@ -366,10 +366,12 @@ zaman bir iş kaydını kendiliğinden çözmez veya bir hasta sahibine mesaj
 göndermez — hasta sahibine mesaj yolu yalnız Task 048'in personel-yazımlı
 yanıt hattıdır (`docs/outbound-delivery.md`).
 
-- **Başarısız gönderim tekrar sınırı (öneri):** tetikleyen olay başına e-posta
-  API'sine en fazla 3 deneme, outbox'ın kendi 3-deneme kuralıyla tutarlı
-  olacak şekilde (sağlayıcının aynı garantiyi verdiği anlamına gelmez —
-  ayrıca doğrulanmalı).
+- **Başarısız gönderim tekrar sınırı:** tetikleyen olay başına e-posta
+  API'sine en fazla 3 claim/gönderim denemesi. Sayaç claim anında artar;
+  Worker sağlayıcı çağrısından sonra ama kabul/serbest-bırakma kaydından önce
+  düşse bile süresi dolan üçüncü lease satırı `attempts_exhausted` ile kapatır
+  ve dördüncü e-posta gönderilmez. Sağlayıcı reddi üçüncü denemede sabit
+  `send_failed` nedeniyle kapanır; ham sağlayıcı hatası saklanmaz.
 - **Tekrar bastırma:** §1 matrisindeki satır başına pencereler kullanılır; bir
   koşul bir sonraki kontrolde hâlâ doğruysa penceresi içinde yeniden
   gönderilmez.
@@ -498,6 +500,133 @@ bunların hepsi açık, çözülmemiş ön koşullardır:
 Bu belgede veya depoda hiçbir gerçek e-posta adresi, telefon numarası, token,
 proje kimliği veya hasta verisi kullanılmamıştır. **Faz A PASS, incelenmiş bir
 aktivasyon planı anlamına gelir — satış veya üretim PASS'i değildir.**
+
+## 8. Faz B uygulama durumu (2026-09-05)
+
+Kod ve migration yazıldı. Implementer bunları hiçbir veritabanında veya gerçek
+Resend/Cloudflare hesabında çalıştırmadı. Codex daha sonra migration'ı yalnız
+disposable `vetai-test` üzerinde doğrudan sorgu olarak uyguladı; düzeltilmiş
+rollback fixture'ı geçti ve bağımsız kontrolde sentetik artık bulunmadı.
+Migration-history satırı eklenmedi; staging/production, gerçek e-posta ve
+aktivasyon hâlâ **NOT RUN**. Ayrıntılı kayıt `CURRENT_TASK.md`'dedir. Bu bölüm
+yalnız §7'nin açık maddelerinden hangilerinin kodda karşılığı olduğunu işaretler:
+
+- §7'deki `dead_letter_handoff` marker-replacement drift'i çözüldü:
+  `src/intakeConsumer.ts` artık `human_handoff` aşamasındaki tam işaretli
+  snapshot'ı poison-fallback'ten önce özel olarak tanıyor ve yanıtsız
+  ack'liyor (belge ve davranış artık tek; bkz.
+  [`docs/inbound-queue.md`](inbound-queue.md)). Bu, sonraki mesajın işareti
+  otomatik değiştirdiği varsayımını kaldırır — konuşma yalnız `/staff`
+  üzerinden insan müdahalesiyle açılır.
+- Platform e-postası içeriği (§1/§7) ortam adı, tekrar sayısı, ilk-kayıt
+  zamanı ve ayrı bir `/admin` bağlantısı içerecek şekilde netleştirildi;
+  `/admin` bağlantısı yeni bir `Env` secret'ı eklenmeden, mevcut
+  `STAFF_LOGIN_URL`'den aynı origin üzerinde türetiliyor (`/staff` ve
+  `/admin` aynı Worker'da servis ediliyor). Tekrar sayısı
+  `alert_deliveries.occurrence_count` ile tutuluyor:
+  `record_platform_signal`'ın `on conflict` dalı yeni satır eklemek yerine bu
+  sayacı artırıyor.
+- Cloudflare Queues çözümlemesi, aynı isimde birden fazla kuyruk eşleşirse
+  hangi `queue_id`'nin gerçek olduğunu tahmin etmek yerine o çalışmada tüm
+  backlog kontrolünü atlıyor (fail-closed).
+- Workers Observability sorgusu henüz uygulanmadı: Worker bu aşamada hiçbir
+  telemetri çağrısı yapmadan `unavailable` döndüren yan etkisiz bir saplama
+  kullanıyor. Gelecekteki sorgunun POST `/webhooks/whatsapp` ile nasıl
+  daraltılacağı ve gerçek alan adları hesapta doğrulanmadan bu aşama başarı
+  sayılmayacak; §7'nin ilgili maddesi hâlâ açık.
+- Heartbeat artık yalnız backlog kontrolü, webhook telemetrisi,
+  `sync_alert_delivery_candidates` ve teslim drain'i tamamlandıktan **sonra**
+  yazılıyor; çökme/erken dönüş senaryosunda bayat kalır, yanlışlıkla taze
+  görünmez.
+
+### Disposable veritabanı kanıtı (2026-09-06)
+
+Codex'in açık sahip onayıyla yürüttüğü disposable `vetai-test` kapısında ilk
+fixture koşuları güvenli biçimde rollback ederek üç statik-test boşluğunu açığa
+çıkardı: strict-allowlist ingest tanığı için eksik sentetik `ai` rotası,
+`claim_alert_delivery` içindeki belirsiz `id` başvurusu ve daha önce kabul
+edilmiş bir bildirimi yeni tekrar sanan fixture kapsamı. Kaynak migration ve
+fixture dar biçimde düzeltildikten sonra tam rollback fixture'ı geçti; fixture
+sonucu altı sentetik artık sayacını `0` verdi. Ayrı katalog sorgusu da RLS'nin
+dört alarm tablosunda açık/policy sayısının sıfır olduğunu, claim RPC'sinin
+`VOLATILE` + `FOR NO KEY UPDATE` kaldığını, `next_attempt_at` alanının nullable
+olduğunu, durum kısıtının doğrulandığını ve heartbeat'in başlangıçta bayat
+olduğunu doğruladı.
+
+Bu doğrudan-sorgu kanıtı migration history'yi güncellemedi ve gerçek iki-
+oturum yarışını, PostgREST/Worker yolunu, sağlayıcı teslimini veya staging'i
+kanıtlamaz. §6'daki dokuz aktivasyon satırının tamamı bu nedenle `NOT RUN`
+kalmaya devam eder.
+
+§7'nin geri kalan tüm maddeleri (alıcı listeleri, sağlayıcı/hesap seçimi,
+gerçek `queue_id` çözümü, bağımsız `/ready` sağlayıcısı, KVKK/hukuk incelemesi,
+operasyonel saatler, yanıt sorumlusu, retention doğrulaması, imza/OpenAI
+hataları için ayrı sinyal tasarımı) hâlâ açık ön koşullardır; bu görev
+hiçbirini karara bağlamaz.
+
+### Codex incelemesi düzeltmeleri (2026-09-06)
+
+Codex'in `CHANGES_REQUIRED` kararlı incelemesindeki 5 maddeye karşılık gelen
+düzeltmeler (ayrıntılar `CURRENT_TASK.md`'deki Task 053 Faz B teslim
+kaydında):
+
+- Etkin/yapılandırılmış ayrımı netleşti: `OPERATIONAL_ALERTS_ENABLED` tek
+  başına yalnız açık/kapalı anahtarı. Scheduled monitor, teslim claim'i,
+  `/ready` ve heartbeat-yazma kararı ayrıca
+  Resend, Cloudflare izleme, `STAFF_LOGIN_URL` ve `DEPLOYMENT_NAME`'in hepsinin
+  dolu ve geçerli olmasını zorunlu kılan ayrı bir kontrolle kilitleniyor;
+  eksik/bozuk yapılandırmada `/ready` artık heartbeat RPC'sine hiç gitmeden
+  503 dönüyor.
+- Heartbeat artık BEŞ aşamanın (kuyruk backlog, webhook telemetrisi,
+  `sync_alert_delivery_candidates`, tekrar/iyileşme zamanlaması,
+  teslim drain) HEPSİ kapalı bir "success" sonucu dönmeden yazılmıyor. Webhook
+  telemetrisi aşağıdaki doğrulanmamış-API-şekli maddesi yüzünden kalıcı olarak
+  "unavailable" döndüğünden, bu haliyle heartbeat şu an hiç ilerlemiyor — bu
+  kasıtlı ve sözleşme gereği bir sonuçtur, gerçek hesap doğrulaması
+  tamamlanana kadar geçerlidir.
+- `schedule_alert_repeat_notifications` RPC'si artık her tick'te sync ile
+  teslim drain'i arasında çağrılıyor (migration'da vardı ama önceden hiç
+  tetiklenmiyordu).
+- Kuyruk backlog kuralları tekilleştirildi: birincil kuyrukta yaş > 5dk VEYA
+  art arda 3 ölçümde artan `backlog_count`; DLQ'da `backlog_count > 0`
+  koşulsuz; terminal DLQ'da `backlog_count > 0` VE yaş > 12sa birlikte. Daha
+  önceki, üçüne birden uygulanan ortak `>= 50` eşiği ve onu pinleyen test
+  kaldırıldı.
+- Kuyruk id çözümü, üç kuyruk adının HER BİRİ tam ve tekil bir id'ye
+  çözülmeden hiçbir sonucu cache'lemiyor veya kullanmıyor; kısmi bir çözüm
+  bir sonraki tick'te sıfırdan tekrar denenir.
+- `readAlertClaim`, `claim_alert_delivery()`'nin döndürdüğü 10 sütunu tam ve
+  kapalı doğruluyor (UUID, e-posta, ISO tarih, pozitif tamsayı, bilinen
+  sinyal türü, scope/`clinic_id` tutarlılığı); bilinmeyen `recipient_scope`
+  artık `clinic`'e düşürülmüyor, reddediliyor.
+- Resend başarı yanıtı artık yalnız 2xx durum koduna değil, dokümante edilen
+  `{id: string}` gövdesine göre doğrulanıyor; `id` eksik/boşsa gönderim
+  başarısız sayılıyor ve sabit `send_failed` nedeniyle release ediliyor.
+
+### Opus son incelemesi düzeltmeleri (2026-09-06)
+
+- `record_platform_signal`, etkin platform alıcısı yoksa artık koşulsuz
+  `recorded` demez; `no_recipients` döner ve Worker bunu `unavailable` sayar.
+  Heartbeat yazma ve tazelik sorgusu da en az bir etkin platform alıcısını
+  zorunlu kılar; son alıcı kaldırıldığında eski zaman damgası sistemi yeşil
+  tutamaz.
+- Scheduled monitor ve teslim drain'i tüm yapılandırma tamamlanmadan başlamaz.
+  Eksik `STAFF_LOGIN_URL`, `DEPLOYMENT_NAME`, Resend/Cloudflare bilgisi veya
+  kuyruk adı artık bir satırı claim edip `send_failed` denemesi tüketemez.
+- Claim'in iş kaydı kilidi `FOR NO KEY UPDATE` oldu. Böylece hem açık çözüm
+  RPC'sinin `FOR UPDATE` kilidiyle hem de teslim callback tetikleyicilerinin
+  sıradan `UPDATE` kilidiyle çakışır; çözülmüş bir teslim-hatası işi için yarış
+  sonucu yanlış-pozitif e-posta üretmez. Kilit sırası teslim satırı → iş kaydı
+  olarak korunur.
+- Teslim deneme sayacı claim anında artar ve `claimed`/`accepted` durumlarında
+  1–3 aralığıyla sınırlandırılır. Üçüncü claim'in lease'i cevapsız dolarsa
+  sonraki claim çağrısı satırı `attempts_exhausted` ile terminal kapatır;
+  release sayacı ikinci kez artırmaz. Kalıcı hata nedenleri yalnız
+  `send_failed | attempts_exhausted` kapalı kümesidir.
+- Çözülmüş işe bağlı seçilemeyen `pending` artıklar, serbest metin alıcı-audit
+  gerekçesi ve isolate-yerel backlog trend geçmişi bloklayıcı olmayan izleme/
+  KVKK kalemleri olarak açık kalır. Telemetri saplaması nedeniyle heartbeat'in
+  ilerlememesi de aktivasyon öncesi sahip kararı olmaya devam eder.
 
 ## Referanslar
 

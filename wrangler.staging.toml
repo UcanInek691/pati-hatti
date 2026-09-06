@@ -6,6 +6,18 @@ compatibility_date = "2025-01-01"
 APP_TIMEZONE = "Europe/Istanbul"
 WHATSAPP_GRAPH_API_VERSION = "v25.0"
 
+# Task 053: operational alerting, NOT activated (see docs/operational-alerting.md).
+# RESEND_API_KEY and CLOUDFLARE_ALERTS_MONITORING_TOKEN are secrets set via
+# `wrangler secret put`, never written here.
+OPERATIONAL_ALERTS_ENABLED = "false"
+RESEND_FROM_ADDRESS = "alerts@vetai-alerts.invalid"
+STAFF_LOGIN_URL = "https://portal.vetai-portal.invalid/staff"
+CLOUDFLARE_ACCOUNT_ID = "[cloudflare-account-id]"
+DEPLOYMENT_NAME = "staging"
+INTAKE_QUEUE_NAME = "vetai-intake-staging"
+INTAKE_DLQ_NAME = "vetai-intake-dlq-staging"
+INTAKE_TERMINAL_DLQ_NAME = "vetai-intake-terminal-dlq-staging"
+
 [[queues.producers]]
 queue = "vetai-intake-staging"
 binding = "INTAKE_QUEUE"

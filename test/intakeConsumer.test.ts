@@ -193,6 +193,7 @@ type Routes = {
   appointmentCancelOffer?: () => Response;
   appointmentCancelDecision?: () => Response;
   clinic?: () => Response;
+  signal?: () => Response;
 };
 
 function routedFetch(routes: Routes) {
@@ -219,6 +220,7 @@ function routedFetch(routes: Routes) {
     if (url.includes("/rpc/get_conversation_clinic_operational_context")) {
       return routes.clinic ? routes.clinic() : new Response("", { status: 500 });
     }
+    if (url.includes("/rpc/record_platform_signal")) return routes.signal ? routes.signal() : new Response("", { status: 500 });
     return new Response("", { status: 500 });
   });
 }
@@ -235,6 +237,7 @@ function happyRoutes(overrides: Partial<Routes> & { extraction?: Record<string, 
     appointmentCancelOffer: overrides.appointmentCancelOffer,
     appointmentCancelDecision: overrides.appointmentCancelDecision,
     clinic: overrides.clinic,
+    signal: overrides.signal,
   });
 }
 
@@ -386,6 +389,20 @@ describe("processIntakeQueueMessage: OpenAI input minimization", () => {
 
     expect(result).toBe("retry");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("extraction failure records an operational alert signal when alerting is enabled (Task 053)", async () => {
+    const fetchMock = happyRoutes({
+      openai: () => new Response("", { status: 500 }),
+      signal: () => jsonResponse([{ result: "recorded" }]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, { ...env, OPERATIONAL_ALERTS_ENABLED: "true" });
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(bodyOf(fetchMock, 3)).toEqual({ p_signal_kind: "openai_extraction_failure", p_queue_id: null });
   });
 });
 
@@ -1675,6 +1692,39 @@ describe("processIntakeQueueMessage: Task 029 no-model terminal/budget path (Par
 
     expect(result).toBe("retry");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("the exact dead-letter handoff marker completes the lease instead of retrying forever (Task 053)", async () => {
+    const fetchMock = routedFetch({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: MESSAGE_TEXT }),
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, intake_data: { dead_letter_handoff: true } }),
+      complete: () => jsonResponse([{ result: "completed" }]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(bodyOf(fetchMock, 2)).toEqual({
+      p_conversation_id: CONVERSATION_ID,
+      p_provider_message_id: PROVIDER_MESSAGE_ID,
+      p_claim_token: CLAIM_TOKEN,
+    });
+  });
+
+  it("retries when completing the dead-letter handoff marker reports a stale claim (Task 053)", async () => {
+    const fetchMock = routedFetch({
+      claim: () => claimRow("claimed", { claim_token: CLAIM_TOKEN, message_text: MESSAGE_TEXT }),
+      context: () => contextRow({ intake_stage: "human_handoff", pet_id: PET_ID, intake_data: { dead_letter_handoff: true } }),
+      complete: () => jsonResponse([{ result: "stale" }]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("retry");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 

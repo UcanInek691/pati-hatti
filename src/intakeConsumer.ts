@@ -15,6 +15,7 @@ import { applyClinicHandoffContext, planIntakeReply, planUnsupportedMediaReply }
 import type { IntakeReplyPlan } from "./intakeReply";
 import { getConversationClinicOperationalContext } from "./clinicOperations";
 import { UNSUPPORTED_MEDIA_MARKER } from "./whatsappIngest";
+import { recordOpenAiExtractionFailureSignal } from "./operationalAlerts";
 import {
   parseAppointmentCancelDecision,
   planAppointmentAction,
@@ -260,6 +261,12 @@ async function finalizeAndDecide(input: FinalizeIntakeQueueJobInput, env: Env): 
   return "retry";
 }
 
+/** True only for finalize_intake_dead_letter's empty-first-turn marker; without this check it re-enters human_handoff and retries forever (Task 053, docs/inbound-queue.md). */
+function isExactDeadLetterHandoffMarker(intakeData: Record<string, unknown>): boolean {
+  const keys = Object.keys(intakeData);
+  return keys.length === 1 && keys[0] === "dead_letter_handoff" && intakeData.dead_letter_handoff === true;
+}
+
 /** Replaces a poison persisted snapshot with a fresh, valid one built only from the current validated extraction. */
 function poisonFallback(currentStage: IntakeStage, extraction: IntakeExtraction): { nextStage: IntakeStage; intakeData: PersistedIntakeData } {
   return {
@@ -419,6 +426,11 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
       context.intakeStage === "human_handoff" ||
       (context.intakeStage !== "completed" && context.stateVersion >= NO_MODEL_STATE_VERSION_CEILING)
     ) {
+      if (context.intakeStage === "human_handoff" && isExactDeadLetterHandoffMarker(context.intakeData)) {
+        const completeResult = await completeIntakeQueueJob(conversationId, providerMessageId, claim.claimToken, env);
+        return completeResult.kind === "completed" ? "ack" : "retry";
+      }
+
       const snapshot = readCanonicalPersistedSnapshot(context.intakeData);
       if (!snapshot.ok) return "retry";
 
@@ -449,7 +461,10 @@ export async function processIntakeQueueMessage(body: unknown, env: Env): Promis
     const previousQuestion = selectPreviousClinicQuestion(context, claim.messageText);
     const safetyIdentifier = await deriveSafetyIdentifier(context.ownerId);
     const extractionResult = await extractIntakeViaOpenAi(claim.messageText, safetyIdentifier, env, previousQuestion);
-    if (!extractionResult.ok) return "retry";
+    if (!extractionResult.ok) {
+      await recordOpenAiExtractionFailureSignal(env);
+      return "retry";
+    }
 
     const meteringResult = await recordIntakeAiUsageV1(
       {

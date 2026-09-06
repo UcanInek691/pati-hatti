@@ -313,7 +313,11 @@ from its expected result.
    (`resolve_whatsapp_contact_automation`) is reachable, not only local
    configuration shape — it is still not proof of a live Meta/OpenAI/WhatsApp
    round trip. If it returns `503`, stop — configuration or the route
-   resolver is unavailable; do not proceed.
+   resolver is unavailable; do not proceed. While `OPERATIONAL_ALERTS_ENABLED`
+   is unset the body stays byte-identical to this (Task 053); once activated
+   it gains `"alertMonitorHeartbeat": "fresh" | "stale"` and a stale value
+   also returns `503` — see `docs/operational-alerting.md` §6 for the
+   activation proof this still requires.
 3. The Meta webhook challenge (`GET /webhooks/whatsapp`) succeeds with the
    real verify token.
 4. Send one signed synthetic inbound WhatsApp text message; confirm it is

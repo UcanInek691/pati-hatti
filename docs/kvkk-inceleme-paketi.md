@@ -104,6 +104,14 @@ gerçekte kimin karar verdiğine göre uzman tarafından belirlenmelidir.
 | Platform yöneticisi izin listesi | Auth kullanıcı kimliği (Task 043, `platform_admins`) | `/admin` panelindeki klinikler arası salt-okunur özete kimin erişebileceğini belirleme | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez — yalnız iki `SECURITY DEFINER` RPC üzerinden erişilir; bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
 | Platform-admin klinik yaşam döngüsü denetim kaydı (Task 047, `platform_admin_clinic_action_events`) | Aktör Auth kullanıcı kimliği, klinik kimliği, sabit eylem adı (`provision`/`suspend`/`resume`), kapalı sonuç, istemci `request_id`'si, zaman ve ham istek yerine SHA-256 girdi parmak izi — ne WhatsApp kimlik bilgisi, ne hayvan sahibi/hayvan verisi, ne de ham istek/yanıt gövdesi | `/admin`'den yapılan her yaşam döngüsü mutasyonunun kim/ne/ne zaman kaydı; hesap veya müşteri içeriği erişimi değildir | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez, ekleme yalnız aynı transaction içindeki `SECURITY DEFINER` sarmalayıcı RPC'ler üzerinden olur, mutasyona uğratılamaz (append-only) — bkz. [`platform-admin-overview.md`](platform-admin-overview.md) |
 | Personel kaynaklı WhatsApp yanıtı (Task 048, yalnız disposable `vetai-test` üzerinde migration/rollback kanıtı geçti; staging/production'a uygulanmadı) | `outbound_message_outbox`/`messages` üzerinde: yanıt metni (mevcut `content`/ham metin kolonlarıyla aynı yerde), kuyruğa alan personelin Auth kullanıcı kimliği (`staff_actor_user_id`), istemci `request_id`'si, kaynak iş kaydı kimliği (`staff_work_item_id`), köken bayrağı (`message_origin`/`outbound_origin` = `automation`\|`staff`) ve hesaplanan pencere bitiş zamanı (`staff_window_expires_at`) | Personelin, kendisine atanmış tek bir insan-devri iş kaydı için, WhatsApp'ın 24 saatlik müşteri-hizmet penceresi içinde tek bir insan yazımı yanıt kuyruğa almasını sağlama; kuyruğa alma tek başına Meta kabulü, teslim veya okundu bilgisi değildir | Supabase; RLS/erişim mevcut outbox/mesaj kayıtlarıyla aynı tenant sınırına tabi. `staff_work_item_id` yalnız backend replay kanıtıdır ve VetAI'nin ilk taraf UI/REST seçimine alınmaz. `staff_actor_user_id` de bu sorguda seçilmez ve ilgili Auth kullanıcısı silinirse otomatik `null` olur (`on delete set null`); ancak `messages` için önceden var olan tenant-kapsamlı tablo yetkisi kolon bazlı gizlilik sınırı değildir |
+| Operasyonel alarm alıcısı ve teslimi (Task 053, yalnız disposable `vetai-test` migration/rollback kanıtı geçti; staging/production/gerçek e-posta aktivasyonu **NOT RUN** — bkz. [`operational-alerting.md`](operational-alerting.md)) | `clinic_alert_recipients`/`platform_alert_recipients`: klinik veya platform-admin personelinin e-posta adresi, açık/kapalı bayrağı; `alert_deliveries`: sinyal türü, tekrar sayısı (`occurrence_count`), claim/kabul/serbest bırakma durumu | Servis kesintisi/hata sinyallerini ilgili klinik personeline veya platform yöneticisine e-posta ile bildirme | Supabase; RLS açık, politika yok, `service_role` dahil hiçbir role doğrudan yetki verilmez, yalnız `SECURITY DEFINER` RPC'ler üzerinden erişilir. Gönderilen e-posta gövdesi kliniğe özgü: sahip/hayvan/mesaj içeriği veya klinik/kuyruk UUID'si hiç içermez — kliniğe giden mesaj sabit Türkçe metin + `/staff` bağlantısı, platforma giden mesaj yalnız sinyal türü, ortam adı, tekrar sayısı, ilk-kayıt zamanı ve `/admin` bağlantısıdır (`src/operationalAlerts.ts`) |
+
+Task 053 alıcı değişikliği denetimindeki `alert_recipient_audit.reason` alanı
+1–500 karakterlik serbest metindir. Bu alana hayvan sahibi, hayvan, telefon,
+mesaj veya sağlık bilgisi yazılmaması operasyon kuralı olmalı; alanın saklama/
+imha süresi ve serbest metin yerine kapalı gerekçe kodlarına geçilip
+geçilmeyeceği KVKK uzmanı tarafından üretim aktivasyonundan önce karara
+bağlanmalıdır.
 
 Not: Evcil hayvana ilişkin sağlık anlatımının gerçek kişiyle bağlantılı olduğu
 durumlarda hukuki niteliği ve uygulanacak koruma seviyesi uzman tarafından
@@ -248,8 +256,8 @@ yazılmalıdır.
 
 ## 7. Yurt dışı aktarım ve sağlayıcı sözleşmeleri
 
-Cloudflare, Meta, OpenAI ve Supabase için aşağıdaki bilgiler **üretim hesabının
-gerçek sözleşme ve bölge ayarlarından** doğrulanmalıdır:
+Cloudflare, Meta, OpenAI, Supabase ve Resend için aşağıdaki bilgiler **üretim
+hesabının gerçek sözleşme ve bölge ayarlarından** doğrulanmalıdır:
 
 | Sağlayıcı | Rolü | İşlenen/aktarılan veri | Veri konumu ve alt işleyenler | Uygun güvence / sözleşme | Kurum bildirimi gerekiyorsa tarih |
 |---|---|---|---|---|---|
@@ -257,6 +265,7 @@ gerçek sözleşme ve bölge ayarlarından** doğrulanmalıdır:
 | Meta / WhatsApp | Mesajlaşma kanalı | | | | |
 | OpenAI | Güncel mesajdan yapılandırılmış çıkarım | | | | |
 | Supabase / barındırma sağlayıcısı | Veritabanı, Auth ve API | | | | |
+| Resend (Task 053, henüz etkinleştirilmedi — **NOT RUN**) | Operasyonel alarm e-postası gönderimi | Alıcı e-posta adresi, sabit Türkçe konu/gövde metni (bkz. §3); hasta/sahip verisi hiç gönderilmez | | | |
 
 Standart sözleşme kullanılacaksa güncel Kurum metni, doğru taraf tipi,
 imza/bildirim süresi ve değişiklik yasağı hukuk uzmanı tarafından kontrol

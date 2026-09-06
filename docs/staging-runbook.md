@@ -1155,3 +1155,24 @@ Cloudflare API token'ının oluşturulması, e-posta sağlayıcı entegrasyonu,
 Health Checks kurulumu gibi implementasyon adımları) yalnız Codex'in Faz A'yı
 inceleyip sözleşmeyi ayrıca genişletmesinden sonra, ayrı bir aktivasyon
 kaydıyla buraya eklenir. Production ve staging bu görevle değişmedi.
+
+## 25. Task 053 Faz B — depo uygulaması (2026-09-05/06, disposable PASS, deploy yok)
+
+Codex'in genişlettiği Faz B sözleşmesi kapsamında migration
+(`supabase/migrations/20260905000100_operational_alerting.sql`), Worker kodu
+(`src/operationalAlerts.ts` ve `src/index.ts`/`src/intakeConsumer.ts`
+entegrasyonu) ve testler yazıldı; ayrıntılar `CURRENT_TASK.md`'deki Task 053
+teslim kaydında. Implementer migration/fixture'ı çalıştırmadı. Codex 2026-09-06
+tarihinde ikisini yalnız disposable `vetai-test` üzerinde doğrudan sorgu
+yoluyla doğruladı; düzeltilmiş rollback fixture'ı ve bağımsız sıfır-artık/
+katalog kontrolü geçti. Bu işlem migration history'yi güncellemedi ve staging
+veya production'a uygulanmadı. Gerçek Resend/Cloudflare çağrısı, secret
+ekleme/değiştirme ve deploy/commit/push yapılmadı — iki config yalnız `wrangler
+deploy --dry-run` ile derlendi. `wrangler.toml`
+ve `wrangler.staging.toml`'a eklenen `[vars]` (`OPERATIONAL_ALERTS_ENABLED =
+"false"` dahil) ve `.dev.vars.example`'a eklenen iki secret placeholder'ı bu
+oturumda deploy edilmedi; bir sonraki gerçek `wrangler deploy` çalıştığında
+devreye girer. §19'daki gibi bir aktivasyon kaydı, alarm gerçekten
+`OPERATIONAL_ALERTS_ENABLED = "true"` ile etkinleştirilip
+[`docs/operational-alerting.md`](operational-alerting.md) §6'daki kanıt
+matrisi tamamlanınca buraya eklenir.

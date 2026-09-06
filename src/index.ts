@@ -13,6 +13,7 @@ import { drainOutboundMessages } from "./outboundSender";
 import { STAFF_SECURITY_HEADERS, handleStaffConfig, handleStaffScript, handleStaffShell } from "./staffPage";
 import { ADMIN_SECURITY_HEADERS, handleAdminConfig, handleAdminScript, handleAdminShell } from "./adminPage";
 import { checkReadiness } from "./readiness";
+import { checkAlertMonitorHeartbeat, runOperationalAlertMonitor } from "./operationalAlerts";
 import type { QueueDisposition } from "./intakeConsumer";
 import { handlePrivacyPage } from "./privacyPage";
 
@@ -168,8 +169,11 @@ export default {
         });
       }
       const readiness = await checkReadiness(env);
-      return Response.json(readiness, {
-        status: readiness.status === "ready" ? 200 : 503,
+      const heartbeat = await checkAlertMonitorHeartbeat(env);
+      const body = heartbeat.enabled ? { ...readiness, alertMonitorHeartbeat: heartbeat.fresh ? "fresh" : "stale" } : readiness;
+      const ready = readiness.status === "ready" && (!heartbeat.enabled || heartbeat.fresh);
+      return Response.json(body, {
+        status: ready ? 200 : 503,
         headers: STAFF_SECURITY_HEADERS,
       });
     }
@@ -273,5 +277,8 @@ export default {
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(drainOutboundMessages(env).catch(() => {}));
+    // Independent of the outbound drain above: this tick's own failure or
+    // delay must never block or be blocked by message delivery.
+    ctx.waitUntil(runOperationalAlertMonitor(env).catch(() => {}));
   },
 };

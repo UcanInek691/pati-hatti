@@ -166,3 +166,21 @@ A mandatory read-only Claude Opus review of the `SECURITY DEFINER` boundary,
 tenant/RLS isolation, emergency escalation, failure auto-resolution,
 PII/KVKK, and erasure behavior follows Codex's review before this task can
 close.
+
+## Provenance column (Task 053)
+
+`supabase/migrations/20260905000100_operational_alerting.sql` adds
+`provenance text not null default 'workflow'` (check: `'workflow'` or
+`'intake_dead_letter'`). It does not add or change a `reason` value — it
+distinguishes, orthogonally to `kind`/`reason`, a normal `human_handoff`
+trigger-populated row from one `finalize_intake_dead_letter` creates when the
+intake consumer gives up on a conversation. The migration backfills existing
+rows whose `conversations.intake_data = '{"dead_letter_handoff": true}'`
+marker proves that origin; every other existing row defaults to `'workflow'`.
+The implementer did not run this migration. Codex later applied it only to
+disposable `vetai-test` by direct query on 2026-09-06; the corrected rollback
+fixture and independent zero-residue/catalog checks passed. Migration history,
+staging, production, and alert activation remain unchanged. See
+[`docs/inbound-queue.md`](inbound-queue.md) for the consumer-side behavior
+this discriminates, and [`docs/operational-alerting.md`](operational-alerting.md)
+for the alert-mail system that reads it.

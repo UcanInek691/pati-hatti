@@ -1345,3 +1345,48 @@ silently reusing or overwriting the earlier row. See
 [`docs/staff-workflow.md`](staff-workflow.md) for the `/staff` composer UI
 and [`docs/outbound-delivery.md`](outbound-delivery.md) for how staff-origin
 rows flow through the existing send pipeline.
+
+## Operational alerting and platform signals (Task 053)
+
+`supabase/migrations/20260905000100_operational_alerting.sql`. The implementer
+did not run it; Codex later applied it only to disposable `vetai-test` through
+the direct-query path on 2026-09-06. The corrected rollback fixture passed with
+zero synthetic residue and an independent catalog check confirmed the schema
+below. No migration-history row was added; staging/production and activation
+remain untouched. Full behavior, activation gates, and risks in
+[`docs/operational-alerting.md`](operational-alerting.md).
+
+- `staff_work_items.provenance text not null default 'workflow'` (check:
+  `'workflow'` or `'intake_dead_letter'`) — distinguishes a normal staff
+  handoff from one created by `finalize_intake_dead_letter`. Backfilled from
+  the existing `intake_data = '{"dead_letter_handoff": true}'` marker on
+  historical rows; every other existing row defaults to `'workflow'`.
+- `public.clinic_alert_recipients (clinic_id, user_id, email, enabled, ...)` —
+  clinic-scoped opt-in recipients for clinic alert mail, FK'd to
+  `clinic_staff (clinic_id, user_id)`; RLS enabled, zero policies, service-role
+  only (same pattern as `outbound_message_outbox`).
+- `public.platform_alert_recipients (user_id, email, enabled, ...)` —
+  platform-admin opt-in recipients for platform alert mail, FK'd to
+  `platform_admins (user_id)`; same RLS/grant pattern.
+- `public.alert_deliveries` — one row per signal-to-recipient pairing awaiting
+  or having sent mail; `dedup_key` is unique per underlying signal occurrence
+  so `record_platform_signal`'s `on conflict` bumps `occurrence_count` instead
+  of inserting a duplicate. With zero enabled platform recipients that RPC
+  returns `no_recipients`, not a false `recorded`. Claim increments the bounded
+  attempt count before the provider call; a third expired claim closes as
+  `attempts_exhausted`, while a third explicit provider failure closes as
+  `send_failed`. The work-item recheck uses `FOR NO KEY UPDATE`, after locking
+  the delivery row, so both explicit resolution and delivery-status trigger
+  updates serialize before a mail can be claimed.
+- `public.alert_monitor_heartbeat` — single-row table the scheduled monitor
+  updates last, after every mandatory check has run; `/ready` reports
+  `alertMonitorHeartbeat: "stale"` when it falls behind, independent of the
+  Supabase read used for the existing readiness check. Recording and freshness
+  additionally require at least one enabled platform recipient, so removing
+  the last recipient cannot leave a misleadingly fresh heartbeat.
+
+`set_clinic_alert_recipient`, `set_platform_alert_recipient`,
+`record_platform_signal`, `sync_alert_delivery_candidates`,
+`claim_alert_delivery`, `accept_alert_delivery`, `release_alert_delivery`,
+`record_alert_monitor_heartbeat`, `is_alert_monitor_heartbeat_fresh` — all
+`security invoker`, `set search_path = ''`, service-role only.
