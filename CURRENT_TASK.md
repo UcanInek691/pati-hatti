@@ -1,13 +1,9 @@
 # Current task — 054 Verified webhook telemetry and staging alert activation
 
-Status: `IN_REVIEW` — Phase A repository implementation, Codex verification
-and mandatory Claude Opus read-only review are complete. The separately
-approved, flag-off Phase B staging installation package is also complete:
-managed migration, monitoring secret, Worker deploy and regression smoke all
-passed. A separate Better Stack monitor now checks staging `/ready` every
-three minutes and its provider test e-mail reached the owner. Alert enablement,
-audited recipients, VetAI/Resend delivery and the remaining live activation
-evidence must not be inferred from this status.
+Status: `COMPLETE` (closed 2026-09-07 after repository/disposable verification,
+mandatory Claude Opus review, managed staging installation, bounded real
+Resend delivery, independent `/ready` failure/recovery and rollback evidence;
+continuous alerting and production remain disabled and separately gated)
 
 Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). At task
 creation, Task 053 had delivered and tested the alert-delivery foundation but
@@ -188,6 +184,15 @@ account mutations and any cost. Before setting the feature flag to true:
    reaches the wrong scope, or any ordinary product path regresses.
 
 Phase B does not authorize production deployment.
+
+Closure scope amendment (Codex, 2026-09-07): continuous staging activation was
+not appropriate without a verified custom sender domain and the outstanding
+human/KVKK decisions. Task 054 therefore closes on the bounded, reversible
+staging integration evidence recorded below. Matrix rows 2 and 4 were exercised
+through real external paths; remaining negative/failure rows retain their
+repository/disposable proofs and stay explicit go-live gates rather than being
+manufactured against live staging. This narrows neither production safety nor
+the requirement to finish those rows before continuous pilot activation.
 
 For the bounded owner-only Resend smoke, Codex may also change and commit only
 `wrangler.staging.toml`: replace the two alert-email placeholders with
@@ -530,7 +535,25 @@ confirmed both messages arrived.
 This closes every Task 053 activation-matrix cell for row 2 only. The tracked
 staging configuration is back to the committed flag-off state, production is
 unchanged, and the remaining matrix rows and external approvals still keep
-the top-level task status `IN_REVIEW`.
+continuous activation blocked.
+
+### Task 054 closure record — 2026-09-07
+
+Codex reviewed the final repository and live evidence and closed the task at
+the bounded staging-integration boundary above. Final gates after the last
+change: `pnpm install --frozen-lockfile` was already up to date; the TypeScript
+typecheck passed; all 38 test files passed with 2,072 tests and two unchanged
+opt-in skips; production and staging Wrangler dry-runs passed; and
+`git diff --check` passed with only line-ending warnings. The final staging configuration
+has alerting disabled and `/ready`, `/health` and `/staff` all returned 200.
+
+Verified commits include `d3425a9` (flag-off staging sender/URL preparation),
+`372379a` (bounded Resend/heartbeat evidence) and `8a1cc5c` (independent
+readiness failure/recovery evidence). This closure does not authorize a custom
+domain purchase, permanent staging enablement, production secrets/deploy,
+real-clinic recipients, or the outstanding KVKK, veterinary and operational
+owner decisions. Those are durable go-live gates in `PROJECT_CONTEXT.md` and
+`docs/production-readiness.md`, not silently accepted Task 054 results.
 
 ---
 

@@ -1169,45 +1169,39 @@ occurred.
   `VOLATILE`/`FOR NO KEY UPDATE` claim contract and one initially-stale
   heartbeat. Direct execution did not add migration history; staging and
   production remain unchanged.
-- Activation is deliberately still blocked: Workers Observability remains a
-  zero-call unavailable stub, so heartbeat cannot become fresh; no real
-  recipient, verified sender domain, Resend/Cloudflare token, Queue/account
-  capability, external `/ready` monitor, retention proof or live email smoke
-  exists. KVKK/processor and veterinary review, staff-send rate-limit evidence,
-  a separately approved migration-first staging activation and production
-  canary/rollback proof remain mandatory. No external activation or production
-  approval has occurred.
-- Task 054 Phase A is complete at repository, Codex and mandatory Claude Opus
-  review gates as of 2026-09-07. The permanent telemetry stub is replaced by a
-  native, strict Workers Observability aggregate query for response-status
-  bearing staging/production `POST /webhooks/whatsapp` calls. It uses a
+- Task 054 completed on 2026-09-07 at the bounded staging-integration boundary.
+  The telemetry stub is replaced by a strict native Workers Observability query
+  for response-status-bearing `POST /webhooks/whatsapp` calls. It uses a
   three-minute lookback aligned every minute after a two-minute ingestion lag,
-  accepts only the verified unsampled envelope, validates the account as 32
-  hexadecimal characters, records 401 and returned 5xx signals through the
-  existing recipient/dedup gate, and blocks heartbeat on any unknown or failed
-  observation. Frozen install, typecheck, 2,069 local tests (two pre-existing
-  opt-in skips), both Worker dry-runs, whitespace validation and Opus closure
-  passed.
-- Task 054's separately approved flag-off staging installation completed on
-  2026-09-07. Managed staging migration history is aligned through
-  `20260905000100`; read-only checks found the 11 expected service-role RPCs,
-  five RLS-enabled/no-policy alert tables, no browser grants or alert data, and
-  an initially stale heartbeat. The existing account-scoped monitoring token
-  is installed as the staging-only Worker secret without Codex seeing its
-  value. Worker version `d09a880d-c786-4cda-93d5-48ffc2987a9c` deployed with
-  `OPERATIONAL_ALERTS_ENABLED="false"`; `/health`, `/ready`, `/staff` and
-  `/admin` returned 200 and an unsigned webhook POST returned 401. No email,
-  signed WhatsApp event, Queue mutation, Meta/OpenAI call or production change
-  occurred.
-- Task 054 alert activation remains blocked. Staging still has placeholder
-  Cloudflare account-id/email settings and no recipients. Phase B must verify
-  plan/retention, ingestion and a non-empty aggregate's interval/series shape;
-  configure the real staging account id, Resend domain/key/sender and audited
-  recipients; add an independent external `/ready` monitor; resolve the
-  uncaught-Worker-exception alarm boundary; execute all nine activation rows
-  and a live WhatsApp smoke; and pass the documented KVKK, veterinary and owner
-  gates. Overlapping windows mean `occurrence_count` is an observation count,
-  not an exact event count. Production remains unchanged.
+  validates the account and exact aggregate shape, records 401/returned-5xx
+  signals through the existing recipient/dedup gate, and blocks heartbeat on
+  any unknown or failed observation. Overlapping windows mean
+  `occurrence_count` is an observation count, not an exact event count.
+- Managed staging migration history is aligned through `20260905000100`.
+  The Free Workers plan and 24-hour Queue retention were verified; account-
+  scoped Cloudflare monitoring credentials and a sending-only Resend key are
+  staging Worker secrets whose values Codex did not retain. One audited
+  platform recipient and one audited active-test-clinic recipient exist.
+  Better Stack Free independently polls staging `/ready` every three minutes.
+- Real bounded staging evidence passed: the Worker-Cron monitor produced four
+  generic owner-address e-mails (one delivery-failure signal fanned out to
+  platform + clinic and two normal handoffs to the clinic); all four deliveries
+  became `accepted`, heartbeat advanced, no pending/claimed/failed row remained,
+  and the owner confirmed all four messages. A separate controlled `/ready`
+  failure left `/health` and `/staff` at 200, opened a Better Stack incident,
+  delivered the failure e-mail, recovered automatically after rollback and
+  delivered the recovery e-mail. Final local closure gates passed: frozen
+  install, typecheck, 38 test files/2,072 tests with two unchanged opt-in skips,
+  both Wrangler dry-runs and whitespace validation.
+- Alerting is intentionally disabled in the final staging configuration and
+  production is unchanged. Resend's test sender can deliver only to the account
+  owner; a purchased/verified owner domain is still required for real pilot
+  recipients. Continuous pilot/production activation also remains gated on the
+  unexercised activation-matrix rows (including cross-tenant negative,
+  dedup/retry/recovery, dead-letter and remaining signal paths), a live
+  post-activation WhatsApp smoke, uncaught-Worker-exception and ingestion-
+  liveness coverage, production secrets/canary/rollback, and the documented
+  KVKK, veterinary and operational-owner decisions.
 
 ## Context maintenance
 
