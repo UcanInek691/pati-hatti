@@ -1,4 +1,202 @@
-# Current task — 056 Clinic e-mail alert preferences and rollout control
+# Current task — 057 Staging alert controls activation and proof
+
+Status: `READY`
+
+Created by Codex on 2026-09-07 after Task 056 closure (`1f080c3`). Tasks 055
+and 056 are complete at repository, local-test, disposable-database and
+mandatory Opus-review gates, but neither migration nor their Worker/UI behavior
+has been installed or verified on staging. Operational alerting is currently
+disabled and production is unchanged.
+
+## Goal
+
+Install Tasks 055 and 056 on `vetai-staging` in migration-first order, prove
+their exact database/browser/telemetry contracts against the real staging
+environment, run one bounded reversible alert window and one live allowlisted
+WhatsApp canary, then return staging to a safe flag-off state. Do not add a new
+feature or manufacture evidence that the current Resend test sender cannot
+truthfully provide.
+
+## Fixed decisions and boundaries
+
+- This is a Codex-owned staging integration task. Sonnet implementation is not
+  needed unless live evidence exposes a repository defect.
+- Apply `20260907000100_worker_exception_alert.sql` before
+  `20260907000200_clinic_alert_preferences.sql`; deploy the Worker only after
+  both migrations and catalog checks succeed.
+- Use only `vetai-staging` (`qtgvddejjjiivjwicxdq`). Before every database
+  mutation, re-read the linked project ref and stop if it is not exact. Never
+  run Task 055/056 SQL against production.
+- Keep `OPERATIONAL_ALERTS_ENABLED="false"` through migration, catalog and
+  initial Worker/UI smoke. A temporary `true` deployment requires a separate
+  explicit owner approval after the preflight evidence below is green.
+- The Cloudflare outcome query must be verified with sanitized real-account
+  aggregate evidence before activation. Never copy or persist the API token,
+  headers, raw events, request bodies, phone numbers, message content or
+  provider identifiers.
+- Resend's `onboarding@resend.dev` sender is only an owner-address staging
+  proof. It is not evidence that arbitrary clinic recipients can receive mail.
+  If the authenticated staff e-mail is not eligible under Resend test mode,
+  record that clinic-mail delivery as `BLOCKED`; do not replace the Auth-owned
+  address or bypass Task 056's authority boundary.
+- Use only the existing active staging test clinic, platform admin, allowlisted
+  WhatsApp test contact, Better Stack monitor and installed secrets. Do not add
+  a customer, paid plan, domain, provider, token or dependency.
+- Platform and clinic recipient/gate changes must go through the reviewed
+  audited RPCs. Do not write their tables directly except for read-only proof.
+- Final staging state must be conservative: global alert flag `false`, test
+  clinic rollout gate `false`, no `claimed` alert delivery and no newly created
+  failed delivery left unexplained. Personal opt-in may remain stored because
+  it is the authenticated user's own preference and is ineffective while the
+  clinic/global gates are off.
+- Production deployment, continuous alerting, custom sender-domain purchase,
+  real-clinic onboarding, pricing/billing and legal/veterinary approval are
+  outside this task.
+- `.gitignore` and `docs/043-opus-inceleme.md` are pre-existing excluded
+  changes. Do not touch, stage or attribute them to Task 057.
+
+## Allowed repository changes
+
+- `CURRENT_TASK.md`;
+- `PROJECT_CONTEXT.md` only at verified closure;
+- `docs/staging-runbook.md`, `docs/production-readiness.md`,
+  `docs/operational-alerting.md`, and
+  `docs/saas-urunlestirme-yol-haritasi.md` for exact sanitized evidence/status;
+- `wrangler.staging.toml` only for a temporary alert-flag transition, with the
+  committed/final value restored to `"false"`.
+
+No source, test, migration, package, lockfile, production configuration or
+unrelated documentation change is allowed. If live evidence requires one,
+stop, set the task to `IN_REVIEW`, record the failure and create the smallest
+separately reviewed remediation rather than patching staging ad hoc.
+
+## Required execution sequence
+
+### A. Pre-mutation and migration gate
+
+1. Confirm HEAD contains Task 055 and 056 commits, the worktree has only the
+   two known excluded changes, the local Supabase link is the exact staging
+   project, and remote migration history is aligned through
+   `20260905000100_operational_alerting` with 055/056 absent.
+2. Re-run the focused Task 055/056 tests, typecheck and staging Wrangler dry
+   run. Confirm the dry-run still reports alerting disabled.
+3. Apply the two reviewed migrations through managed staging migration history
+   in exact order. If either fails, stop; do not manually recreate partial
+   schema or deploy the Worker.
+4. Verify migration-history alignment and catalog invariants: nine alert signal
+   values including `worker_exception`; Task 056 tables/trigger/epochs; RLS
+   enabled with no browser policies; exact function volatility,
+   definer/invoker mode, empty search path and execute grants; clinic gate
+   default-off; zero unexpected recipient/gate audit or delivery mutation.
+
+### B. Flag-off Worker and browser proof
+
+5. Deploy `vetai-staging` with `OPERATIONAL_ALERTS_ENABLED="false"`. Confirm
+   `/health`, `/ready`, `/staff` and `/admin` return their expected HTTP status
+   and ordinary webhook/Queue behavior has not regressed.
+6. In `/admin`, verify every overview clinic has exactly one alert-gate row,
+   no recipient identity is shown and the test clinic defaults off. Exercise
+   off→on→off with the existing AAL2 platform account and verify exactly two
+   real gate-change audit rows; AAL1/non-member behavior may use a rollback-
+   safe authenticated proof rather than another browser account.
+7. In `/staff`, verify one row per current membership, no e-mail address is
+   displayed and the effective state is off while the clinic gate is off.
+   Exercise personal off→on→off→on with the authenticated test staff member;
+   confirm only real transitions audit, the authoritative Auth e-mail is used
+   server-side and admin never receives it.
+
+### C. Telemetry and bounded activation
+
+8. Run the exact `vetai-worker-exception-monitor` aggregate query once against
+   the real staging account using the installed least-privilege credential.
+   Retain only sanitized shape/count evidence. A non-empty aggregate must
+   confirm the documented outcome vocabulary, group value/key, interval,
+   sample interval, completed/dry/account/script echoes and no raw event data.
+   Unknown or mismatched shape is a hard stop.
+9. With a separate owner approval, temporarily enable alerting. Within three
+   minutes `/ready` must report a fresh alert-monitor heartbeat; otherwise
+   immediately restore `false`, deploy and stop. Confirm Better Stack remains
+   `Up` during the healthy window.
+10. With only the test clinic gate and the user's own preference enabled, use
+    one existing safe test-clinic work-item path to prove candidate creation,
+    tenant routing, dedup and accepted/failed truth. If Resend test-mode
+    recipient restrictions prevent the clinic email, record `BLOCKED` without
+    altering the Auth e-mail. A platform-only signal must remain independent
+    of the clinic gate. No patient/message/phone content enters evidence.
+11. Send one harmless message from the existing allowlisted WhatsApp test
+    contact. Record `PASS` within two minutes, `LATE` after two minutes and
+    `FAIL` only after five minutes, as §27 defines. Confirm the reply on-device
+    and verify sanitized inbound/outbound persistence and first-attempt state.
+
+### D. Restoration and closure
+
+12. Restore and deploy `OPERATIONAL_ALERTS_ENABLED="false"`; set the test
+    clinic gate off. Confirm `/health`, `/ready`, `/staff` and `/admin` are
+    healthy, Better Stack is `Up`, no alert delivery remains `claimed`, and
+    every created delivery/audit row has an explained final state.
+13. Update only the allowed evidence/status documents. Distinguish managed
+    staging proof, browser/on-device owner confirmation, provider limitation
+    and everything still `NOT RUN`. Codex reviews, updates durable project
+    context and commits. No additional Opus review is required if repository
+    behavior is unchanged; any code/schema/security correction reopens it.
+
+## Rollback and stop rules
+
+- At any telemetry ambiguity, wrong-tenant recipient, unexpected e-mail,
+  stale heartbeat, persistent `/ready` 503, UI auth leak or product regression:
+  restore the flag to `false`, redeploy, set the test clinic gate off and stop.
+- If the new Worker is the regression source, use Cloudflare's prior known-good
+  deployment after the flag-off deploy. The additive default-off migrations
+  remain installed; do not destructively roll them back on staging.
+- Never retry a failed external mutation blindly. Record sanitized status and
+  determine the root cause first.
+
+## Acceptance criteria
+
+1. Managed staging history contains 055 then 056 once each, with exact catalog,
+   RLS/grant/trigger/default-off invariants and no partial application.
+2. Flag-off Worker deploy preserves health/readiness, webhook/Queue behavior
+   and both login surfaces.
+3. `/admin` can control only the clinic rollout gate under exact AAL2 and sees
+   no recipient identity; `/staff` can control only the caller's own preference
+   and sees no e-mail address.
+4. Real-account outcome telemetry matches the strict parser before activation;
+   unknown evidence is not treated as zero.
+5. The bounded flag-on window either produces a fresh heartbeat and truthful
+   delivery evidence or stops safely with an explicit `BLOCKED`/failure record.
+6. One allowlisted live WhatsApp canary meets the §27 timing/evidence boundary.
+7. Final state is flag-off, test-clinic-gate-off, healthy and free of unexplained
+   claimed/failed alert deliveries; production is untouched.
+8. Documentation does not claim custom-domain, arbitrary-recipient,
+   continuous-pilot, production, veterinary or KVKK proof that did not occur.
+
+## Required local checks
+
+Before the first staging mutation:
+
+```text
+pnpm typecheck
+pnpm exec vitest run test/operationalAlerts.test.ts test/index.test.ts test/staffPage.test.ts test/adminPage.test.ts
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+Run the full suite only if repository code/config changes or a focused check
+fails. Live database/Cloudflare/Resend/Meta actions require the explicit owner
+approvals called out above. Do not expose secret values in commands, logs or
+documentation.
+
+## Task 057 observed context
+
+To be filled by Codex from repository and sanitized staging evidence.
+
+## Task 057 delivery record
+
+To be filled by Codex from actual work and checks.
+
+---
+
+# Completed task — 056 Clinic e-mail alert preferences and rollout control
 
 Status: `COMPLETE` (closed 2026-09-07 after Codex review, disposable-database
 proof, full local gates and mandatory Claude Opus read-only review)
