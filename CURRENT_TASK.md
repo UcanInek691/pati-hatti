@@ -1,4 +1,126 @@
-# Current task — 054 Verified webhook telemetry and staging alert activation
+# Current task — 055 Worker exception alert and pilot ingress canary
+
+Status: `READY`
+
+Created by Codex on 2026-09-07 after Task 054 closure (`7250970`). Task 054
+proved the real Resend path, Cron heartbeat and independent `/ready` failure /
+recovery path in staging, then restored alerting to `false`. Production remains
+unchanged. This task closes two remaining technical launch gaps without buying
+a domain or inventing a second monitoring system.
+
+## Goal
+
+Add fail-closed detection of uncaught/non-OK Worker executions to the existing
+Cloudflare Observability monitor and route it through the existing platform
+recipient/dedup/e-mail path. Separately define the smallest human pilot canary
+that proves Meta -> webhook -> Queue -> reply is alive when real traffic may be
+quiet. Do not add a public canary endpoint, a new provider, a dependency or a
+second secret.
+
+## Fixed decisions and boundaries
+
+- Reuse the existing account-scoped Cloudflare monitoring token, bounded query
+  window, timeout, script-name allowlist and `record_platform_signal` path.
+- Query only aggregate counts. Never request, log or persist event bodies,
+  headers, URLs with query strings, phone numbers, messages or identifiers.
+- `worker_exception` is platform scope only. It contains no clinic identifier
+  or customer data and uses the existing hourly dedup semantics.
+- An unknown/partial/ambiguous Cloudflare result is `unavailable`, never zero;
+  it suppresses heartbeat freshness.
+- The ingress canary is operational: an owner-controlled test number sends a
+  harmless message and the operator records only timestamps/result. Do not add
+  a backdoor, synthetic signature bypass or permanent fake customer record.
+- Alerting remains `false`; no real e-mail, Meta message, deploy, account
+  mutation or production action is authorized by the implementation phase.
+- Keep verification risk-calibrated: focused affected tests plus one final full
+  suite. Do not multiply fixtures for equivalent parser cases.
+- `.gitignore` and `docs/043-opus-inceleme.md` are pre-existing excluded
+  changes. Do not touch, stage or attribute them to Task 055.
+
+## Allowed changes
+
+- `CURRENT_TASK.md` (implementer: only **Task 055 observed context** and
+  **Task 055 delivery record**);
+- `src/operationalAlerts.ts`;
+- `test/operationalAlerts.test.ts` and, only if the public readiness contract
+  changes, `test/index.test.ts`;
+- `supabase/migrations/20260907000100_worker_exception_alert.sql` (new);
+- `supabase/tests/055_worker_exception_alert.sql` (new, rollback-only);
+- `docs/operational-alerting.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`, `docs/database-schema.md`, and
+  `docs/saas-urunlestirme-yol-haritasi.md`.
+
+No package/lockfile, Wrangler, queue consumer, intake, staff/admin UI, RLS
+policy, unrelated migration or production configuration change is allowed.
+Stop and report a contract conflict if repository evidence requires one.
+
+## Acceptance criteria
+
+1. Before implementation, verify from sanitized Cloudflare account evidence or
+   an official current schema that the exact aggregate field/value can count
+   non-OK Worker executions for the intended Worker. If this cannot be proven,
+   leave the code unchanged and report `BLOCKED`; do not guess.
+2. Use a separate bounded aggregate query for Worker execution failures so an
+   exception without an HTTP response status cannot disappear from the
+   existing 401/5xx query. Restrict it to the exact environment script and the
+   same short lag-aware window.
+3. Strictly validate the success envelope, aggregate count and sampling/
+   truncation signals. Non-2xx, timeout, invalid JSON, unexpected keys/groups,
+   partial/truncated or sampled results return `unavailable`.
+4. A positive count records only `worker_exception`; zero records nothing.
+   Failure or `no_recipients` from the recording RPC makes the stage
+   `unavailable` and prevents heartbeat advancement.
+5. The migration changes only the alert signal vocabulary and the existing
+   `record_platform_signal` function as necessary. Preserve every existing
+   signal, table/result shape, grant/revoke, invoker/search-path/volatility,
+   recipient isolation and dedup behavior exactly.
+6. The rollback fixture proves the full old signal set plus exactly
+   `worker_exception`, valid positive recording, same-hour dedup, no-recipient
+   fail-closed behavior, grants/security metadata and zero residue. It must
+   fail loudly if any legacy signal disappears.
+7. The monitor heartbeat advances only when queue, webhook-status,
+   Worker-exception, sync, repeat and delivery stages all succeed. Alerting
+   disabled behavior remains byte-for-byte unchanged.
+8. Tests cover one verified success, positive/zero counts, malformed/extra/
+   sampled/truncated shapes, HTTP/network/timeout failure and record failure.
+   Reuse table-driven cases; do not duplicate the entire Task 054 matrix.
+9. The staging runbook defines a bounded owner-controlled inbound canary:
+   expected end-to-end deadline, evidence that contains timestamps/status only,
+   failure/stop rule, and frequency proposed for the first pilot period. Mark
+   it `NOT RUN`; implementation does not send a real message.
+10. Documents distinguish local/disposable proof from staging activation and
+    keep production/KVKK/veterinary/owner gates open. No claim that Task 055 by
+    itself makes the product sale-ready.
+
+## Required verification and review
+
+Run the affected test first, then once after the last relevant change:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+Run the migration and fixture only on disposable `vetai-test`; never staging or
+production during implementation. Mandatory Claude Opus read-only review is
+required because this touches fail-closed monitoring, SECURITY/ACL metadata and
+production-incident detection. Sonnet does not commit, push or deploy.
+
+## Task 055 observed context
+
+To be filled by the implementer from repository evidence.
+
+## Task 055 delivery record
+
+To be filled by the implementer from repository evidence.
+
+---
+
+# Completed task — 054 Verified webhook telemetry and staging alert activation
 
 Status: `COMPLETE` (closed 2026-09-07 after repository/disposable verification,
 mandatory Claude Opus review, managed staging installation, bounded real
