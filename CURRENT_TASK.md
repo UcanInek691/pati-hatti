@@ -189,6 +189,13 @@ account mutations and any cost. Before setting the feature flag to true:
 
 Phase B does not authorize production deployment.
 
+For the bounded owner-only Resend smoke, Codex may also change and commit only
+`wrangler.staging.toml`: replace the two alert-email placeholders with
+Resend's testing sender and the real staging `/staff` URL while keeping
+`OPERATIONAL_ALERTS_ENABLED="false"`. This does not authorize a production
+sender, a custom-domain claim, a clinic recipient, or setting the flag true;
+those remain separate activation actions.
+
 ## Required verification and review
 
 Phase A implementer runs, once after the last relevant change:

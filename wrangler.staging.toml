@@ -10,8 +10,8 @@ WHATSAPP_GRAPH_API_VERSION = "v25.0"
 # RESEND_API_KEY and CLOUDFLARE_ALERTS_MONITORING_TOKEN are secrets set via
 # `wrangler secret put`, never written here.
 OPERATIONAL_ALERTS_ENABLED = "false"
-RESEND_FROM_ADDRESS = "alerts@vetai-alerts.invalid"
-STAFF_LOGIN_URL = "https://portal.vetai-portal.invalid/staff"
+RESEND_FROM_ADDRESS = "VetAI Staging Alerts <onboarding@resend.dev>"
+STAFF_LOGIN_URL = "https://vetai-staging.mehmetsait7072.workers.dev/staff"
 # CLOUDFLARE_ACCOUNT_ID is installed as a staging Worker secret, never a repo var.
 DEPLOYMENT_NAME = "staging"
 INTAKE_QUEUE_NAME = "vetai-intake-staging"
