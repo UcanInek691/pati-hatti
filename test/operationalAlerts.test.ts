@@ -111,6 +111,8 @@ type FetchOverrides = {
   resendBody?: unknown;
   telemetry?: unknown;
   telemetryStatus?: number;
+  workerException?: unknown;
+  workerExceptionStatus?: number;
 };
 
 function telemetryResponse(statusCounts: ReadonlyArray<readonly [number, number]> = []): unknown {
@@ -160,6 +162,53 @@ function telemetryResponse(statusCounts: ReadonlyArray<readonly [number, number]
   };
 }
 
+function outcomeTelemetryResponse(outcomeCounts: ReadonlyArray<readonly [string, number]> = []): unknown {
+  const statistics = { elapsed: 0.01, rows_read: 100, bytes_read: 1_000, abr_level: 1 };
+  return {
+    success: true,
+    errors: [],
+    messages: [{ message: "Successful request" }],
+    result: {
+      run: {
+        id: "telemetry-run-test-id",
+        query: {
+          parameters: {
+            calculations: [],
+            datasets: [],
+            filterCombination: "and",
+            filters: [],
+            groupBys: [],
+            limit: 500,
+          },
+        },
+        accountId: "0123456789abcdef0123456789abcdef",
+        timeframe: {},
+        userId: "telemetry-user-test-id",
+        status: "COMPLETED",
+        granularity: 30_000,
+        dry: true,
+        statistics,
+      },
+      calculations: [
+        {
+          alias: "outcome_count",
+          calculation: "count",
+          aggregates: outcomeCounts.map(([outcome, count]) => ({
+            groups: [{ key: "$workers.outcome", value: outcome }],
+            groupKey: outcome,
+            value: count,
+            interval: 1,
+            sampleInterval: 1,
+            count,
+          })),
+          series: [],
+        },
+      ],
+      statistics,
+    },
+  };
+}
+
 function backlogSignalQueueIds(fetchMock: ReturnType<typeof vi.fn>): (string | null)[] {
   return (fetchMock.mock.calls as FetchCall[])
     .filter((c) => urlOf(c[0]).includes("/rpc/record_platform_signal"))
@@ -191,6 +240,10 @@ function buildFetchMock(overrides: FetchOverrides = {}) {
     const url = urlOf(input);
 
     if (url.includes("/workers/observability/telemetry/query")) {
+      const queryId = (JSON.parse(init!.body as string) as { queryId?: string }).queryId;
+      if (queryId === "vetai-worker-exception-monitor") {
+        return jsonResponse(overrides.workerException ?? outcomeTelemetryResponse(), overrides.workerExceptionStatus ?? 200);
+      }
       return jsonResponse(overrides.telemetry ?? telemetryResponse(), overrides.telemetryStatus ?? 200);
     }
     if (url.includes("/queues/") && url.includes("/metrics")) {
@@ -863,6 +916,169 @@ describe("runOperationalAlertMonitor", () => {
       expect(log).not.toHaveBeenCalled();
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("worker exception telemetry (Task 055)", () => {
+    function workerExceptionSignalKinds(fetchMock: ReturnType<typeof vi.fn>): string[] {
+      return (fetchMock.mock.calls as FetchCall[])
+        .filter((c) => urlOf(c[0]).includes("/rpc/record_platform_signal"))
+        .map((c) => (bodyOf(c) as { p_signal_kind: string }).p_signal_kind)
+        .filter((kind) => kind === "worker_exception");
+    }
+
+    it("queries only the same script/window over outcome, not HTTP status, without a path/method restriction", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime("2026-09-07T00:06:42.000Z");
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({});
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      const call = (fetchMock.mock.calls as FetchCall[]).find(
+        (c) => urlOf(c[0]).includes("/workers/observability/telemetry/query") && (bodyOf(c) as { queryId?: string }).queryId === "vetai-worker-exception-monitor",
+      );
+      expect(call).toBeDefined();
+      const query = bodyOf(call!) as Record<string, any>;
+      expect(query.timeframe).toEqual({
+        from: Date.parse("2026-09-07T00:01:00.000Z"),
+        to: Date.parse("2026-09-07T00:04:00.000Z"),
+      });
+      expect(query.parameters).toEqual({
+        calculations: [{ operator: "count", alias: "outcome_count" }],
+        datasets: [],
+        filterCombination: "and",
+        filters: [{ key: "$workers.scriptName", operation: "eq", type: "string", value: "vetai-staging" }],
+        groupBys: [{ type: "string", value: "$workers.outcome" }],
+        limit: 500,
+      });
+      expect(JSON.stringify(query)).not.toMatch(/body|header|signature|phone|message|token|challenge|email/i);
+    });
+
+    it.each([
+      ["empty aggregate", [], [], true],
+      ["ok only", [["ok", 9]], [], true],
+      ["exception only", [["exception", 2]], ["worker_exception"], true],
+      ["mixed Worker faults", [["ok", 5], ["exception", 1], ["exceededCpu", 1]], ["worker_exception"], true],
+      ["memory limit", [["exceededMemory", 1]], ["worker_exception"], true],
+      ["script lookup failure", [["scriptNotFound", 1]], ["worker_exception"], true],
+      ["client cancellation", [["canceled", 1]], [], true],
+      ["response stream disconnect", [["responseStreamDisconnected", 1]], [], true],
+      ["unset outcome", [["unknown", 1]], [], false],
+    ] as const)("classifies a documented Worker outcome without masking faults (%s)", async (_label, outcomeCounts, expected, heartbeatExpected) => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({
+        workerException: outcomeTelemetryResponse(outcomeCounts as any),
+        queues: QUEUE_LIST,
+        metrics: metricsFor({ backlogCount: 0, ageMs: 0 }, 0, { backlogCount: 0 }),
+        claims: [],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual(expected);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(heartbeatExpected);
+    });
+
+    it("treats a verified empty outcome aggregate as a healthy zero and advances the heartbeat", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({
+        workerException: outcomeTelemetryResponse(),
+        queues: QUEUE_LIST,
+        metrics: metricsFor({ backlogCount: 0, ageMs: 0 }, 0, { backlogCount: 0 }),
+        claims: [],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual([]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(true);
+    });
+
+    it.each([
+      ["unknown outcome value", outcomeTelemetryResponse([["futureOutcome", 1]])],
+      ["duplicate outcome group", outcomeTelemetryResponse([["exception", 1], ["exception", 1]])],
+      ["extra result field", (() => { const v = structuredClone(outcomeTelemetryResponse()) as any; v.result.extra = true; return v; })()],
+      ["truncated run", (() => { const v = structuredClone(outcomeTelemetryResponse()) as any; delete v.result.run.status; return v; })()],
+      ["sampled aggregate", (() => { const v = structuredClone(outcomeTelemetryResponse([["exception", 1]])) as any; v.result.calculations[0].aggregates[0].sampleInterval = 2; return v; })()],
+      ["sampled run", (() => { const v = structuredClone(outcomeTelemetryResponse([["exception", 1]])) as any; v.result.statistics.abr_level = 2; return v; })()],
+      ["non-empty echoed datasets", (() => { const v = structuredClone(outcomeTelemetryResponse()) as any; v.result.run.query.parameters.datasets = ["workers_trace_events"]; return v; })()],
+      ["count mismatch", (() => { const v = structuredClone(outcomeTelemetryResponse([["exception", 2]])) as any; v.result.calculations[0].aggregates[0].count = 1; return v; })()],
+      ["wrong groupBy key", (() => { const v = structuredClone(outcomeTelemetryResponse([["exception", 1]])) as any; v.result.calculations[0].aggregates[0].groups[0].key = "$workers.event.response.status"; return v; })()],
+    ])("fails closed for a malformed or ambiguous %s envelope", async (_label, workerException) => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ workerException, claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual([]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed on a non-2xx worker-exception telemetry response", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ workerExceptionStatus: 429, claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual([]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it.each([new Error("network down"), new DOMException("timed out", "AbortError")])(
+      "fails closed on worker-exception telemetry fetch rejection",
+      async (error) => {
+        const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+        const routed = buildFetchMock({ claims: [] });
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = urlOf(input);
+          if (url.includes("/workers/observability/telemetry/query")) {
+            const queryId = (JSON.parse(init!.body as string) as { queryId?: string }).queryId;
+            if (queryId === "vetai-worker-exception-monitor") throw error;
+          }
+          return routed(input, init);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        await runOperationalAlertMonitor(fullEnv);
+        expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+      },
+    );
+
+    it("fails closed when worker_exception has no enabled platform recipient", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({
+        workerException: outcomeTelemetryResponse([["exception", 1]]),
+        platformSignalResult: "no_recipients",
+        claims: [],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual(["worker_exception"]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed when worker_exception cannot be durably recorded", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const routed = buildFetchMock({ workerException: outcomeTelemetryResponse([["exception", 1]]), claims: [] });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = urlOf(input);
+        if (
+          url.includes("/rpc/record_platform_signal") &&
+          (JSON.parse(init!.body as string) as { p_signal_kind?: string }).p_signal_kind === "worker_exception"
+        ) {
+          return new Response("", { status: 500 });
+        }
+        return routed(input, init);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(workerExceptionSignalKinds(fetchMock)).toEqual(["worker_exception"]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
     });
   });
 

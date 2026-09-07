@@ -1377,7 +1377,18 @@ remain untouched. Full behavior, activation gates, and risks in
   `attempts_exhausted`, while a third explicit provider failure closes as
   `send_failed`. The work-item recheck uses `FOR NO KEY UPDATE`, after locking
   the delivery row, so both explicit resolution and delivery-status trigger
-  updates serialize before a mail can be claimed.
+  updates serialize before a mail can be claimed. `signal_kind`'s check
+  constraint took a 9th value, `worker_exception`, in
+  `supabase/migrations/20260907000100_worker_exception_alert.sql` (Task 055,
+  2026-09-07) — platform scope only, same hourly dedup via
+  `record_platform_signal`, no other column, grant, or existing signal
+  changed. Codex later applied it only through the direct-query path on
+  disposable `vetai-test`; the rollback fixture passed with five zero residue
+  counters and an independent catalog check confirmed the exact constraint
+  and function metadata. This did not create a migration-history record and
+  was not applied or deployed to staging/production. See
+  [`docs/operational-alerting.md`](operational-alerting.md#10-task-055--worker_exception-sinyali-2026-09-07-aktivasyon-yok)
+  §10.
 - `public.alert_monitor_heartbeat` — single-row table the scheduled monitor
   updates last, after every mandatory check has run; `/ready` reports
   `alertMonitorHeartbeat: "stale"` when it falls behind, independent of the

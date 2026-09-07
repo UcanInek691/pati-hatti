@@ -1202,6 +1202,28 @@ occurred.
   post-activation WhatsApp smoke, uncaught-Worker-exception and ingestion-
   liveness coverage, production secrets/canary/rollback, and the documented
   KVKK, veterinary and operational-owner decisions.
+- Task 055 is complete at repository and disposable-database gates as of
+  2026-09-07. The existing Cloudflare Observability monitor now has a separate,
+  aggregate-only `$workers.outcome` query for actionable Worker faults. It
+  recognizes the complete eight-value documented vocabulary, records only
+  `exception`, `exceededCpu`, `exceededMemory` and `scriptNotFound` as the
+  platform-scoped `worker_exception` signal, excludes client-driven disconnects
+  from that hourly dedup slot, and treats `unknown` or malformed evidence as
+  unavailable so the six-stage heartbeat cannot advance.
+- The Task 055 migration preserves all eight legacy alert signal values and
+  adds only `worker_exception`. The corrected migration and expanded rollback
+  fixture passed by direct query only on disposable `vetai-test`, with five
+  zero residue counters and independently verified function/CHECK invariants;
+  this did not add migration history. The affected suite passed 123/123, the
+  full suite passed 2,097 tests with two unchanged opt-in skips, and frozen
+  install, typecheck, both Worker dry-runs, whitespace validation, Codex review
+  and mandatory Claude Opus re-review all passed.
+- Task 055 has not been deployed or account-verified in staging or production;
+  operational alerting remains `false`. Before activation, §27 requires a
+  sanitized non-empty real-account outcome-shape preflight, immediate rollback
+  if the heartbeat is not fresh within three minutes, and a human pilot canary
+  that records two minutes as `LATE` and five minutes as `FAIL`. No canary or
+  real Task 055 alert e-mail has been run.
 
 ## Context maintenance
 

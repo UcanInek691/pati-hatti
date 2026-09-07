@@ -29,6 +29,31 @@ const WEBHOOK_TELEMETRY_INGESTION_LAG_MS = 2 * 60_000;
 const WEBHOOK_TELEMETRY_ALIGNMENT_MS = 60_000;
 const WEBHOOK_TELEMETRY_MAX_RESPONSE_CHARS = 250_000;
 const WEBHOOK_TELEMETRY_STATUS_KEY = "$workers.event.response.status";
+// Task 055: a separate aggregate keyed on invocation outcome, not HTTP
+// status, so an uncaught exception without any HTTP response (Cron/Queue
+// consumer runs, or a fetch that never reaches a response) cannot disappear
+// from the webhook-only 401/5xx query above. Confirmed current official
+// Cloudflare Workers Observability schema (2026-09-07): `$workers.outcome`
+// is a documented filter/group field, `"exception"` is the documented
+// worked example for uncaught exceptions, and outcome is explicitly
+// independent of HTTP response status.
+const WORKER_OUTCOME_KEY = "$workers.outcome";
+// Cloudflare's Workers error guide points to the Trace Event reference for
+// the complete outcome vocabulary. Unknown future values still fail closed.
+const KNOWN_WORKER_OUTCOMES = new Set([
+  "ok",
+  "exception",
+  "exceededCpu",
+  "exceededMemory",
+  "scriptNotFound",
+  "canceled",
+  "responseStreamDisconnected",
+  "unknown",
+]);
+// ponytail: client-driven disconnects are not Worker faults; folding them
+// into worker_exception would burn the hourly dedup slot. Split them into a
+// separate signal only if that visibility becomes operationally useful.
+const CLIENT_DISCONNECT_OUTCOMES = new Set(["canceled", "responseStreamDisconnected"]);
 const CLOUDFLARE_ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 
 // Duplicated from readiness.ts per this repo's per-file config-validation
@@ -207,7 +232,11 @@ export async function runOperationalAlertMonitor(env: Env): Promise<void> {
   // making a real send.
   if (!isAlertingConfigured(env)) return;
 
-  const [queueResult, telemetryResult] = await Promise.all([checkQueueBacklogs(env), checkWebhookTelemetry(env)]);
+  const [queueResult, telemetryResult, workerExceptionResult] = await Promise.all([
+    checkQueueBacklogs(env),
+    checkWebhookTelemetry(env),
+    checkWorkerException(env),
+  ]);
   const syncResult = await syncAlertDeliveryCandidates(env);
   // Reopen accepted deliveries whose repeat schedule has elapsed before
   // draining, so a due repeat is claimable in this same tick (Task 053
@@ -219,6 +248,7 @@ export async function runOperationalAlertMonitor(env: Env): Promise<void> {
   if (
     queueResult === "success" &&
     telemetryResult === "success" &&
+    workerExceptionResult === "success" &&
     syncResult === "success" &&
     repeatResult === "success" &&
     deliveryResult === "success"
@@ -568,6 +598,139 @@ async function checkWebhookTelemetry(env: Env): Promise<StageResult> {
   }
 }
 
+// Same exact/fail-closed shape rules as parseWebhookTelemetry, grouped by
+// invocation outcome instead of HTTP status. Any group value outside
+// KNOWN_WORKER_OUTCOMES, or any other partial/duplicate/inconsistent shape,
+// fails closed to null.
+function parseWorkerExceptionTelemetry(value: unknown, accountId: string): number | null {
+  if (!hasExactKeys(value, ["success", "errors", "messages", "result"])) return null;
+  if (
+    value.success !== true ||
+    !Array.isArray(value.errors) ||
+    value.errors.length !== 0 ||
+    !Array.isArray(value.messages) ||
+    value.messages.length !== 1 ||
+    !hasExactKeys(value.messages[0], ["message"]) ||
+    typeof value.messages[0].message !== "string"
+  ) {
+    return null;
+  }
+  if (!hasExactKeys(value.result, ["run", "calculations", "statistics"])) return null;
+
+  const result = value.result;
+  if (!validTelemetryStatistics(result.statistics) || !Array.isArray(result.calculations) || result.calculations.length !== 1) return null;
+  if (!hasExactKeys(result.run, ["id", "query", "accountId", "timeframe", "userId", "status", "granularity", "dry", "statistics"])) return null;
+  const run = result.run;
+  if (
+    typeof run.id !== "string" ||
+    !validTelemetryDatasetEcho(run.query) ||
+    run.accountId !== accountId ||
+    !isRecord(run.timeframe) ||
+    typeof run.userId !== "string" ||
+    run.status !== "COMPLETED" ||
+    !isSafeNonNegativeInteger(run.granularity) ||
+    run.granularity === 0 ||
+    run.dry !== true ||
+    !validTelemetryStatistics(run.statistics)
+  ) {
+    return null;
+  }
+
+  const calculation = result.calculations[0];
+  if (!hasExactKeys(calculation, ["alias", "calculation", "aggregates", "series"])) return null;
+  if (calculation.alias !== "outcome_count" || calculation.calculation !== "count") return null;
+  if (!Array.isArray(calculation.aggregates) || calculation.aggregates.length > 500 || !Array.isArray(calculation.series)) return null;
+  if (
+    !calculation.series.every(
+      (entry) =>
+        hasExactKeys(entry, ["time", "data"]) &&
+        typeof entry.time === "string" &&
+        entry.time.length > 0 &&
+        Array.isArray(entry.data) &&
+        entry.data.length === 0,
+    )
+  ) {
+    return null;
+  }
+
+  let nonOk = 0;
+  const outcomes = new Set<string>();
+  for (const aggregate of calculation.aggregates) {
+    if (!hasExactKeys(aggregate, ["groups", "groupKey", "value", "interval", "sampleInterval", "count"])) return null;
+    if (!Array.isArray(aggregate.groups) || aggregate.groups.length !== 1) return null;
+    const group = aggregate.groups[0];
+    if (!hasExactKeys(group, ["key", "value"]) || group.key !== WORKER_OUTCOME_KEY) return null;
+    const outcome = group.value;
+    if (typeof outcome !== "string" || !KNOWN_WORKER_OUTCOMES.has(outcome) || outcomes.has(outcome)) return null;
+    if (
+      aggregate.groupKey !== outcome ||
+      !isSafeNonNegativeInteger(aggregate.value) ||
+      aggregate.value !== aggregate.count ||
+      aggregate.interval !== 1 ||
+      aggregate.sampleInterval !== 1
+    ) {
+      return null;
+    }
+    outcomes.add(outcome);
+    // Cloudflare documents `unknown` as "outcome status was not set". That
+    // is ambiguous evidence, so it follows this monitor's fail-closed rule
+    // instead of being mislabeled as an exception or accepted as healthy.
+    if (outcome === "unknown") return null;
+    if (outcome !== "ok" && !CLIENT_DISCONNECT_OUTCOMES.has(outcome)) nonOk += aggregate.value;
+  }
+  return nonOk;
+}
+
+async function checkWorkerException(env: Env): Promise<StageResult> {
+  if (!hasCloudflareMonitoringConfig(env)) return "unavailable";
+  const scriptName = monitoredScriptName(env);
+  if (!scriptName) return "unavailable";
+
+  const to =
+    Math.floor((Date.now() - WEBHOOK_TELEMETRY_INGESTION_LAG_MS) / WEBHOOK_TELEMETRY_ALIGNMENT_MS) *
+    WEBHOOK_TELEMETRY_ALIGNMENT_MS;
+  const from = to - WEBHOOK_TELEMETRY_WINDOW_MS;
+  const query = {
+    queryId: "vetai-worker-exception-monitor",
+    timeframe: { from, to },
+    view: "calculations",
+    chart: false,
+    chartType: "aggregate",
+    dry: true,
+    ignoreSeries: true,
+    limit: 500,
+    parameters: {
+      calculations: [{ operator: "count", alias: "outcome_count" }],
+      datasets: [],
+      filterCombination: "and",
+      filters: [{ key: "$workers.scriptName", operation: "eq", type: "string", value: scriptName }],
+      groupBys: [{ type: "string", value: WORKER_OUTCOME_KEY }],
+      limit: 500,
+    },
+  };
+
+  try {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/observability/telemetry/query`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.CLOUDFLARE_ALERTS_MONITORING_TOKEN}` },
+        body: JSON.stringify(query),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) return "unavailable";
+    const raw = await response.text();
+    if (raw.length === 0 || raw.length > WEBHOOK_TELEMETRY_MAX_RESPONSE_CHARS) return "unavailable";
+    const nonOk = parseWorkerExceptionTelemetry(JSON.parse(raw), env.CLOUDFLARE_ACCOUNT_ID);
+    if (nonOk === null) return "unavailable";
+    if (nonOk === 0) return "success";
+    return (await recordPlatformSignal(env, "worker_exception", null)) ? "success" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
+}
+
 const SIGNAL_KINDS = new Set([
   "delivery_failure",
   "human_handoff_urgent",
@@ -577,6 +740,7 @@ const SIGNAL_KINDS = new Set([
   "webhook_5xx",
   "webhook_401",
   "openai_extraction_failure",
+  "worker_exception",
 ]);
 
 // Exactly the columns claim_alert_delivery() returns (Task 053 migration).

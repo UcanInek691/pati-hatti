@@ -1272,3 +1272,65 @@ Geçerli URL ve `OPERATIONAL_ALERTS_ENABLED="false"` hemen geri deploy edildi.
 Üç uç 200'e döndü; Better Stack `Validating recovery` sonrasında `Up` oldu ve
 olayı kapattı. Sahip hem kesinti hem recovery e-postasını doğruladı. Bu test
 satır 2'yi kapatır; diğer sinyal satırlarının kanıtı değildir.
+
+## 27. Task 055 — pilot dönemi gelen kanarya tanımı (2026-09-07, NOT RUN)
+
+§19'daki zorunlu kapanış adımı yalnız **her aktivasyondan sonra bir kez**
+çalışır. Gerçek pilot trafiği gün içinde uzun süre sessiz kalabileceği için bu
+tek seferlik kontrol, Meta → webhook → Queue → yanıt zincirinin aktivasyonlar
+arasında canlı kaldığını kanıtlamaz — zincir aktivasyondan saatler sonra
+sessizce kopsa bile `/health` ve `/ready` bunu göstermez (bkz. §19'un
+2026-09-04 gerekçesi). Task 055 bu boşluğu kapatmak için, ilk pilot dönemi
+boyunca tekrarlanacak, sahibin kendi kontrolündeki ayrı bir kanarya tanımlar.
+Bu bölüm yalnız tanımdır; aşağıdaki adımların hiçbiri bu görevde çalıştırılmadı.
+
+**Kapsam:** Backdoor yok, sentetik imza atlaması yok, kalıcı sahte müşteri
+kaydı yok. Kanarya yalnız §19'da zaten kullanılan whitelist'li test
+numarasından (`staging-test-sender`/`ai` whitelist rotası) gerçek bir Meta
+mesajı gönderip gerçek bot cevabını bekler — yeni bir uç, sağlayıcı veya
+secret eklenmez.
+
+**Adımlar:**
+
+1. Whitelist'li test numarasından tek bir zararsız mesaj gönderilir (ör.
+   `Merhaba`).
+2. **Beklenen mutlu-yol süresi: 2 dakika; kesin başarısızlık sınırı: 5
+   dakika.** İlk 2 dakika içinde cevap yoksa sonuç `LATE` olarak kaydedilir ve
+   beklemeye devam edilir. Mevcut Queue consumer'ın 120 saniyelik ilk yeniden
+   deneme gecikmesi ile 60 saniyelik operasyon payı nedeniyle ancak 5 dakika
+   sonunda hâlâ cevap yoksa sonuç `FAIL` olur.
+3. Operatör yalnız §11 kanıt şablonuna uyan bir satır kaydeder: UTC + TRT
+   zaman damgası, adım adı, `PASS`/`LATE`/`FAIL` sonucu, varsa gözlemlenen HTTP/RPC
+   durum kodu ve redakte edilmiş takma ad. Mesaj içeriği, telefon numarası,
+   sağlayıcı mesaj kimliği veya ekran görüntüsü dışındaki hiçbir şey
+   kaydedilmez — §11'in "asla kaydedilmeyenler" listesiyle aynı sınır.
+4. **Durdurma kuralı:** 2 dakikadaki `LATE` sonucu tek başına pilotu durdurmaz;
+   5 dakika sonunda cevap yoksa `FAIL` yazılır ve §19'daki aynı teşhis sırası
+   (Cloudflare Worker log → Supabase edge log) izlenir. İki ardışık `FAIL`
+   pilot dönemini durdurur; bir sonraki gerçek
+   mesaj denemesi yalnız kök neden bulunup düzeltildikten sonra yapılır — arka
+   arkaya kör tekrar denemesi yoktur.
+5. **Önerilen sıklık (ilk pilot dönemi):** günde bir kez, mesai saatleri
+   içinde sabit bir pencerede (ör. 10:00 TRT). Bu, gerçek pilot trafiğinin
+   günlük olarak zaten zincire dokunmasını bekleyen düşük-gürültülü bir alt
+   sınırdır; gerçek trafik hacmi arttıkça sıklık azaltılabilir, fakat bu karar
+   ayrı bir sahip onayı gerektirir ve bu görevin kapsamı dışındadır.
+
+Bu kanarya `worker_exception`/webhook telemetri monitörünün (§10,
+[`docs/operational-alerting.md`](operational-alerting.md) §10) yerine geçmez —
+o yol sunucu tarafı hata oranını izler, bu kanarya ise uçtan uca gerçek
+kullanıcı yolunun kendisini. İkisi birbirini tamamlar: telemetri monitörü
+alarm bayrağı açıldığında otomatik çalışır, bu kanarya ise bayraktan bağımsız,
+insan tetiklemeli ve mesaj içeriğinden habersiz kalır. Bu tanımın kendisi
+üretime hazırlık kanıtı değildir; gerçek çalıştırma, [`docs/production-readiness.md`](production-readiness.md)
+ve KVKK/veteriner/sahip onay kapıları hâlâ ayrı ve açıktır.
+
+**Task 055 aktivasyon ön koşulu (`NOT RUN`):**
+`OPERATIONAL_ALERTS_ENABLED="true"` yapılmadan önce
+`vetai-worker-exception-monitor` sorgusu gerçek staging hesabında sanitize
+edilmiş biçimde bir kez çalıştırılır; en az bir dolu aggregate üzerinde
+`groups[0].value`, `groupKey`, `interval` ve `sampleInterval` alanlarının
+depodaki katı sözleşmeyle uyuştuğu doğrulanır.
+Bayrak açıldıktan sonraki ilk üç dakika içinde `/ready` yanıtında
+`alertMonitorHeartbeat: "fresh"` görülmezse bayrak hemen tekrar kapatılır ve
+staging aktivasyonu ilerletilmez.

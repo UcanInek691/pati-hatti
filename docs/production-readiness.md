@@ -429,7 +429,13 @@ ve diğer alarm maddeleri tamamlanmadığı için kutular işaretsiz kalır.
       path, not just an enabled log dashboard. `/ready` is cached for up to
       30 seconds per isolate and is not a Meta/OpenAI end-to-end probe. A
       Dönen HTTP 5xx'ler için depo yolu vardır fakat staging'de aktive
-      edilmemiştir; yakalanmamış exception yolu ayrıca açık kalır — see
+      edilmemiştir. Task 055 (2026-09-07), yakalanmamış exception'ı yanıt
+      durumundan bağımsız `$workers.outcome` alanıyla sayan ayrı bir sorgu
+      yolunu depoda uyguladı ve yereldeyken doğruladı — bu box'ı kapatmaya
+      yetmez, çünkü gerçek Cloudflare hesabına karşı doğrulama, staging
+      deploy'u ve alarm bayrağının açılması hâlâ yapılmadı; see
+      [`docs/operational-alerting.md`](operational-alerting.md#10-task-055--worker_exception-sinyali-2026-09-07-aktivasyon-yok)
+      §10 for the local implementation evidence and
       [`docs/operational-alerting.md`](operational-alerting.md#2-en-küçük-desteklenen-yol)
       §2 for the two smallest supported fallback options and the open Phase B
       blocker on choosing between them.

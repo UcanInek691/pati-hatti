@@ -764,6 +764,83 @@ sonra `Up` durumuna döndü ve devam eden olayı kapattı. Sahip hem kesinti hem
 recovery e-postasının ulaştığını doğruladı. Bu kanıt §6 satır 2'nin tamamını
 kapatır; başka bir alarm satırını veya production hazırlığını kanıtlamaz.
 
+## 10. Task 055 — `worker_exception` sinyali (2026-09-07, aktivasyon yok)
+
+§9 sonundaki açık kalem şuydu: mevcut webhook telemetri yolu yalnız
+`$workers.event.response.status` taşıyan tamamlanmış HTTP yanıtlarını sayar;
+HTTP yanıtına hiç ulaşmayan (Cron/Queue consumer çalıştırması veya `fetch`
+tamamlanmadan patlayan) yakalanmamış bir exception bu sorgudan sessizce
+kaybolabilir. Task 055 bunu ayrı, dar kapsamlı bir sorguyla kapatır.
+
+Alan doğrulaması bu kez sanitize edilmiş gerçek hesap kanıtı değil, Cloudflare'ın
+güncel resmi Workers Observability şemasıdır: `$workers.outcome` aynı
+telemetri sorgu uç noktası için belgelenmiş bir filter/group alanıdır,
+`"exception"` yakalanmamış hatalar için resmi örnek değerdir ve outcome HTTP
+yanıt durumundan açıkça bağımsız olarak tanımlanır. Cloudflare'ın Workers hata
+rehberi tüm olası outcome değerleri için Trace Event referansına yönlendirir;
+bu nedenle `ok | exception | exceededCpu | exceededMemory | scriptNotFound |
+canceled | responseStreamDisconnected | unknown` kümesinin tamamı tanınır.
+Yalnız gerçek Worker-fault değerleri (`exception | exceededCpu |
+exceededMemory | scriptNotFound`) `worker_exception` üretir. İstemci kaynaklı
+`canceled`/`responseStreamDisconnected` bu alarmın saatlik dedup yuvasını
+tüketmez; ayrı görünürlük gerekirse ayrı bir sinyal tasarlanır. Outcome durumu
+atanmamış `unknown` ve gelecekte eklenecek tanınmayan bir değer sessizce
+"sorunsuz" sayılmak yerine fail-closed `unavailable` döner.
+
+Uygulama (`src/operationalAlerts.ts`, `checkWorkerException` +
+`parseWorkerExceptionTelemetry`) §9 ile aynı iki dakikalık ingest gecikmesi ve
+üç dakikalık pencereyi, aynı hesap/script-adı kısıtını ve aynı
+`record_platform_signal` yolunu yeniden kullanır, fakat tamamen ayrı bir
+`queryId` (`vetai-worker-exception-monitor`) ve ayrı `$workers.outcome`
+group-by ile çalışır — böylece 401/5xx sorgusundaki bir sözleşme kaymasının bu
+yeni yolu da sessizce bozması mümkün değildir. Zarf, hesap kimliği,
+tamamlanma durumu, tek hesaplama, örneklenmemiş (`interval = sampleInterval =
+1`) ve tekrarsız outcome grupları §9'daki webhook yoluyla birebir aynı katılıkta
+doğrulanır; beklenmeyen anahtar, fazladan alan, kısmi/örneklenmiş/kesilmiş
+şekil, `unknown` veya tanınmayan outcome değeri `unavailable` döner. Yalnız
+Worker-fault sayaçlarının toplamı pozitifse tam olarak `worker_exception`
+kaydedilir; toplam sıfırsa hiçbir şey kaydedilmez ve doğrulanmış istemci
+kopmaları dahil sağlıklı sonuç heartbeat'i ilerletir. Kayıt RPC'si
+`no_recipients` veya hata dönerse aşama `unavailable`
+olur ve heartbeat ilerlemez — aynı fail-closed kural §7-9'daki her aşamayla
+aynıdır.
+
+`worker_exception` platform kapsamlıdır, klinik kimliği veya müşteri verisi
+taşımaz ve mevcut saatlik dedup semantiğini kullanır. Bunu taşıyan
+`supabase/migrations/20260907000100_worker_exception_alert.sql`
+migration'ı yalnız `alert_deliveries_signal_kind_check` kısıtını ve
+`record_platform_signal`'ın izin listesini bu dokuzuncu değerle genişletir;
+fonksiyonun `security invoker`/`volatile`/`set search_path = ''`
+niteliklerinde, dönüş şeklinde, dedup/alıcı izolasyon davranışında veya
+grant/revoke satırlarında hiçbir değişiklik yoktur — orijinal satırla tek
+fark izin listesindeki eklenen değerdir. `supabase/tests/055_worker_exception_alert.sql`
+rollback-only test fixture'ı eski sekiz sinyalin tamamının artı
+`worker_exception`'ın kabul edildiğini (ve tanınmayan bir değerin hâlâ
+reddedildiğini), geçerli pozitif kayıt + aynı saat içi dedup artışını,
+alıcısız fail-closed `no_recipients` sonucunu, `record_platform_signal`'ın
+grant/security metadata'sını, fonksiyonun kendi dar izin listesindeki dört
+eski platform sinyalini ve rollback sonrası sıfır artığı kanıtlar. Bu
+fixture depoya uygulayıcı tarafından yalnız yazıldı. Codex daha sonra migration'ı
+yalnız disposable `vetai-test` üzerinde direct-query yoluyla uyguladı ve
+rollback fixture'ını çalıştırdı; beş artık sayacı da sıfır döndü. Bağımsız
+katalog sorgusu dokuz değerli CHECK'i ve fonksiyonun `VOLATILE`, `SECURITY
+INVOKER`, boş `search_path` niteliklerini doğruladı. Bu doğrudan SQL kanıtı
+migration-history kaydı değildir. Opus düzeltmelerinden sonra migration ve
+genişletilmiş fixture aynı disposable projede tekrar geçti; staging ve
+production'a uygulanmadı.
+
+`test/operationalAlerts.test.ts` bu aşamayı §8'deki tablo-güdümlü desenle
+kapsar: bir doğrulanmış sağlıklı-sıfır (heartbeat ilerler), pozitif/sıfır
+sayaç kayıt kombinasyonları, temsili bozuk/eksik/fazla/örneklenmiş/kesilmiş
+şekiller, HTTP/ağ/timeout hatası ve kayıt-RPC hatası/`no_recipients` — Task
+054'ün tüm eşdeğer parser matrisini tekrarlamadan. Kod/Worker bölümü yerel
+uygulama + mock test kanıtıdır; migration/fixture yalnız disposable
+`vetai-test` doğrudan-SQL kanıtını geçti. Gerçek Cloudflare hesabına karşı
+`$workers.outcome` sorgusu, staging deploy, gerçek e-posta ve aktivasyon
+bayrağının açılması hâlâ NOT RUN'dır. Bu bölüm tek başına ürünü satışa hazır hâle getirmez;
+production/KVKK/veteriner/sahip onay kapıları §3, §4 ve §7'de tanımlandığı gibi
+açık kalır.
+
 ## Referanslar
 
 - [Cloudflare Queues — limitler (retention/backlog boyutu)](https://developers.cloudflare.com/queues/platform/limits/) — kontrol 2026-09-05
@@ -778,6 +855,7 @@ kapatır; başka bir alarm satırını veya production hazırlığını kanıtla
 - [Cloudflare Workers Observability](https://developers.cloudflare.com/workers/observability/) (son güncelleme 2026-08-03) — kontrol 2026-09-05
 - [Cloudflare Workers Observability — Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/) — kontrol 2026-09-05; §2'de kullanılan `$workers.event.response.status` alanının kaynağı
 - [Cloudflare Workers Observability — Run a query API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) — kontrol 2026-09-06, yeniden kontrol 2026-09-07; `POST /accounts/{account_id}/workers/observability/telemetry/query`, Unix-ms pencere, aggregate/group-by, `Workers Observability Write` ve boş `datasets` listesinin tüm kullanılabilir veri kümelerini sorguladığı sözleşmesi
+- [Cloudflare Workers — Errors and exceptions](https://developers.cloudflare.com/workers/observability/errors/) ve [Trace Event outcome listesi](https://developers.cloudflare.com/workers/runtime-apis/handlers/tail/) — kontrol 2026-09-07; `$workers.outcome` alanı ve tam outcome kümesi
 - [Cloudflare Standalone Health Checks](https://developers.cloudflare.com/health-checks/) (son güncelleme 2026-08-14) — kontrol 2026-09-05
 - [Resend API referansı — e-posta gönderme](https://resend.com/docs/api-reference/emails/send-email) (illüstrasyon amaçlı, sağlayıcı seçimi değildir) — kontrol 2026-09-05
 - İç: [`docs/staff-workflow.md`](staff-workflow.md), [`docs/outbound-delivery.md`](outbound-delivery.md), [`docs/staff-work-items.md`](staff-work-items.md), [`docs/production-readiness.md`](production-readiness.md) §5–6, [`docs/olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md), [`docs/olaylar/2026-09-05-delivery-latency.md`](olaylar/2026-09-05-delivery-latency.md)

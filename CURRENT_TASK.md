@@ -1,6 +1,6 @@
 # Current task — 055 Worker exception alert and pilot ingress canary
 
-Status: `READY`
+Status: `COMPLETE`
 
 Created by Codex on 2026-09-07 after Task 054 closure (`7250970`). Task 054
 proved the real Resend path, Cron heartbeat and independent `/ready` failure /
@@ -112,11 +112,225 @@ production-incident detection. Sonnet does not commit, push or deploy.
 
 ## Task 055 observed context
 
-To be filled by the implementer from repository evidence.
+- `src/operationalAlerts.ts` already ran a webhook-status telemetry query
+  (`checkWebhookTelemetry`/`parseWebhookTelemetry`, `WEBHOOK_TELEMETRY_STATUS_KEY
+  = "$workers.event.response.status"`) grouped strictly by HTTP response
+  status. An uncaught exception without a completed HTTP response (a Cron or
+  Queue-consumer invocation, or a `fetch` that throws before responding)
+  cannot appear as a group value in that query — confirming the Goal's gap is
+  real, not speculative.
+- Criterion 1's field/value could not be taken from a sanitized real
+  Cloudflare account response (no new account query was authorized for this
+  task). Verified instead against Cloudflare's current official Workers
+  Observability documentation: the same telemetry query endpoint's schema
+  documents `$workers.outcome` as a filter/group field independent of HTTP
+  response status, with `"exception"` as the worked example value for
+  uncaught exceptions. Codex's 2026-09-07 review corrected the implementer's
+  narrower value-set reading: Cloudflare's Workers error guide directs readers
+  to the Trace Event reference for all possible outcomes, which also includes
+  `scriptNotFound` and `responseStreamDisconnected`. The implementation now
+  accepts the complete documented eight-value set and treats every non-`ok`
+  value as `worker_exception`; an unknown future value remains fail-closed.
+  Not `BLOCKED` — see `src/operationalAlerts.ts` beside
+  `WORKER_OUTCOME_KEY`/`KNOWN_WORKER_OUTCOMES`.
+- `StageResult = "success" | "unavailable"` and `runOperationalAlertMonitor`'s
+  `Promise.all` + all-stages-succeed heartbeat gate (previously
+  `[queueResult, telemetryResult]`) were confirmed as the existing extension
+  point for a new monitor stage.
+- `SIGNAL_KINDS` in `src/operationalAlerts.ts` and the
+  `alert_deliveries_signal_kind_check` CHECK constraint plus
+  `record_platform_signal`'s own allow-list in
+  `supabase/migrations/20260905000100_operational_alerting.sql` (lines
+  ~429-536 table, ~740-780 function) held the same 8 values; both needed the
+  9th (`worker_exception`) added, and only there — table shape, grants,
+  `security invoker`/`volatile`/`set search_path = ''`, dedup and recipient
+  isolation are otherwise untouched.
+- `supabase/tests/053_operational_alerting.sql` (record_platform_signal
+  dedup/no-recipient proof, its setup scaffolding, and its zero-residue tail)
+  and `supabase/tests/048_staff_reply_composer.sql:340-375` (the
+  `information_schema.role_routine_grants` + `pg_catalog.pg_proc`/
+  `pg_namespace` grant/security-metadata proof pattern) were the templates
+  reused for `supabase/tests/055_worker_exception_alert.sql`, together with
+  `platform_admins`/`set_platform_admin_v1` from
+  `supabase/migrations/20260831000300_platform_admin_overview.sql` and the
+  `platform_alert_recipients`/`alert_recipient_audit` shapes and
+  `platform_recipient_ref` generated-column FK from
+  `supabase/migrations/20260905000100_operational_alerting.sql`.
+- `docs/staging-runbook.md` §19 already defines a one-time, per-activation
+  live inbound message closing step from a whitelisted test number, and §11
+  defines the timestamps/status-only evidence template. Neither is a
+  recurring, bayrak-independent pilot-period canary, confirming §27's new
+  definition doesn't duplicate an existing one.
 
 ## Task 055 delivery record
 
-To be filled by the implementer from repository evidence.
+**Changed files** (all within the Allowed-changes list):
+- `src/operationalAlerts.ts` — added `WORKER_OUTCOME_KEY`,
+  `KNOWN_WORKER_OUTCOMES`, `parseWorkerExceptionTelemetry`,
+  `checkWorkerException`; added `"worker_exception"` to `SIGNAL_KINDS`; wired
+  `checkWorkerException` into `runOperationalAlertMonitor`'s `Promise.all` and
+  its heartbeat-gating condition (+152/-1 lines).
+- `test/operationalAlerts.test.ts` — added `workerException`/
+  `workerExceptionStatus` fetch overrides, an `outcomeTelemetryResponse`
+  helper, `queryId`-based routing in `buildFetchMock`, and a 25-case
+  "worker exception telemetry (Task 055)" describe block covering query
+  shape, all eight documented outcomes, actionable-fault versus
+  client-disconnect/ambiguous classification, positive/zero counts, a dedicated
+  healthy-zero heartbeat-advance case, representative extra/truncated/
+  sampled/malformed fail-closed cases, non-2xx, network/timeout rejection,
+  and both no-recipient and recording-transport failures.
+- `supabase/migrations/20260907000100_worker_exception_alert.sql` (new) —
+  drops/re-adds `alert_deliveries_signal_kind_check` with the 9th value, and
+  `create or replace function public.record_platform_signal(...)` with only
+  the allow-list line changed; identical `revoke`/`grant` reissued. Not run
+  against any database.
+- `supabase/tests/055_worker_exception_alert.sql` (new, rollback-only) — 5
+  sections: recipient/admin setup; `record_platform_signal` grant/security
+  metadata proof; CHECK-constraint accept-all-9/reject-invalid proof;
+  `record_platform_signal('worker_exception')` recorded/dedup-bump/
+  no_recipients proof; `rollback;` + zero-residue counts. Not run against any
+  database — left for Codex to run on disposable `vetai-test`.
+- `docs/operational-alerting.md` §10, `docs/staging-runbook.md` §27,
+  `docs/database-schema.md` (`alert_deliveries` bullet), and
+  `docs/production-readiness.md` (§6's Worker-exception checkbox note) and
+  `docs/saas-urunlestirme-yol-haritasi.md` (observability table row) — record
+  the implementation, the fixture's scope, the pilot canary definition
+  (2-minute `LATE`, 5-minute `FAIL`, timestamps/status-only evidence per §11,
+  two consecutive `FAIL`s stop the pilot, proposed once-daily frequency, marked
+  `NOT RUN`), and explicitly keep every activation/production/KVKK/
+  veterinary/owner gate open.
+
+**Behavior implemented**: `checkWorkerException` runs a separate bounded
+`$workers.outcome`-grouped aggregate query (same 3-minute window, 1-minute
+alignment, 2-minute ingestion lag, account/script-name scoping as the
+existing webhook query, distinct `queryId`). Any non-2xx response, empty/
+oversized body, invalid JSON, or any envelope/result/run/calculation/
+aggregate shape outside the exact expected keys (including unrecognized
+outcome values, sampled `interval`/`sampleInterval` ≠ 1, duplicate outcome
+groups, or a wrong `accountId`/`query` echo) returns `"unavailable"`. A
+verified zero actionable-fault count returns `"success"` with nothing
+recorded. `canceled` and `responseStreamDisconnected` are recognized
+client-disconnect outcomes and do not consume the `worker_exception` hourly
+dedup slot; documented-but-ambiguous `unknown` returns `"unavailable"`. A
+verified positive `exception | exceededCpu | exceededMemory | scriptNotFound`
+count records exactly `worker_exception` once via the existing
+`record_platform_signal` path; a `no_recipients` result or a recording failure
+returns `"unavailable"`. The monitor heartbeat now
+advances only when queue, webhook-status, worker-exception, sync, repeat and
+delivery stages all succeed. With `OPERATIONAL_ALERTS_ENABLED` unset/false,
+behavior is byte-for-byte unchanged (`checkWorkerException` only executes
+inside the existing `isAlertingConfigured(env)` guard, same as the other
+stages).
+
+**Test counts and command results**:
+- `pnpm exec vitest run test/operationalAlerts.test.ts`: 123/123 passing
+  after the Opus correction (98-test baseline; 25 Task-055 cases).
+- `pnpm install --frozen-lockfile`: `Already up to date`.
+- `pnpm typecheck`: clean, no errors.
+- `pnpm test` (full suite): 38/38 files, 2,097 passed and 2 pre-existing
+  opt-in skips; zero failures after the Codex correction pass.
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run`: dry-run
+  build succeeded; `env.OPERATIONAL_ALERTS_ENABLED ("false")` confirmed
+  unchanged in the printed bindings.
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run
+  --outdir .wrangler/dry-run-staging`: dry-run build succeeded, same
+  `OPERATIONAL_ALERTS_ENABLED ("false")`.
+- `git diff --check`: exit 0, no whitespace errors (only benign LF→CRLF
+  autocrlf notices on stderr). The two new untracked files were additionally
+  grepped for trailing whitespace by hand — none found.
+
+**Checks not run, and why**: the migration and rollback fixture were not
+executed against any database (explicit instruction — Codex runs them on
+disposable `vetai-test`). No real Cloudflare account query against
+`$workers.outcome` was made (Criterion 1 was satisfied via official
+documentation instead, per the Fixed decisions/boundaries — no new account
+evidence was authorized or needed). No staging/production deploy, no real
+email, no pilot canary message was sent, and the alerting flag was not
+toggled — all explicitly out of scope for the implementation phase.
+
+**Risks for Codex/Opus to specifically review**:
+1. The Criterion 1 field verification rests on Cloudflare's public
+   documentation rather than a sanitized real-account response (unlike Task
+   054's webhook-status field, which was account-verified). If Cloudflare's
+   actual query-time behavior for `$workers.outcome` differs from its
+   documented schema (e.g. an undocumented outcome value, or the field
+   behaving differently under `dry: true`), the fail-closed validation should
+   still catch it as `"unavailable"` — but this has not been proven against a
+   real account the way the webhook path was.
+2. `parseWorkerExceptionTelemetry`'s exact-key/shape validation is dense;
+   worth confirming no legitimate Cloudflare response shape (e.g. an extra
+   optional field the docs don't mention) would be wrongly rejected as
+   `"unavailable"` in a way that silently degrades monitoring rather than
+   ever producing a false negative.
+3. The migration's `record_platform_signal` diff is a single-line allow-list
+   change against the original function body — worth a direct line-by-line
+   confirmation that nothing else shifted.
+4. The new rollback fixture is unrun by design; its correctness rests on
+   schema/signature facts read from the migration files rather than an
+   executed proof. Codex's run against `vetai-test` is the actual gate.
+5. The pilot canary definition in `docs/staging-runbook.md` §27 (2-minute
+   `LATE`, 5-minute `FAIL`, once-daily proposed frequency, two-consecutive-
+   `FAIL` stop rule)
+   is a new judgment call with no prior Task 053/054 precedent to mirror —
+   worth Opus's explicit sign-off on whether those numbers are reasonable
+   before any real activation.
+
+**Codex review correction — 2026-09-07:** Cloudflare's official Workers error
+guide says the complete invocation-outcome vocabulary lives in the Trace Event
+reference. The initial six-value implementation omitted `scriptNotFound` and
+`responseStreamDisconnected`; that would have suppressed the heartbeat but
+would not have created the required platform alert for those two documented
+non-OK outcomes. Codex added both values, changed the unknown-value witness to
+`futureOutcome`, and added coverage for each omitted value. The mandatory Opus
+review then identified that two of those values are client-driven disconnects:
+the final classification keeps them recognized but excludes them from the
+`worker_exception` dedup slot; `unknown` now follows the explicit ambiguous-
+evidence fail-closed rule.
+
+**Codex disposable-database review — 2026-09-07:** Codex first verified the
+linked project list: `vetai-test` (`cyjpiapxvalqltcsywam`) and
+`vetai-staging` (`qtgvddejjjiivjwicxdq`) were separate healthy projects, and
+the CLI was initially linked to staging. Codex temporarily linked only to
+`vetai-test`, applied only
+`supabase/migrations/20260907000100_worker_exception_alert.sql` through the
+direct query path, and ran
+`supabase/tests/055_worker_exception_alert.sql` under its own rollback. The
+fixture passed with zero surviving Auth users, platform admins, platform
+recipients, recipient-audit rows and alert deliveries (`0/0/0/0/0`). An
+independent catalog query found exactly the nine-value CHECK including all
+eight legacy signals plus `worker_exception`, and found
+`record_platform_signal` still `VOLATILE`, `SECURITY INVOKER`, with empty
+`search_path`. Direct query execution changes disposable schema but does not
+write a migration-history row. The CLI link was restored to staging afterward;
+no staging or production SQL, deploy, e-mail or Meta action occurred.
+
+**Codex final local gates — 2026-09-07:** frozen install was already up to
+date; typecheck passed with zero errors; the affected alert suite passed
+123/123 after the Opus correction; the final full suite passed 2,097 with the
+same 2 pre-existing opt-in skips; production and staging Wrangler dry-runs both succeeded and printed
+`OPERATIONAL_ALERTS_ENABLED = "false"`; `git diff --check` passed with only
+the repository's existing line-ending notices. These are the final post-Opus-
+correction closure results.
+
+**Mandatory Opus review corrections — 2026-09-07:** The first read-only pass
+returned `CHANGES_REQUIRED`. Codex closed both blockers and the inexpensive
+supporting findings: client disconnect outcomes no longer consume the hourly
+Worker-fault dedup slot; ambiguous `unknown` suppresses heartbeat; the fixture
+calls all four legacy platform-signal values through the recreated function;
+the PUBLIC grant spelling and single-statement constraint replacement were
+corrected; all documented outcome classifications and the exact group-key
+guard have discriminating tests; the canary now distinguishes a 2-minute
+`LATE` from a 5-minute `FAIL`; and §27 requires a sanitized real-account
+outcome-shape preflight plus immediate rollback if heartbeat is not fresh.
+Codex then relinked only to `vetai-test`, reapplied the corrected migration and
+reran the expanded rollback fixture; it again passed with five zero residue
+counters. The CLI link was restored to staging. No staging/production SQL or
+deploy occurred. The mandatory narrow Opus re-review returned `PASS`: all two
+blockers, three important findings and three small findings were confirmed
+closed, with no new blocker or RLS, tenant, secret, KVKK or clinical-safety
+regression.
+
+No contract conflicts were encountered and no field was left unprovable.
 
 ---
 
