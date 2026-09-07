@@ -396,8 +396,15 @@ Opus kapanışından sonra doğrulanmış düzeltme, gerçek hesap kimliği yaln
 staging Worker secret'ında olacak biçimde ve alarm bayrağı `false` kalırken
 staging'e deploy edildi. Sağlık/panel smoke'ları 200, imzasız webhook reddi 401
 döndü. Bu kanıt yalnız replacement deploy'un regresyonsuz olduğunu gösterir;
-alıcı, e-posta, heartbeat, bağımsız readiness ve aşağıdaki aktivasyon
-kutularından hiçbirini kapatmaz.
+alıcı, VetAI/Resend e-postası, heartbeat ve aşağıdaki aktivasyon kutularından
+hiçbirini kapatmaz.
+
+Bağımsız readiness'in yapılandırma kapısı 2026-09-07'de kısmen kapandı:
+Cloudflare Free planda Standalone Health Checks bulunmadığı için Better Stack
+Free üzerinde staging `/ready` adresini üç dakikada bir kontrol eden monitör
+oluşturuldu. İlk dış kontrol `Up` oldu; sağlayıcının kendi test e-postası
+sahibine ulaştı. Gerçek failure/timeout, olay, kurtarma ve rollback tanıkları
+çalıştırılmadığından aşağıdaki birleşik alarm kutusu işaretsiz kalır.
 
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503

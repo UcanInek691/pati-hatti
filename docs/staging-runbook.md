@@ -1221,3 +1221,22 @@ hem monitoring tokenını hem hesap kimliğini `secret_text` olarak doğruladı.
 Son smoke: `/health`, `/ready`, `/staff`, `/admin` 200; imzasız webhook POST'u
 401. Bu bir alarm aktivasyonu değildir: alıcı/Resend/e-posta/heartbeat ve §6
 matrisinin kalan canlı kanıtları hâlâ açık ve işaretsizdir.
+
+### 26.1 Bağımsız `/ready` monitörü — 2026-09-07
+
+Cloudflare Free planda Standalone Health Checks bulunmadığı doğrulandığı için
+bağımsız sağlayıcı olarak Better Stack Free seçildi. `VetAI staging readiness`
+monitörü `https://vetai-staging.mehmetsait7072.workers.dev/ready` adresine
+gövdesiz/kimlik bilgisiz `GET`, TLS doğrulaması ve üç dakikalık kontrol aralığı
+ile oluşturuldu. E-posta bildirimi primary responder'a açıktır.
+
+- [x] İlk dış kontrol `Up`; olay sayısı `0`, kullanılabilirlik `%100`.
+- [x] Better Stack `Send test alert` e-postası sahibine ulaştı.
+- [ ] Gerçek `/ready` failure/timeout olayı ve bildirim teslimi.
+- [ ] Endpoint düzeldikten sonra otomatik recovery bildirimi.
+- [ ] Güvenli rollback/pause ve yeniden etkinleştirme kanıtı.
+
+İlk iki kutu yalnız bağımsız erişim ve sağlayıcı e-posta kanalını kanıtlar;
+VetAI alarm e-postası, Cron heartbeat'i veya §6 satır 2'nin kalan hücreleri
+değildir. `OPERATIONAL_ALERTS_ENABLED` bu sırada `false` kaldı; production ve
+müşteri trafiği değiştirilmedi.

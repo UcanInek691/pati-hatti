@@ -49,7 +49,7 @@ gereksinim çıktığında değerlendirilir.
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
 | Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
-| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 Faz A, gerçek staging hesabında sanitize edilmiş Workers Observability aggregate biçimini doğrulayıp durum alanı bulunan webhook 401/5xx için fail-closed kod yolunu ekledi; yakalanmamış Worker exception'ı, alım örneklemesi, Worker secret/deploy/flag/heartbeat ve alarm teslimi aktivasyonu henüz kanıtlanmadı. Production değişmedi. |
+| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 doğrulanmış Workers Observability yolunu ve staging secret/deploy'unu bayrak kapalıyken tamamladı. Better Stack Free artık staging `/ready`yi üç dakikada bir bağımsız kontrol ediyor; ilk kontrol `Up` ve sağlayıcı test e-postası başarılı. Yakalanmamış Worker exception'ı, alım-canlılığı, gerçek failure/recovery, flag/heartbeat ve VetAI alarm teslimi aktivasyonu henüz kanıtlanmadı. Production değişmedi. |
 
 Task 052 gecikme araştırması tamamlandı: eşleşen üç eski yanıtın 61–74
 dakikalık farkı başarılı kayıttan önce; kayıt sonrası kabul 18–23 saniyedir.
@@ -59,7 +59,7 @@ kayıt sonrası maksimumu 23.951 saniyedir; bu küçük örneklem SLA değildir.
 Bkz. [salt-okunur rapor](olaylar/2026-09-05-delivery-latency.md).
 
 Sonraki öncelik yeni bir gecikme yaması değil, mevcut satışa çıkış kapılarıdır:
-HTTP 5xx/readiness ve Queue/DLQ alarmı, personel işlerinin gerçek takibi,
+HTTP 5xx/readiness failure kanıtı ve Queue/DLQ alarmı, personel işlerinin gerçek takibi,
 gönderim hız sınırı doğrulaması, üretim hedefinin kurulum/canary/rollback
 kanıtı. İlk maddenin (alarm/bildirim) Faz A planı onaylandı ve Faz B depo
 uygulaması (migration + Worker kodu) yalnız disposable `vetai-test` kanıtını

@@ -4,13 +4,16 @@ Status: `IN_REVIEW` — Phase A repository implementation, Codex verification
 and mandatory Claude Opus read-only review are complete. The separately
 approved, flag-off Phase B staging installation package is also complete:
 managed migration, monitoring secret, Worker deploy and regression smoke all
-passed. Alert enablement, recipients, email delivery and the remaining live
-activation evidence must not be inferred from this status.
+passed. A separate Better Stack monitor now checks staging `/ready` every
+three minutes and its provider test e-mail reached the owner. Alert enablement,
+audited recipients, VetAI/Resend delivery and the remaining live activation
+evidence must not be inferred from this status.
 
-Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). Task 053
-delivered and tested the alert-delivery foundation, but alerting is still off
-and the Cloudflare webhook-telemetry stage intentionally returns
-`unavailable`. Production remains unchanged.
+Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). At task
+creation, Task 053 had delivered and tested the alert-delivery foundation but
+alerting was off and the Cloudflare webhook-telemetry stage intentionally
+returned `unavailable`. Task 054 has since replaced and deployed that stub;
+alerting remains off and production remains unchanged.
 
 ## Goal
 
@@ -433,10 +436,31 @@ email was sent, the Cron monitor returned immediately because alerting stayed
 disabled, and production was unchanged. The repository correction is commit
 `f27490b`; the evidence reconciliation below is a follow-up documentation
 commit. Remaining Phase B activation gates are still the audited recipients,
-Resend domain/key/sender and bounded owner-address delivery, independent
-external readiness monitoring, exception-alarm decision, ingestion-liveness
-control, nine-row evidence matrix, live WhatsApp smoke and external
+Resend domain/key/sender and bounded owner-address delivery,
+exception-alarm decision, ingestion-liveness control, the external readiness
+failure/recovery witness, nine-row evidence matrix, live WhatsApp smoke and external
 KVKK/veterinary/owner approvals.
+
+### Task 054 Phase B independent readiness monitor — 2026-09-07
+
+The current Cloudflare Workers plan is Free and does not include Standalone
+Health Checks, so the owner approved the independent third-party path rather
+than making the Worker monitor itself. A Better Stack Free monitor named
+`VetAI staging readiness` now performs an external `GET` to
+`https://vetai-staging.mehmetsait7072.workers.dev/ready` every three minutes
+with TLS verification enabled and e-mail notification to the account's primary
+responder. No request body, credential, customer identifier or customer data
+is configured in the monitor.
+
+Better Stack's first external check reported `Up`, zero incidents and 100%
+availability. The owner then used Better Stack's own `Send test alert` control
+and confirmed that the test e-mail arrived. This proves that an independent
+provider can reach the dependency-aware endpoint and that the provider's
+account e-mail channel works. It does **not** prove a real `/ready` failure,
+timeout, recovery notification, VetAI alert-delivery routing, Worker-Cron
+heartbeat or rollback; those activation-matrix cells remain `NOT RUN`.
+`OPERATIONAL_ALERTS_ENABLED` remains `false`, no VetAI/Resend e-mail was sent,
+and production remains unchanged.
 
 ---
 

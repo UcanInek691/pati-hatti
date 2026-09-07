@@ -406,7 +406,7 @@ edilir).
 | # | Durum | Yapılandırıldı | Sentetik tetikleme | Onaylı hedefe teslim | İnsan onayı | Kurtarma | Rollback |
 |---|---|---|---|---|---|---|---|
 | 1 | Webhook 503, `outcome=ok` ile birlikte (Task 052 tarzı) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
-| 2 | `/ready` başarısız/timeout | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| 2 | `/ready` başarısız/timeout | PASS — Better Stack, 3 dk | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 3 | Queue metriği ulaşılamıyor/bayat (kimlik doğrulama veya kaynak arızası) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 4 | Tek, izole başarısız iş örneği (outbox `failed` veya tek `staff_work_items` kaydı) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 5 | Tarayıcı bildirim izni reddedildi / sekme kapalı (mevcut pilot, dürüstlük yeniden doğrulaması) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
@@ -450,12 +450,12 @@ bunların hepsi açık, çözülmemiş ön koşullardır:
   ad eşleşmezse başarısız olan (fail-closed) bir List Queues çözümlemesi mi
   kullanılacağının Faz B sözleşmesinde kararlaştırılması — kuyruk
   adları/ID'leri kendisi secret değildir, yalnız API token'ı secret'tır.
-- Bağımsız `/ready` sağlayıcısı seçimi: Cloudflare Standalone Health Checks
-  bu Worker'ın gerçek `workers.dev`/özel hostname'i ve hesabın Workers plan
-  seviyesiyle fiilen kullanılabiliyorsa o yol; kullanılamıyorsa bağımsız bir
-  üçüncü taraf uptime sağlayıcısı (§3). Bu ikisinden en az biri seçilip
-  staging'de gerçek bir kanıt (yapılandırma + tetiklenmiş alarm) üretilmeden
-  Faz B aktivasyonu tamamlanamaz.
+- Bağımsız `/ready` sağlayıcısı: Cloudflare Free planda Standalone Health
+  Checks bulunmadığı için 2026-09-07'de Better Stack Free seçildi. Staging
+  `/ready` monitörü üç dakikada bir dış `GET` yapacak şekilde oluşturuldu;
+  ilk kontrol `Up` oldu ve sağlayıcının test e-postası sahibine ulaştı.
+  Gerçek `/ready` failure/timeout, kurtarma ve rollback tanıkları hâlâ
+  `NOT RUN` olduğundan Faz B aktivasyonu bu kanıtla tek başına tamamlanmaz.
 - Scheduled monitor/Cron için bağımsız heartbeat tasarımı: son başarılı çalışma
   zamanı Cron tarafından güncellenir, fakat tazeliği aynı Cron dışında çalışan
   bir gözlemci tarafından denetlenir. Heartbeat'in tenant kapsamı, saklama yeri,
@@ -705,6 +705,24 @@ olmasını veya günlük plan kotası aşıldıktan sonra olayların daha önce
 örneklenmesini kanıtlayamaz. Faz B aktivasyonu, Observability'nin açık olduğunu,
 plan/kota kullanımını ve bu kaynağın veri almaya devam ettiğini Cron'dan
 bağımsız periyodik bir kontrolle doğrulamadan tamamlanamaz.
+
+### Bağımsız staging `/ready` monitörü — 2026-09-07
+
+Cloudflare Free planda Standalone Health Checks bulunmadığı için bağımsız yol
+olarak Better Stack Free kullanıldı. `VetAI staging readiness` adlı monitör,
+staging `/ready` adresini gövde veya kimlik bilgisi göndermeden dışarıdan
+`GET` ile üç dakikada bir ve TLS doğrulaması açık biçimde kontrol eder.
+İlk kontrol `Up`, olay sayısı `0` ve kullanılabilirlik `%100` olarak görüldü.
+Sahip, sağlayıcının `Send test alert` kontrolünü elle çalıştırdı ve test
+e-postasının ulaştığını doğruladı.
+
+Bu kanıt yalnız dış erişilebilirliği ve Better Stack hesap bildirim kanalını
+kanıtlar. Gerçek `/ready` kesintisi/timeout'u, olay açılması, kurtarma,
+rollback, VetAI/Resend teslimi ve Worker-Cron heartbeat'i tetiklenmedi. §6
+satır 2'de yalnız “Yapılandırıldı” hücresi bu nedenle kapatılmış, diğer
+hücreler `NOT RUN` bırakılmıştır. Sağlayıcının test e-postası ayrı kanal
+kanıtıdır; gerçek failure satırının insan onayı değildir. Alarm bayrağı
+`false`, production değişmemiştir.
 
 ## Referanslar
 
