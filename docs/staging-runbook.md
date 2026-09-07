@@ -1212,3 +1212,12 @@ webhook isteğini `401` grubunda doğru saydı ve
 ayrıştırıcısı bu alanın varlığını ve boşluğunu artık fail-closed doğrular. Depo
 düzeltmesi inceleme ve deploy edilmeden alarm bayrağı açılmaz. Üç staging
 kuyruğunun bu kontrolde doğrulanan retention değeri 86.400 saniyedir (24 saat).
+
+Opus kod için `PASS` verdikten ve üç kanıt metni düzeltildikten sonra, sahibin
+açık onayıyla hesap kimliği repo değişkeninden staging Worker secret'ına
+taşındı ve düzeltme alarm bayrağı hâlâ `false` iken deploy edildi. Son sürüm
+`86d08e72-ab35-4262-abd4-d78a3fa6b635`; secret listesi yalnız ad/tür okuyarak
+hem monitoring tokenını hem hesap kimliğini `secret_text` olarak doğruladı.
+Son smoke: `/health`, `/ready`, `/staff`, `/admin` 200; imzasız webhook POST'u
+401. Bu bir alarm aktivasyonu değildir: alıcı/Resend/e-posta/heartbeat ve §6
+matrisinin kalan canlı kanıtları hâlâ açık ve işaretsizdir.

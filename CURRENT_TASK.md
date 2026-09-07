@@ -410,6 +410,34 @@ required before a replacement Worker deploy. No recipient, Resend sender/key,
 email, external readiness monitor, Cron activation, production change or
 customer message is authorized by this finding.
 
+### Task 054 Phase B flag-off replacement deploy — 2026-09-07
+
+After the mandatory Opus review returned `PASS` for the code and requested
+three evidence-only corrections, Codex corrected the echo-control claim,
+reconciled the current Free-plan evidence, and dated the runtime comment to the
+selected 2026-09-07 response. The owner then explicitly approved the exact
+staging transition. Because the old plaintext binding occupied the same name,
+Codex first deployed the committed configuration without that binding while
+`OPERATIONAL_ALERTS_ENABLED = "false"`, installed
+`CLOUDFLARE_ACCOUNT_ID` as a staging Worker secret derived directly from the
+authenticated Wrangler account, and deployed the same flag-off configuration
+again. The final staging version is
+`86d08e72-ab35-4262-abd4-d78a3fa6b635`. A secret-name-only listing confirmed
+both `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_ALERTS_MONITORING_TOKEN` as `secret_text`; no value was read.
+
+Post-deploy regression smoke passed: `/health`, `/ready`, `/staff` and
+`/admin` returned 200, while a harmless unsigned webhook POST returned 401
+before any trusted webhook path. No recipient or Resend secret exists, no
+email was sent, the Cron monitor returned immediately because alerting stayed
+disabled, and production was unchanged. The repository correction is commit
+`f27490b`; the evidence reconciliation below is a follow-up documentation
+commit. Remaining Phase B activation gates are still the audited recipients,
+Resend domain/key/sender and bounded owner-address delivery, independent
+external readiness monitoring, exception-alarm decision, ingestion-liveness
+control, nine-row evidence matrix, live WhatsApp smoke and external
+KVKK/veterinary/owner approvals.
+
 ---
 
 # Completed task — 053 Operational alerts and staff-notification activation plan

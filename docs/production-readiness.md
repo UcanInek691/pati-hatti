@@ -392,6 +392,13 @@ reddedecek biçimde kapatıldı. Depo düzeltildi fakat henüz yeniden incelenip
 staging'e deploy edilmedi.
 Dolayısıyla alarm etkinleştirme kapısı ve aşağıdaki kutular açık kalır.
 
+Opus kapanışından sonra doğrulanmış düzeltme, gerçek hesap kimliği yalnız
+staging Worker secret'ında olacak biçimde ve alarm bayrağı `false` kalırken
+staging'e deploy edildi. Sağlık/panel smoke'ları 200, imzasız webhook reddi 401
+döndü. Bu kanıt yalnız replacement deploy'un regresyonsuz olduğunu gösterir;
+alıcı, e-posta, heartbeat, bağımsız readiness ve aşağıdaki aktivasyon
+kutularından hiçbirini kapatmaz.
+
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
       with invocation `outcome=ok`; exception/outcome counters alone missed
