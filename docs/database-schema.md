@@ -1401,3 +1401,56 @@ remain untouched. Full behavior, activation gates, and risks in
 `claim_alert_delivery`, `accept_alert_delivery`, `release_alert_delivery`,
 `record_alert_monitor_heartbeat`, `is_alert_monitor_heartbeat_fresh` — all
 `security invoker`, `set search_path = ''`, service-role only.
+
+### Clinic alert preferences and rollout gate (Task 056)
+
+`supabase/migrations/20260907000200_clinic_alert_preferences.sql`. The
+implementer wrote this migration and rollback fixture without database
+access. Codex later applied the reviewed migration only through a direct-query
+path on disposable `vetai-test`; the rollback fixture and independent
+catalog/grant/zero-residue query passed. This did not create a migration-history
+record and did not touch staging or production. Full behavior, the two independent controls, the
+activation-epoch suppression pattern, and risks in
+[`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
+§11.
+
+- `public.clinic_alert_recipients.enabled_at` — kişisel aboneliğin yalnız
+  gerçek kapalı→açık geçişinde veritabanı zamanı ile başlayan epoch. Task
+  053'ün genel `updated_at` alanından ayrıdır; tablo trigger'ı tüm yazma
+  yollarında no-op güncellemelerin bu epoch'u kaydırmasını engeller.
+- `public.clinic_alert_settings (clinic_id primary key, enabled, created_at,
+  updated_at)` — one row per clinic, the platform-admin-only rollout gate;
+  RLS enabled, zero policies, service-role only.
+- `public.clinic_alert_gate_audit (id, clinic_id, enabled, actor_user_id,
+  created_at)` — append-only audit trail for every real gate transition; RLS
+  enabled, zero policies, **no grant at all**, not even service-role (write
+  path is exclusively the `security definer` RPC below).
+- `get_my_clinic_alert_preferences()` / `set_my_clinic_alert_preference(p_clinic_id,
+  p_enabled)` — `security definer`, `set search_path = ''`, granted only to
+  `authenticated`. Self-service: a staff member reads/writes only their own
+  `clinic_alert_recipients` row for clinics they belong to (parent clinic
+  locked `for key share`, then `clinic_staff` `for no key update`, then
+  `clinic_alert_recipients` `for update`).
+  This is a second write path onto the same `clinic_alert_recipients` table
+  Task 053 introduced (previously only reachable through the admin-facing
+  `set_clinic_alert_recipient`); it never accepts a target user, e-mail
+  address, or free-form reason — enabling resolves the caller's own
+  **confirmed** `auth.users` e-mail server-side, returning `email_unconfirmed`
+  otherwise.
+- `get_platform_clinic_alert_gates()` / `set_platform_clinic_alert_gate(p_clinic_id,
+  p_enabled)` — `security definer`, `set search_path = ''`, granted only to
+  `authenticated`, gated by the same `vetai_private.platform_admin_authorized_caller_v1()`
+  AAL2 + `platform_admin` check used elsewhere (`clinics` locked `for no key
+  update`, then `clinic_alert_settings` `for update`, same lock order as the
+  read path above so the two RPCs can never deadlock against each other).
+  Only a real enabled/disabled transition bumps `clinic_alert_settings.updated_at`
+  and inserts one `clinic_alert_gate_audit` row with the authorized caller as
+  actor — never a client-supplied actor.
+- `sync_alert_delivery_candidates`, `claim_alert_delivery`,
+  `schedule_alert_repeat_notifications` — re-created to additionally require
+  `clinic_alert_settings.enabled` and to compare a delivery candidate's
+  `created_at` against `clinic_alert_settings.updated_at` and
+  `clinic_alert_recipients.enabled_at` (the activation-epoch pattern),
+  permanently suppressing any clinic alert queued
+  before the most recent enable. The existing platform-signal branch of each
+  function is byte-for-byte unchanged.

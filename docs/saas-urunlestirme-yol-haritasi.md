@@ -483,6 +483,22 @@ desteklenen geri dönüş yolu yoktu.
   ([`docs/staging-runbook.md`](staging-runbook.md) §22,
   [`docs/production-readiness.md`](production-readiness.md)).
 
+## 10e. Task 056 (disposable kanıt geçti, Opus/staging bekliyor)
+
+Task 056, çoklu-kiracı ürünleşme yolunda önemli bir SaaS önkoşulunu kapatır:
+klinik e-posta alarmlarının tek bir platform genelindeki anahtara bağlı
+olması, her klinik personelinin ya hepsinin ya da hiçbirinin alarm alması
+anlamına geliyordu — çoklu klinik pilotu büyüdükçe sürdürülemez bir model.
+Artık üç bağımsız katman var: personelin kendi aboneliği, platform admin'in
+klinik başına rollout anahtarı, ve mevcut global Worker aktivasyonu (bkz.
+[`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
+§11). `/staff` ve `/admin` arayüzlerine karşılık gelen kontroller eklendi;
+implementer (Claude Sonnet) migration ve rollback fixture'ı yalnız yazdı.
+Codex'in dar düzeltmelerinden sonra migration yalnız disposable `vetai-test`
+üzerinde direct-query olarak uygulandı; rollback fixture ve bağımsız katalog/
+grant/sıfır-artık kanıtı geçti, migration history değişmedi. Claude Opus'un zorunlu bağımsız incelemesi ve
+staging aktivasyonu henüz yapılmadı; production'a hiçbir etkisi yok.
+
 ## 11. Kaynak ve yeniden doğrulama notu
 
 - Cloudflare Worker secret'ları: https://developers.cloudflare.com/workers/configuration/secrets/

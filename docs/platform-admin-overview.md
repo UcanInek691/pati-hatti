@@ -250,3 +250,39 @@ bearer değeri bu depoya veya kanıt kaydına alınmadı. Doğru staging
 yönlendirmesi, yeni parola, TOTP zorunluluğu, yarım kurulum yenilemesi ve
 allowlist sonrası salt-okunur genel bakış 2026-09-02'de canlı doğrulandı.
 Production değiştirilmedi ve ayrı üretim kapıları tamamlanmadan onaylı değildir.
+
+## Klinik e-posta uyarı anahtarı (Görev 056)
+
+> Bu bölümdeki migration (`supabase/migrations/20260907000200_clinic_alert_preferences.sql`)
+> ve rollback-only fixture (`supabase/tests/056_clinic_alert_preferences.sql`)
+> uygulayan (Claude Sonnet) tarafından hiçbir veritabanına karşı
+> çalıştırılmadı. Codex incelemesinden sonra migration yalnız disposable
+> `vetai-test` üzerinde doğrudan sorgu olarak uygulandı; rollback fixture ve
+> bağımsız katalog/grant/sıfır-artık kanıtı geçti. Migration history
+> güncellenmedi. Zorunlu Opus incelemesi ve staging etkinleştirmesi henüz
+> yapılmadı; production değiştirilmedi.
+
+Genel bakış tablosuna, mevcut askıya alma/devam ettirme sütununun yanına yeni
+bir "E-posta uyarısı" sütunu eklendi: her klinik satırında, o kliniğin e-posta
+uyarı teslimatının platform admin tarafından açık mı kapalı mı olduğunu
+gösteren bir onay kutusu. Bu, klinik yaşam döngüsü kontrollerinden (Görev 047)
+ayrı bir mutasyon yüzeyidir ve aynı `platform_admins` üyeliği + `aal2` şartına
+tabidir: `get_platform_clinic_alert_gates()` / `set_platform_clinic_alert_gate(p_clinic_id,
+p_enabled)`, `vetai_private.platform_admin_authorized_caller_v1()` üzerinden
+aynı yetkilendirmeyi kullanır (bkz.
+[`docs/database-schema.md`](database-schema.md#clinic-alert-preferences-and-rollout-gate-task-056)).
+
+Bu anahtar, personelin `/staff` sayfasındaki kendi kişisel aboneliğinden
+([`docs/staff-workflow.md`](staff-workflow.md#clinic-alert-preferences-task-056))
+tamamen bağımsızdır — biri diğerinin durumunu göremez veya değiştiremez, ve
+her iki kontrol de mevcut global Worker alarm aktivasyonunu değiştirmez (bkz.
+[`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
+§11). Onay kutusu, sayfanın mevcut paylaşılan `lifecycleBusy` mutasyon
+kilidini kullanır; başarısız veya yasaklı bir çağrıda sabit bir hata mesajı
+gösterilip kutu eski durumuna döner, hiçbir zaman iyimser biçimde açık
+bırakılmaz.
+
+Klinik anahtarının açık olması, personelin kendi kapalı tercihini geçersiz
+kılmaz; etkin teslimat iki anahtarın da açık olmasını gerektirir. Kapatmadan
+önce sağlayıcı gönderimi başlamış bir e-posta geri çağrılamaz ve yine de
+ulaşabilir; panel bu sınırı açıkça belirtir.

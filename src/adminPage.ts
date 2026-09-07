@@ -145,6 +145,7 @@ export const ADMIN_HTML = `<!doctype html>
   <section id="lifecycle-section" aria-labelledby="lifecycle-heading">
     <h3 id="lifecycle-heading">Klinik yaşam döngüsü</h3>
     <p>Bu bölüm yalnızca platform sahibi içindir; her klinik günlük operasyonlarını kendi <code>/staff</code> panelinden yürütür. Burada oluşturulan klinik her zaman askıya alınmış durumda başlar ve otomatik olarak etkinleştirilmez.</p>
+    <p>E-posta uyarı anahtarı yalnız klinik genelindeki dağıtımı açar; personelin kendi kapalı tercihini geçersiz kılamaz. Anahtar kapatılmadan önce gönderimi başlamış bir e-posta geri çağrılamaz ve yine de ulaşabilir.</p>
     <form id="provision-form">
       <label for="provision-clinic-name-input">Klinik adı</label>
       <input type="text" id="provision-clinic-name-input" name="clinic_name" required maxlength="200">
@@ -438,6 +439,7 @@ const PHONE_NUMBER_ID_PATTERN = /^[0-9]{1,64}$/;
 const PROVISION_RESULTS = ["forbidden", "provisioned", "already_provisioned"];
 const SUSPEND_RESULTS = ["forbidden", "suspended", "already_suspended", "not_found"];
 const RESUME_RESULTS = ["forbidden", "resumed", "already_active", "refused_offboarding", "not_found"];
+const ALERT_GATE_RESULTS = ["forbidden", "enabled", "already_enabled", "disabled", "already_disabled", "not_found"];
 
 let config = null;
 let pendingAccessToken = null;
@@ -818,7 +820,72 @@ async function handleResume(clinicId, button) {
   }
 }
 
-function renderOverview(rows) {
+async function fetchClinicAlertGates() {
+  const res = await authedFetch("/rest/v1/rpc/get_platform_clinic_alert_gates", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error("alert gates rpc failed");
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    !rows.every(
+      (row) =>
+        isExactRecord(row, ["clinic_id", "enabled"]) &&
+        typeof row.clinic_id === "string" &&
+        UUID_PATTERN.test(row.clinic_id) &&
+        typeof row.enabled === "boolean"
+    )
+  ) {
+    throw new Error("malformed alert gates response");
+  }
+  const gates = new Map();
+  for (const row of rows) {
+    if (gates.has(row.clinic_id)) {
+      throw new Error("duplicate alert gate clinic");
+    }
+    gates.set(row.clinic_id, row.enabled);
+  }
+  return gates;
+}
+
+async function handleAlertGateToggle(clinicId, enabled, checkbox) {
+  if (lifecycleBusy) {
+    checkbox.checked = !enabled;
+    return;
+  }
+  clearMessages();
+  lifecycleBusy = true;
+  checkbox.disabled = true;
+  let reloaded = false;
+  try {
+    const result = await callLifecycleRpc(
+      "/rest/v1/rpc/set_platform_clinic_alert_gate",
+      { p_clinic_id: clinicId, p_enabled: enabled },
+      ALERT_GATE_RESULTS
+    );
+    if (result === "forbidden") {
+      showError("Bu hesap platform y\\u00f6neticisi olarak yetkilendirilmemi\\u015f.");
+    } else if (result === "not_found") {
+      showError("Klinik bulunamad\\u0131; hi\\u00e7bir de\\u011fi\\u015fiklik yap\\u0131lmad\\u0131.");
+    } else {
+      const { monthStart } = istanbulMonthStart();
+      await loadOverview(monthStart);
+      reloaded = true;
+    }
+  } catch {
+    showError("E-posta uyar\\u0131 anahtar\\u0131 g\\u00fcncellenemedi.");
+  } finally {
+    lifecycleBusy = false;
+    if (!reloaded) {
+      checkbox.checked = !enabled;
+      checkbox.disabled = false;
+    }
+  }
+}
+
+function renderOverview(rows, alertGates) {
   overviewContent.textContent = "";
 
   if (rows.length === 1 && rows[0].result === "forbidden") {
@@ -840,7 +907,7 @@ function renderOverview(rows) {
     "Bekleyen g\\u00f6nderim", "\\u0130\\u015flenen g\\u00f6nderim", "Ba\\u015far\\u0131s\\u0131z g\\u00f6nderim",
     "Son gelen mesaj", "Son giden mesaj",
     "AI tur say\\u0131s\\u0131", "AI'in dokundu\\u011fu konu\\u015fma", "Girdi token", "\\u00c7\\u0131kt\\u0131 token", "Toplam token", "Eksik token kayd\\u0131",
-    "\\u0130\\u015flem",
+    "E-posta uyar\\u0131s\\u0131", "\\u0130\\u015flem",
   ].forEach((label) => {
     const th = document.createElement("th");
     th.textContent = label;
@@ -875,6 +942,17 @@ function renderOverview(rows) {
       td.textContent = value;
       tr.appendChild(td);
     }
+    const alertGateTd = document.createElement("td");
+    const alertGateCheckbox = document.createElement("input");
+    alertGateCheckbox.type = "checkbox";
+    alertGateCheckbox.checked = alertGates.get(row.clinic_id) || false;
+    alertGateCheckbox.disabled = lifecycleBusy;
+    alertGateCheckbox.setAttribute("aria-label", row.clinic_name + " e-posta uyarı anahtarı");
+    alertGateCheckbox.addEventListener("change", () => {
+      handleAlertGateToggle(row.clinic_id, alertGateCheckbox.checked, alertGateCheckbox);
+    });
+    alertGateTd.appendChild(alertGateCheckbox);
+    tr.appendChild(alertGateTd);
     const actionsTd = document.createElement("td");
     if (row.operational_status === "active") {
       const suspendButton = document.createElement("button");
@@ -913,9 +991,17 @@ async function loadOverview(monthStart) {
     if (!validateOverviewRows(rows, monthStart)) {
       throw new Error("malformed overview response");
     }
+    const isSentinel = rows.length === 1 && (rows[0].result === "forbidden" || rows[0].result === "empty");
+    const alertGates = isSentinel ? new Map() : await fetchClinicAlertGates();
+    if (!isSentinel && (
+      alertGates.size !== rows.length ||
+      !rows.every((row) => alertGates.has(row.clinic_id))
+    )) {
+      throw new Error("alert gate clinic set mismatch");
+    }
     clearMessages();
     periodRegion.textContent = "D\\u00f6nem: " + rows[0].period_start + " \\u2013 " + rows[0].period_end;
-    renderOverview(rows);
+    renderOverview(rows, alertGates);
   } catch {
     overviewContent.textContent = "";
     periodRegion.textContent = "";

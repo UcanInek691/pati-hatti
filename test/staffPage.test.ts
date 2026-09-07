@@ -397,15 +397,15 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
   it("loads automation accounts and routes right after the queue on both login and resumed-session paths", () => {
     const loginBody = STAFF_APP_JS.slice(
       STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"'),
-      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"') + 450,
+      STAFF_APP_JS.indexOf('loginForm.addEventListener("submit"') + 500,
     );
     expect(loginBody).toContain(
-      "await refreshQueue();\n    await loadAutomationAccounts();\n    await loadClinicSchedule();\n    startPolling();",
+      "await refreshQueue();\n    await loadAutomationAccounts();\n    await loadClinicSchedule();\n    await loadAlertPreferences();\n    startPolling();",
     );
 
     const initBody = STAFF_APP_JS.slice(STAFF_APP_JS.indexOf("async function init() {"));
     expect(initBody).toContain(
-      "await refreshQueue();\n      await loadAutomationAccounts();\n      await loadClinicSchedule();\n      startPolling();",
+      "await refreshQueue();\n      await loadAutomationAccounts();\n      await loadClinicSchedule();\n      await loadAlertPreferences();\n      startPolling();",
     );
   });
 
@@ -772,6 +772,148 @@ describe("handleStaffScript: Klinik takvimi (Task 044)", () => {
     expect(STAFF_APP_JS).toContain("dayTd.textContent = WEEKDAY_LABELS[weekday];");
     expect(STAFF_APP_JS).toContain("span.textContent = row.closed_on;");
     expect(STAFF_APP_JS).not.toMatch(/schedule\w*\.innerHTML/);
+  });
+});
+
+describe("handleStaffScript: Klinik uyari tercihleri (Task 056)", () => {
+  it("renders the alert-prefs section hidden until login, shown on queue view, hidden on detail view", () => {
+    expect(STAFF_HTML).toContain('<section id="alert-prefs-section" aria-labelledby="alert-prefs-heading" hidden>');
+    const showLoginBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showLoginView() {"),
+      STAFF_APP_JS.indexOf("function showQueueView() {"),
+    );
+    const showQueueBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showQueueView() {"),
+      STAFF_APP_JS.indexOf("function showDetailView() {"),
+    );
+    const showDetailBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function showDetailView() {"),
+      STAFF_APP_JS.indexOf("function clearSession() {"),
+    );
+    expect(showLoginBody).toContain("alertPrefsSection.hidden = true;");
+    expect(showQueueBody).toContain("alertPrefsSection.hidden = false;");
+    expect(showDetailBody).toContain("alertPrefsSection.hidden = true;");
+  });
+
+  it("loads alert preferences via get_my_clinic_alert_preferences with an empty body and strictly validates the closed 5-key row shape", () => {
+    expect(STAFF_APP_JS).toContain('"/rest/v1/rpc/get_my_clinic_alert_preferences"');
+    const fetchBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function fetchMyClinicAlertPreferences() {"),
+      STAFF_APP_JS.indexOf("async function callAlertPreferenceRpc("),
+    );
+    expect(fetchBody).toContain("body: JSON.stringify({})");
+    expect(fetchBody).toContain(
+      '"clinic_id",\n          "clinic_name",\n          "clinic_gate_enabled",\n          "my_preference_enabled",\n          "effective_enabled",',
+    );
+    expect(fetchBody).toContain("rows.length > 50");
+    expect(fetchBody).toContain("UUID_PATTERN.test(row.clinic_id)");
+    expect(fetchBody).toContain("row.effective_enabled === (row.clinic_gate_enabled && row.my_preference_enabled)");
+    expect(fetchBody).toContain("seenClinicIds.has(row.clinic_id)");
+  });
+
+  it("submits a preference change with exactly clinic_id and enabled, never a target user, e-mail, or actor from the browser", () => {
+    const rpcBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function callAlertPreferenceRpc("),
+      STAFF_APP_JS.indexOf("function renderAlertPreferences("),
+    );
+    expect(rpcBody).toContain('"/rest/v1/rpc/set_my_clinic_alert_preference"');
+    expect(rpcBody).toContain("body: JSON.stringify({ p_clinic_id: clinicId, p_enabled: enabled })");
+    expect(rpcBody).toContain('!isExactRecord(rows[0], ["result"])');
+    expect(rpcBody).not.toMatch(/p_email|p_actor|p_user|p_reason/);
+  });
+
+  it("strictly validates the alert preference RPC result against the closed 6-result set", () => {
+    expect(STAFF_APP_JS).toContain(
+      'const ALERT_PREF_RESULTS = ["forbidden", "already_disabled", "email_unconfirmed", "already_enabled", "enabled", "disabled"];',
+    );
+    expect(STAFF_APP_JS).toContain("ALERT_PREF_RESULTS.indexOf(rows[0].result) === -1");
+  });
+
+  it("guards a preference toggle against overlap with the shared alertPrefsMutationInFlight flag and always reloads true state in a finally block", () => {
+    const submitBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitAlertPreference("),
+      STAFF_APP_JS.length,
+    );
+    expect(submitBody).toContain("if (alertPrefsMutationInFlight) {\n    checkbox.checked = !enabled;\n    return;\n  }");
+    expect(submitBody).toContain("alertPrefsMutationInFlight = true;");
+    expect(submitBody).toContain("} finally {\n    alertPrefsMutationInFlight = false;\n    await loadAlertPreferences();\n  }");
+  });
+
+  it("behaviorally executes success, idempotent, forbidden, and rejected preference handlers and reloads authoritative state", async () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitAlertPreference("),
+      STAFF_APP_JS.indexOf('\n\naccountSelect.addEventListener("change"'),
+    );
+    const makeHarness = new Function(
+      "callAlertPreferenceRpc",
+      `"use strict";
+       let alertPrefsMutationInFlight = false;
+       const alertPrefsErrorRegion = { textContent: "" };
+       const alertPrefsStatusRegion = { textContent: "" };
+       let reloads = 0;
+       const loadAlertPreferences = async () => { reloads += 1; };
+       ${source}
+       return { submitAlertPreference, alertPrefsErrorRegion, alertPrefsStatusRegion, getReloads: () => reloads };`,
+    ) as (rpc: (clinicId: string, enabled: boolean) => Promise<string>) => {
+      submitAlertPreference: (clinicId: string, enabled: boolean, checkbox: { checked: boolean; disabled: boolean }) => Promise<void>;
+      alertPrefsErrorRegion: { textContent: string };
+      alertPrefsStatusRegion: { textContent: string };
+      getReloads: () => number;
+    };
+
+    for (const [result, expectedRegion] of [
+      ["enabled", "status"],
+      ["already_enabled", "status"],
+      ["forbidden", "error"],
+    ] as const) {
+      const harness = makeHarness(async () => result);
+      const checkbox = { checked: true, disabled: false };
+      await harness.submitAlertPreference("56000000-0000-0000-1000-000000000001", true, checkbox);
+      expect(harness.getReloads()).toBe(1);
+      expect(expectedRegion === "status" ? harness.alertPrefsStatusRegion.textContent : harness.alertPrefsErrorRegion.textContent).not.toBe("");
+    }
+
+    const rejected = makeHarness(async () => { throw new Error("malformed or expired session"); });
+    await rejected.submitAlertPreference(
+      "56000000-0000-0000-1000-000000000001",
+      true,
+      { checked: true, disabled: false },
+    );
+    expect(rejected.alertPrefsErrorRegion.textContent).not.toBe("");
+    expect(rejected.getReloads()).toBe(1);
+  });
+
+  it("shows fixed Turkish copy for every closed result without leaking internals, distinguishing forbidden and email_unconfirmed as errors", () => {
+    const submitBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("async function submitAlertPreference("),
+      STAFF_APP_JS.length,
+    );
+    expect(submitBody).toContain('result === "forbidden"');
+    expect(submitBody).toContain('result === "email_unconfirmed"');
+    expect(submitBody).not.toMatch(/error\.message|err\.message/);
+  });
+
+  it("clears alert-prefs body, status and error regions on logout", () => {
+    const clearSessionStart = STAFF_APP_JS.indexOf("function clearSession() {");
+    const clearSessionBody = STAFF_APP_JS.slice(clearSessionStart, STAFF_APP_JS.indexOf("\nfunction ", clearSessionStart));
+    expect(clearSessionBody).toContain('alertPrefsBody.textContent = "";');
+    expect(clearSessionBody).toContain('alertPrefsStatusRegion.textContent = "";');
+    expect(clearSessionBody).toContain('alertPrefsErrorRegion.textContent = "";');
+  });
+
+  it("routes every dynamic alert-prefs value to the DOM only through textContent, never innerHTML", () => {
+    expect(STAFF_APP_JS).toContain("nameTd.textContent = row.clinic_name;");
+    expect(STAFF_APP_JS).toContain('prefInput.setAttribute("aria-label", row.clinic_name + " e-posta uyarı tercihim");');
+    expect(STAFF_APP_JS).not.toMatch(/alertPrefs\w*\.innerHTML/);
+  });
+
+  it("states that an already-started provider send cannot be recalled", () => {
+    expect(STAFF_HTML).toContain("Kapatmadan önce gönderimi başlamış bir e-posta geri çağrılamaz ve yine de ulaşabilir.");
+  });
+
+  it("loads alert preferences right after login and on the resumed-session path", () => {
+    expect(STAFF_APP_JS).toContain("await loadClinicSchedule();\n    await loadAlertPreferences();\n    startPolling();");
+    expect(STAFF_APP_JS).toContain("await loadClinicSchedule();\n      await loadAlertPreferences();\n      startPolling();");
   });
 });
 

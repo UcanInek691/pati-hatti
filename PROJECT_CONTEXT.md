@@ -1224,6 +1224,29 @@ occurred.
   if the heartbeat is not fresh within three minutes, and a human pilot canary
   that records two minutes as `LATE` and five minutes as `FAIL`. No canary or
   real Task 055 alert e-mail has been run.
+- Task 056 is complete at repository and disposable-database gates as of
+  2026-09-07. `/staff` now lets an authenticated clinic member manage only
+  their own confirmed-Auth-email subscription, while `/admin` lets an exact
+  AAL2 platform administrator control a separate clinic-wide rollout gate
+  without seeing recipient identities. Clinic delivery requires the global
+  Worker flag, clinic gate and personal preference together; platform-scoped
+  alerts are unchanged.
+- Task 056 adds trigger-owned personal `enabled_at` and clinic activation
+  epochs so disable/re-enable never releases stale unclaimed or expired-lease
+  mail. It preserves already-accepted history and documents that an already-
+  started provider send cannot be recalled. Direct table access remains
+  closed; browser mutations use tenant/AAL2 checks and fixed database-authored
+  audit reasons. The migration and corrected rollback fixture passed only by
+  direct query on disposable `vetai-test`, with zero synthetic residue and no
+  migration-history entry. The affected suite passed 210/210, the full suite
+  2,115 tests with two unchanged opt-in skips, and all required local gates,
+  Codex review and mandatory Claude Opus review passed.
+- Task 056 has not been deployed to staging or production, has sent no real
+  e-mail and does not enable operational alerting. Applying it defaults every
+  clinic rollout gate off; any older clinic delivery would remain suppressed
+  after first enable by design. Staging migration/smoke, provider-domain
+  readiness, alerting activation and the documented veterinary/KVKK/operator
+  approvals remain separate gates.
 
 ## Context maintenance
 

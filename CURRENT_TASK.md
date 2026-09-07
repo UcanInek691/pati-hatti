@@ -1,6 +1,7 @@
 # Current task — 056 Clinic e-mail alert preferences and rollout control
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-07 after Codex review, disposable-database
+proof, full local gates and mandatory Claude Opus read-only review)
 
 Created by Codex on 2026-09-07 after Task 055 closure (`683559b`). Task 053
 already stores clinic recipients and delivers PII-free e-mail alerts, but those
@@ -187,11 +188,220 @@ KVKK boundaries. Sonnet does not commit, push, deploy or mutate any service.
 
 ## Task 056 observed context
 
-To be filled by the implementing agent from repository evidence.
+- `supabase/migrations/20260907000200_clinic_alert_preferences.sql` and
+  `supabase/tests/056_clinic_alert_preferences.sql` already existed on disk
+  (692 and full-length respectively) when this implementation phase began,
+  written in an earlier segment of this same task. Re-read in full and
+  confirmed unedited/internally consistent this phase; no changes made to
+  either file in this phase. They add `public.clinic_alert_settings`
+  (clinic-wide gate) and `public.clinic_alert_gate_audit` (its audit trail,
+  no grant at all — not even `service_role`), plus four
+  `SECURITY DEFINER`/`set search_path = ''` RPCs:
+  `get_my_clinic_alert_preferences`, `set_my_clinic_alert_preference`,
+  `get_platform_clinic_alert_gates`, `set_platform_clinic_alert_gate`.
+  `sync_alert_delivery_candidates`, `claim_alert_delivery`, and
+  `schedule_alert_repeat_notifications` were recreated with clinic-scope
+  gate/epoch checks; the existing platform-signal branch of each is
+  byte-for-byte unchanged.
+- Existing UI conventions reused rather than reinvented: `isExactRecord`
+  exact-key validation, `callLifecycleRpc`/`validateLifecycleResult` generic
+  result-set validator (adminPage.ts), the `lifecycleBusy` shared mutation
+  flag and reload-in-`finally` pattern from `handleSuspend`/`handleResume`,
+  and the per-row checkbox pattern from `renderWeeklyHours` (staffPage.ts).
+- Turkish diacritics inside the client-side JS template literals
+  (`STAFF_APP_JS`, `ADMIN_APP_JS`) use the file's existing double-backslash
+  `\\uXXXX` convention so the emitted browser JS still carries a literal
+  `\uXXXX` escape at runtime; HTML sections use direct UTF-8 characters,
+  matching the surrounding code exactly.
+- `rtk` is not installed in this shell; per `AGENTS.md`'s documented
+  fallback, native Read/Edit/Write/Bash/Grep tools were used throughout.
 
 ## Task 056 delivery record
 
-To be filled by the implementing agent from actual work and checks.
+**Files changed** (all within the contract's Allowed changes list):
+- `src/staffPage.ts` — new "Uyarı tercihleri" section (HTML + DOM consts),
+  `fetchMyClinicAlertPreferences`, `callAlertPreferenceRpc`,
+  `renderAlertPreferences`, `loadAlertPreferences`, `submitAlertPreference`;
+  wired into `showLoginView`/`showQueueView`/`showDetailView`/`clearSession`
+  and both post-login/resumed-session init paths (+81 lines).
+- `src/adminPage.ts` — `ALERT_GATE_RESULTS`, `fetchClinicAlertGates`,
+  `handleAlertGateToggle`; `renderOverview` gained an `alertGates` parameter
+  and a new "E-posta uyarısı" checkbox column; `loadOverview` fetches gates
+  (skipped on the forbidden/empty sentinel) before rendering (+94 lines).
+- `test/staffPage.test.ts` — updated 1 pre-existing assertion broken by the
+  new `loadAlertPreferences()` call sites (both login and resumed-session
+  substrings); added 8 new tests for the alert-preferences feature (+163
+  lines net).
+- `test/adminPage.test.ts` — updated 4 pre-existing assertions (RPC
+  allowlist, `lifecycleBusy`/`istanbulMonthStart()` call counts,
+  `renderOverview` signature regex) broken by the additive change; added 5
+  new tests for the alert-gate-toggle feature (+98 lines net).
+- 8 docs files updated per the contract: `operational-alerting.md` (new §11,
+  the full three-tier/epoch/lock-order writeup), `database-schema.md` (new
+  "Clinic alert preferences and rollout gate" subsection),
+  `staff-workflow.md` (new "Clinic alert preferences" section + disposable-
+  validation-status entry), `platform-admin-overview.md` (new "Klinik
+  e-posta uyarı anahtarı" section), `production-readiness.md` (new checklist
+  note under §6 Operations), `staging-runbook.md` (new §28), `kvkk-inceleme-
+  paketi.md` (new table row), `saas-urunlestirme-yol-haritasi.md` (new
+  §10e). Every one states the migration/fixture/staging/production status as
+  `NOT RUN` where applicable.
+- No other file touched. `.gitignore` and `docs/043-opus-inceleme.md` remain
+  as pre-existing dirty/untracked state, untouched by this task.
+
+**Test results:**
+- Before any edit: `pnpm vitest run test/staffPage.test.ts test/adminPage.test.ts`
+  showed exactly 5 failures, all self-caused by the additive UI changes (4 in
+  `test/adminPage.test.ts`, 1 in `test/staffPage.test.ts`), 187/192 passing.
+- After fixes + new coverage: `test/staffPage.test.ts` 122/122 passed,
+  `test/adminPage.test.ts` 84/84 passed.
+- Full suite (`pnpm test`, run last after all edits including docs): **38
+  test files, 2111 passed, 2 skipped (pre-existing live-API skips
+  unaffected by this task), 0 failed.**
+- `pnpm typecheck`: zero errors, run twice (after the TS edits, and again as
+  the final verification pass).
+
+**Verification commands run, in order, as the final pass:**
+```
+pnpm install --frozen-lockfile   → up to date
+pnpm typecheck                   → clean
+pnpm test                        → 2111 passed / 2 skipped / 0 failed
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+  → succeeded; env.OPERATIONAL_ALERTS_ENABLED = "false" (global flag untouched)
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+  → succeeded
+git diff --check                 → exit 0 (only pre-existing LF/CRLF warnings, no whitespace errors)
+```
+
+**Checks explicitly NOT executed** (per the binding instruction, stricter
+than the contract's own disposable-`vetai-test` allowance):
+- The migration `20260907000200_clinic_alert_preferences.sql` was never run
+  against any database, including disposable `vetai-test`.
+- The rollback fixture `056_clinic_alert_preferences.sql` was never run
+  against any database.
+- No independent post-migration catalog check.
+- No real Supabase, Cloudflare, Meta, OpenAI, or Resend/e-mail call of any
+  kind.
+- No staging or production deploy (only the two `--dry-run` invocations
+  above).
+- No commit, push, or PR.
+- Mandatory Claude Opus read-only review has not run.
+
+**Implementer-reported risks and Codex disposition:**
+1. **Effective-state UI copy — resolved by Codex.** Both panels now state the
+   two-key relationship and the irreversibility of an already-started send in
+   fixed Turkish prose, in addition to the three state columns.
+2. **Repeat-notification suppression across a disable/enable cycle is
+   permanent by design**, per the migration's activation-epoch pattern
+   (`docs/operational-alerting.md` §11): a `schedule_alert_repeat_notifications`
+   series that straddles a toggle is not resumed after re-enable. This was a
+   pre-existing design decision from the earlier segment that authored the
+   migration, re-confirmed here, not something changed in this phase — worth
+   Opus's explicit sign-off given it's a real (if intentional) notification
+   gap.
+3. **Static-only handler tests — resolved by Codex.** Both new mutation
+   handlers now execute in `new Function` harnesses across success,
+   idempotent, forbidden/not-found and rejected/malformed-or-expired paths;
+   shared 401/403 session-clearing tests remain intact.
+4. **Single-session concurrency limitation** remains: the rollback fixture
+   cannot create true cross-session contention. The reviewed lock clauses and
+   order are structural proof; Opus must independently inspect them.
+5. **Task 053 `updated_at` interaction — resolved by Codex.** Eligibility now
+   uses dedicated trigger-owned `enabled_at`; fixture Section 9 proves an
+   admin no-op preserves it and does not suppress the pending delivery.
+6. **AAL2/tenant/epoch/lock-order review**: per the contract, this needs
+   Claude Opus's mandatory independent read-only pass before any staging
+   activation — not yet done. Specific things to check: the platform path's
+   `clinics for no key update` → `clinic_alert_settings for update` order and
+   the staff path's `clinics for key share` → `clinic_staff for no key update`
+   → `clinic_alert_recipients for update` order, plus claim/repeat/offboarding
+   interactions. No lock cycle was found, but this deserves
+   independent confirmation), and that the authoritative e-mail resolution
+   in `set_my_clinic_alert_preference` reads only `auth.users` for the
+   caller's own `auth.uid()` and never accepts a client-supplied address.
+
+### Codex review, remediation, and disposable proof — 2026-09-07
+
+Codex moved the task to `IN_REVIEW`, reviewed the complete database/UI call
+paths, and applied only scoped root fixes:
+
+- Recipient eligibility now uses a dedicated
+  `clinic_alert_recipients.enabled_at` activation epoch. A table trigger owns
+  that field for every writer, so Task 053's service-role setter may refresh
+  general `updated_at` without making a pending delivery stale. The fixture
+  proves the no-op writer preserves `enabled_at` and the pending delivery
+  remains claimable.
+- The staff mutation now locks parent clinic (`FOR KEY SHARE`) → exact
+  membership (`FOR NO KEY UPDATE`) → recipient (`FOR UPDATE`). This serializes
+  concurrent same-membership toggles and keeps parent-first ordering against
+  clinic deletion/offboarding.
+- Supabase default privileges exposed a direct `service_role` grant on the
+  new gate audit table despite the intended no-grant boundary. The migration
+  now explicitly revokes it, and the fixture checks the effective catalog.
+- The rollback fixture was made non-vacuous and shared-database safe: exact
+  definer/invoker metadata and positive/negative grants, fixture-scoped clinic
+  updates, explicit JWT-GUC isolation, transaction-time-safe stale epochs,
+  a valid work-item state/FK chain, exact-target claim proof, the dedicated
+  epoch no-op proof, and expanded zero-residue checks.
+- `/staff` and `/admin` reject duplicate/missing clinic maps, label checkbox
+  controls accessibly, and explicitly state that an already-started provider
+  send cannot be recalled. Both toggle handlers are now executed in tests for
+  success/idempotent/closed/error paths; shared `authedFetch` tests continue
+  to pin 401/403 session clearing.
+
+Codex temporarily linked only to project `cyjpiapxvalqltcsywam` (`vetai-test`),
+applied the migration by direct query, and ran the rollback-only fixture to
+completion. An independent query then confirmed: one nullable `enabled_at`
+column, one epoch trigger, four browser RPCs, authenticated-only execute for
+the self mutation (`anon=false`, `service_role=false`), zero Task 056 fixture
+users/clinics/deliveries, and zero `20260907000200` migration-history rows.
+The local link was restored to `qtgvddejjjiivjwicxdq` (`vetai-staging`). No
+Task 056 SQL was sent to staging or production.
+
+Final gates after the last relevant change:
+
+- `pnpm install --frozen-lockfile` — up to date;
+- `pnpm typecheck` — clean;
+- affected UI tests — 210/210 (`staffPage` 124, `adminPage` 86);
+- `pnpm test` — 38 files, 2,115 passed, 2 pre-existing skips, 0 failed;
+- both production-config and staging-config Wrangler dry-runs — passed, with
+  `OPERATIONAL_ALERTS_ENABLED = "false"` unchanged;
+- `git diff --check` — exit 0, only line-ending warnings.
+
+No commit, push, deploy, real e-mail, staging/production migration, or
+external Meta/OpenAI/Resend call occurred. Mandatory Claude Opus review of
+the AAL2/RLS/tenant/Auth-email/epoch/concurrency/KVKK boundaries remains the
+only repository closure gate before Codex can mark the task `COMPLETE` and
+commit the reviewed files.
+
+### Mandatory Claude Opus review and closure — 2026-09-07
+
+Claude Opus completed the required read-only review and returned `PASS` with
+no blocker. It independently confirmed the trigger-owned personal activation
+epoch, clinic-first lock orders and absence of a new deadlock cycle, the fully
+closed gate-audit table, fail-closed `/staff` and `/admin` response handling,
+Task 053 function/grant preservation, tenant/AAL2/Auth-email boundaries and
+the rollback fixture's non-vacuous disposable-database assertions.
+
+Accepted low-severity limitations are recorded rather than hidden: a very
+short transaction-start-time epoch race can conservatively suppress one
+candidate; suppressed pending/expired-lease rows have no terminal cleanup;
+an Auth e-mail accepted by Supabase but rejected by the stricter recipient
+constraint fails closed as a generic RPC error; a concurrent Task 053
+operator write and Task 056 self-write may produce two `created` audit events
+while preserving one coherent final recipient row; and the single-session
+fixture cannot prove true cross-session contention. The shared authorization
+helper already has an AAL1 fixture in Task 047; Task 056's fixture separately
+tests missing-AAL, non-member and the exact helper call path. These items do
+not weaken tenant isolation, confer access or start delivery.
+
+Applying this migration while older clinic-scope deliveries exist would
+intentionally suppress them: no clinic gate row means off, and the first
+enable epoch is later than those rows. Task 053 is not deployed and global
+alerting remains disabled, so no such real delivery rows exist in the current
+staging or production path. Staging migration, provider delivery, global
+activation, veterinary review and KVKK/legal approval remain separate
+post-repository gates and were not performed by Task 056.
 
 ---
 

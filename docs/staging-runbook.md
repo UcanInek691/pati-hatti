@@ -1334,3 +1334,28 @@ depodaki katı sözleşmeyle uyuştuğu doğrulanır.
 Bayrak açıldıktan sonraki ilk üç dakika içinde `/ready` yanıtında
 `alertMonitorHeartbeat: "fresh"` görülmezse bayrak hemen tekrar kapatılır ve
 staging aktivasyonu ilerletilmez.
+
+## 28. Task 056 — klinik e-posta uyarı tercihleri (2026-09-07, staging `NOT RUN`)
+
+Task 056, personel kendi kendine yönetilen abonelik tercihini ve platform
+admin'in klinik başına rollout anahtarını ekler (ayrıntılar
+[`docs/operational-alerting.md`](operational-alerting.md) §11). Bu görevde
+Codex migration'ı disposable `vetai-test` üzerinde doğrudan sorgu olarak
+uyguladı; rollback fixture ve bağımsız katalog/grant/sıfır-artık sorgusu
+geçti. Bu bir migration-history kaydı veya staging kanıtı değildir. Aşağıdaki
+aktivasyon adımlarının **hiçbiri** çalıştırılmadı:
+
+- Bu migration'ın staging veya production'a uygulanması.
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run` dışında
+  gerçek bir staging deploy'u.
+- Yeni RPC'lerin (`get_my_clinic_alert_preferences`,
+  `set_my_clinic_alert_preference`, `get_platform_clinic_alert_gates`,
+  `set_platform_clinic_alert_gate`) staging hesabına karşı gerçek bir
+  çağrısı.
+- Gerçek bir e-posta gönderimi — bu görev yalnız hangi personelin/kliniğin
+  mevcut alarm teslimat yoluna dahil olacağını daraltır, §3/§7'deki teslimat
+  mekanizmasının kendisini değiştirmez.
+
+Yerel olarak çalıştırılan ve geçen: `pnpm typecheck`, `pnpm test` (tüm suite,
+Codex/staging kanıtı hariç), ilgili dry-run deploy komutları. Bunların hiçbiri
+staging/production kanıtı yerine geçmez.

@@ -284,21 +284,24 @@ describe("handleAdminScript", () => {
     expect(ADMIN_APP_JS).toContain('"/auth/v1/token?grant_type=password"');
   });
 
-  it("calls only the overview RPC and the 3 platform_* lifecycle RPCs, never a service-role/pricing/messaging endpoint", () => {
+  it("calls only the overview RPC, the 3 platform_* lifecycle RPCs, and the 2 Task 056 clinic alert gate RPCs, never a service-role/pricing/messaging endpoint", () => {
     expect(ADMIN_APP_JS).toContain('"/rest/v1/rpc/get_platform_admin_overview_v1"');
     expect(ADMIN_APP_JS).toContain("body: JSON.stringify({ p_month_start: monthStart })");
     // Every literal "rpc/<name>" call site in the source, deduplicated. This
-    // must be exactly the overview RPC plus the 3 platform_* lifecycle
-    // wrappers -- never Task 041's service-role functions (suspend_clinic_v1,
-    // resume_clinic_v1, provision_clinic_v1, prepare/finalize_offboarding)
-    // called directly, and never set_clinic_operational_status.
+    // must be exactly the overview RPC, the 3 platform_* lifecycle wrappers,
+    // and the 2 Task 056 clinic alert gate RPCs -- never Task 041's
+    // service-role functions (suspend_clinic_v1, resume_clinic_v1,
+    // provision_clinic_v1, prepare/finalize_offboarding) called directly, and
+    // never set_clinic_operational_status.
     const calledRpcs = [...new Set(ADMIN_APP_JS.match(/rpc\/[a-z_0-9]+/g))].sort();
     expect(calledRpcs).toEqual(
       [
         "rpc/get_platform_admin_overview_v1",
+        "rpc/get_platform_clinic_alert_gates",
         "rpc/platform_provision_clinic_v1",
         "rpc/platform_resume_clinic_v1",
         "rpc/platform_suspend_clinic_v1",
+        "rpc/set_platform_clinic_alert_gate",
       ].sort()
     );
     expect(ADMIN_APP_JS).not.toMatch(/offboarding_v1|set_clinic_operational_status/);
@@ -419,10 +422,11 @@ describe("handleAdminScript", () => {
   });
 
   it("blocks overlapping lifecycle mutations behind a single shared busy flag reset in a finally block", () => {
+    // 3 lifecycle mutations (suspend/resume/provision) plus the Task 056 alert gate toggle.
     expect((ADMIN_APP_JS.match(/if \(lifecycleBusy\) return;/g) || []).length).toBe(3);
-    expect((ADMIN_APP_JS.match(/lifecycleBusy = true;/g) || []).length).toBe(3);
-    // Excludes the initial `let lifecycleBusy = false;` declaration -- only the 3 finally-block resets.
-    expect((ADMIN_APP_JS.match(/(?<!let )lifecycleBusy = false;/g) || []).length).toBe(3);
+    expect((ADMIN_APP_JS.match(/lifecycleBusy = true;/g) || []).length).toBe(4);
+    // Excludes the initial `let lifecycleBusy = false;` declaration -- only the 4 finally-block resets.
+    expect((ADMIN_APP_JS.match(/(?<!let )lifecycleBusy = false;/g) || []).length).toBe(4);
   });
 
   it("keeps request/entity IDs in memory across retryable failures and clears them on terminal responses or logout", () => {
@@ -450,7 +454,8 @@ describe("handleAdminScript", () => {
   });
 
   it("reloads the overview after every successful lifecycle mutation", () => {
-    expect((ADMIN_APP_JS.match(/const \{ monthStart \} = istanbulMonthStart\(\);\s*\n\s*await loadOverview\(monthStart\);/g) || []).length).toBe(3);
+    // 3 lifecycle mutations (suspend/resume/provision) plus the Task 056 alert gate toggle.
+    expect((ADMIN_APP_JS.match(/const \{ monthStart \} = istanbulMonthStart\(\);\s*\n\s*await loadOverview\(monthStart\);/g) || []).length).toBe(4);
   });
 
   it("never renders the clinic UUID as visible text or a DOM attribute, only as an in-memory closure argument", () => {
@@ -462,7 +467,7 @@ describe("handleAdminScript", () => {
   });
 
   it("offers no control for an offboarding clinic, only suspend for active and resume for suspended", () => {
-    const renderOverviewBody = ADMIN_APP_JS.match(/function renderOverview\(rows\) \{[\s\S]*?\n}\n/);
+    const renderOverviewBody = ADMIN_APP_JS.match(/function renderOverview\(rows, alertGates\) \{[\s\S]*?\n}\n/);
     expect(renderOverviewBody).not.toBeNull();
     const body = renderOverviewBody![0];
     expect(body).toContain('row.operational_status === "active"');
@@ -478,6 +483,129 @@ describe("handleAdminScript", () => {
     const catchBranch = handlerBody.slice(handlerBody.indexOf("} catch {"), handlerBody.indexOf("} finally {"));
     expect(successBranch).toContain("provisionForm.reset();");
     expect(catchBranch).not.toContain("provisionForm.reset();");
+  });
+
+  it("fetches clinic alert gates with an empty body and strictly validates the closed clinic_id/enabled row shape", () => {
+    const fetchBody = ADMIN_APP_JS.slice(
+      ADMIN_APP_JS.indexOf("async function fetchClinicAlertGates() {"),
+      ADMIN_APP_JS.indexOf("async function handleAlertGateToggle("),
+    );
+    expect(fetchBody).toContain('"/rest/v1/rpc/get_platform_clinic_alert_gates"');
+    expect(fetchBody).toContain("body: JSON.stringify({})");
+    expect(fetchBody).toContain('isExactRecord(row, ["clinic_id", "enabled"])');
+    expect(fetchBody).toContain("UUID_PATTERN.test(row.clinic_id)");
+    expect(fetchBody).toContain('typeof row.enabled === "boolean"');
+    expect(fetchBody).toContain("gates.has(row.clinic_id)");
+  });
+
+  it("skips the alert gates fetch on the forbidden/empty sentinel, otherwise fetches gates before rendering", () => {
+    const loadOverviewBody = ADMIN_APP_JS.slice(
+      ADMIN_APP_JS.indexOf("async function loadOverview("),
+      ADMIN_APP_JS.indexOf('monthForm.addEventListener("submit"'),
+    );
+    expect(loadOverviewBody).toContain(
+      'const isSentinel = rows.length === 1 && (rows[0].result === "forbidden" || rows[0].result === "empty");',
+    );
+    expect(loadOverviewBody).toContain("const alertGates = isSentinel ? new Map() : await fetchClinicAlertGates();");
+    expect(loadOverviewBody).toContain("alertGates.size !== rows.length");
+    expect(loadOverviewBody).toContain("!rows.every((row) => alertGates.has(row.clinic_id))");
+    const sentinelIndex = loadOverviewBody.indexOf("isSentinel =");
+    const renderIndex = loadOverviewBody.indexOf("renderOverview(rows, alertGates)");
+    expect(sentinelIndex).toBeGreaterThan(-1);
+    expect(renderIndex).toBeGreaterThan(sentinelIndex);
+  });
+
+  it("toggles the clinic alert gate via set_platform_clinic_alert_gate with exactly clinic_id and enabled, never a target user or e-mail", () => {
+    const toggleBody = ADMIN_APP_JS.slice(
+      ADMIN_APP_JS.indexOf("async function handleAlertGateToggle("),
+      ADMIN_APP_JS.indexOf("function renderOverview("),
+    );
+    expect(toggleBody).toContain('"/rest/v1/rpc/set_platform_clinic_alert_gate"');
+    expect(toggleBody).toContain("{ p_clinic_id: clinicId, p_enabled: enabled }");
+    expect(toggleBody).toContain("ALERT_GATE_RESULTS\n    );");
+    expect(ADMIN_APP_JS).toContain(
+      'const ALERT_GATE_RESULTS = ["forbidden", "enabled", "already_enabled", "disabled", "already_disabled", "not_found"];',
+    );
+    expect(toggleBody).not.toMatch(/p_email|p_actor|p_user|p_reason/);
+  });
+
+  it("reverts the checkbox and re-enables it on forbidden/not_found/failure, and reverts it without acting when already busy", () => {
+    const toggleBody = ADMIN_APP_JS.slice(
+      ADMIN_APP_JS.indexOf("async function handleAlertGateToggle("),
+      ADMIN_APP_JS.indexOf("function renderOverview("),
+    );
+    expect(toggleBody).toContain("if (lifecycleBusy) {\n    checkbox.checked = !enabled;\n    return;\n  }");
+    expect(toggleBody).toContain("let reloaded = false;");
+    expect(toggleBody).toContain(
+      "} finally {\n    lifecycleBusy = false;\n    if (!reloaded) {\n      checkbox.checked = !enabled;\n      checkbox.disabled = false;\n    }\n  }",
+    );
+    const forbiddenIndex = toggleBody.indexOf('result === "forbidden"');
+    const notFoundIndex = toggleBody.indexOf('result === "not_found"');
+    const reloadedTrueIndex = toggleBody.indexOf("reloaded = true;");
+    expect(forbiddenIndex).toBeGreaterThan(-1);
+    expect(notFoundIndex).toBeGreaterThan(forbiddenIndex);
+    expect(reloadedTrueIndex).toBeGreaterThan(notFoundIndex);
+  });
+
+  it("behaviorally executes success, idempotent, forbidden, not-found, and rejected alert-gate handlers", async () => {
+    const source = ADMIN_APP_JS.slice(
+      ADMIN_APP_JS.indexOf("async function handleAlertGateToggle("),
+      ADMIN_APP_JS.indexOf("function renderOverview("),
+    );
+    const makeHarness = new Function(
+      "callLifecycleRpc",
+      `"use strict";
+       let lifecycleBusy = false;
+       const ALERT_GATE_RESULTS = ["forbidden", "enabled", "already_enabled", "disabled", "already_disabled", "not_found"];
+       const clearMessages = () => {};
+       const istanbulMonthStart = () => ({ monthStart: "2026-09-01" });
+       let reloads = 0;
+       let error = "";
+       const loadOverview = async () => { reloads += 1; };
+       const showError = (value) => { error = value; };
+       ${source}
+       return { handleAlertGateToggle, getReloads: () => reloads, getError: () => error };`,
+    ) as (rpc: (...args: unknown[]) => Promise<string>) => {
+      handleAlertGateToggle: (clinicId: string, enabled: boolean, checkbox: { checked: boolean; disabled: boolean }) => Promise<void>;
+      getReloads: () => number;
+      getError: () => string;
+    };
+
+    for (const result of ["enabled", "already_enabled"]) {
+      const harness = makeHarness(async () => result);
+      const checkbox = { checked: true, disabled: false };
+      await harness.handleAlertGateToggle("56000000-0000-0000-1000-000000000001", true, checkbox);
+      expect(harness.getReloads()).toBe(1);
+    }
+    for (const result of ["forbidden", "not_found"]) {
+      const harness = makeHarness(async () => result);
+      const checkbox = { checked: true, disabled: false };
+      await harness.handleAlertGateToggle("56000000-0000-0000-1000-000000000001", true, checkbox);
+      expect(harness.getReloads()).toBe(0);
+      expect(checkbox).toEqual({ checked: false, disabled: false });
+      expect(harness.getError()).not.toBe("");
+    }
+    const rejected = makeHarness(async () => { throw new Error("malformed or expired session"); });
+    const checkbox = { checked: true, disabled: false };
+    await rejected.handleAlertGateToggle("56000000-0000-0000-1000-000000000001", true, checkbox);
+    expect(checkbox).toEqual({ checked: false, disabled: false });
+    expect(rejected.getError()).not.toBe("");
+  });
+
+  it("renders one alert-gate checkbox per clinic row, reflecting the fetched gate map and disabled while lifecycleBusy", () => {
+    const renderOverviewBody = ADMIN_APP_JS.match(/function renderOverview\(rows, alertGates\) \{[\s\S]*?\n}\n/);
+    expect(renderOverviewBody).not.toBeNull();
+    const body = renderOverviewBody![0];
+    expect(body).toContain('"E-posta uyar\\u0131s\\u0131", "\\u0130\\u015flem",');
+    expect(body).toContain("alertGateCheckbox.checked = alertGates.get(row.clinic_id) || false;");
+    expect(body).toContain("alertGateCheckbox.disabled = lifecycleBusy;");
+    expect(body).toContain('alertGateCheckbox.setAttribute("aria-label", row.clinic_name + " e-posta uyarı anahtarı");');
+    expect(body).toContain("handleAlertGateToggle(row.clinic_id, alertGateCheckbox.checked, alertGateCheckbox);");
+  });
+
+  it("states the two-key boundary and that an already-started provider send cannot be recalled", () => {
+    expect(ADMIN_HTML).toContain("personelin kendi kapalı tercihini geçersiz kılamaz");
+    expect(ADMIN_HTML).toContain("gönderimi başlamış bir e-posta geri çağrılamaz ve yine de ulaşabilir");
   });
 });
 

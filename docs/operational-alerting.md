@@ -841,6 +841,95 @@ bayrağının açılması hâlâ NOT RUN'dır. Bu bölüm tek başına ürünü 
 production/KVKK/veteriner/sahip onay kapıları §3, §4 ve §7'de tanımlandığı gibi
 açık kalır.
 
+## 11. Task 056 — klinik e-posta uyarı tercihleri: üç bağımsız katman (2026-09-07, aktivasyon yok)
+
+§1–10'daki alarm/teslimat mekanizması tek bir platform genelinde açma/kapama
+bayrağı varsayıyordu. Task 056 bunun üzerine, birbirinden bağımsız çalışan iki
+yeni kontrol katmanı ekler — global Worker aktivasyonunu **değiştirmez**,
+yalnız klinik alarmlarının (ör. `worker_exception` değil, klinik'e özgü sinyal
+türleri) kimin kutusuna düşeceğini daraltır:
+
+1. **Kişisel abonelik** (personel kendi kendine yönetir): her personel
+   üyesi kendi `clinic_alert_recipients` satırındaki `enabled` bayrağını
+   `set_my_clinic_alert_preference(p_clinic_id, p_enabled)` RPC'siyle
+   açar/kapatır. Yalnız çağıranın kendi üyeliğini etkiler; başka bir
+   personelin abonelik durumu hiçbir parametreyle hedeflenemez.
+2. **Klinik rollout anahtarı** (yalnız platform admin): `clinic_alert_settings.enabled`,
+   `set_platform_clinic_alert_gate(p_clinic_id, p_enabled)` RPC'siyle
+   yalnız AAL2 + `platform_admin` yetkili çağıran tarafından değiştirilir.
+   Bu anahtar kapalıyken o klinik için hiçbir personel bireysel tercihi
+   etkili olmaz (`effective_enabled = clinic_gate_enabled AND
+   my_preference_enabled`) — iki kontrol tamamen bağımsız saklanır, biri
+   diğerinin durumunu asla üzerine yazmaz.
+3. **Global Worker aktivasyonu** (Task 053, hâlâ `NOT RUN`): §3/§7'de
+   tanımlanan platform genelindeki alarm alt sisteminin kendisinin açık
+   olması. Bu üçüncü katman Task 056 kapsamında hiç değişmedi.
+
+Üç katman birbirinden tamamen bağımsızdır: personel kendi tercihini
+değiştirebilir ama klinik anahtarını veya global aktivasyonu asla
+göremez/etkileyemez; platform admin klinik anahtarını değiştirebilir ama
+hiçbir personelin bireysel tercihini göremez/değiştiremez (RPC'ler yalnız
+`clinic_id, enabled` alır — hedef kullanıcı, e-posta adresi veya serbest
+metinli denetim gerekçesi hiçbir zaman istemciden kabul edilmez).
+
+**Aktivasyon-epoch bastırma deseni**: klinik rollout epoch'u
+`clinic_alert_settings.updated_at`, kişisel abonelik epoch'u ise
+`clinic_alert_recipients.enabled_at` alanında tutulur. İkisi de yalnız gerçek
+durum geçişinde (idempotent no-op'ta değil) değişir. Task 053'ün genel
+`updated_at` alanını yenileyen service-role yazma yolu `enabled_at`'i
+değiştiremez; bunu tablo trigger'ı tüm yazma yollarında korur.
+`sync_alert_delivery_candidates`,
+`claim_alert_delivery` ve `schedule_alert_repeat_notifications`, bir teslimat
+adayını yalnız `alert_deliveries.created_at >= (ilgili gate/recipient
+satırının en son aktivasyon epoch'u)` olduğunda geçerli sayar — böylece bir
+anahtar kapatılıp sonra yeniden açıldığında, kapatmadan önce üretilmiş eski
+bekleyen teslimatlar asla geç gönderilmez. Bilinen ve kasıtlı yan etki: bir
+tekrar bildirimi serisi (`schedule_alert_repeat_notifications`) bu
+disable/enable döngüsünü aşarsa, o seri kalıcı olarak bastırılır — döngüden
+sonra yeniden başlamaz. Bu, "eski/stale teslimat asla sızmasın" ilkesinin
+bilinçli bir sonucu olup ayrı bir kusur değildir.
+
+Migration uygulanırken daha eski klinik-kapsamlı `pending`/süresi dolmuş
+`claimed` teslimatlar varsa onlar da bilinçli olarak bastırılır: başlangıçta
+klinik gate satırı yoktur ve ilk etkinleştirme epoch'u eski teslimatların
+`created_at` değerinden sonradır. Task 053 henüz staging/production'a
+uygulanmadığı ve global bayrak kapalı olduğu için mevcut ortamlarda böyle bir
+gerçek teslimat kümesi yoktur.
+
+Kapatma anında henüz claim edilmemiş veya lease'i sona ermiş teslimatlar
+engellenir. Sağlayıcıya gönderimi kapatmadan önce başlamış bir e-posta geri
+çağrılamaz ve yine de ulaşabilir; `/staff` ve `/admin` bu sınırı açıkça söyler.
+
+Kimlik doğrulaması: personel RPC'si yalnız `auth.uid()`'in kendi
+kliniği `for key share`, ardından `clinic_staff` üyeliğini eşzamanlı
+aynı-üyelik değişikliklerini serileştiren `for no key update` ile kilitler;
+platform
+RPC'si `vetai_private.platform_admin_authorized_caller_v1()` ile aynı
+AAL2+rol kontrolünü kullanır (satır kilitleri `clinics for no key update` →
+`clinic_alert_settings for update`, aynı sıra her iki yönde de korunur —
+deadlock riski yok). Etkinleştirme anında e-posta adresi asla istemciden
+alınmaz; yalnız `auth.users`'daki çağıranın kendi **onaylı** (`email_confirmed_at`
+dolu) adresi kullanılır — onay yoksa `email_unconfirmed` döner ve hiçbir
+satır yazılmaz.
+
+Migration: `supabase/migrations/20260907000200_clinic_alert_preferences.sql`
+(`clinic_alert_recipients.enabled_at` activation epoch'unu, bunu koruyan
+trigger'ı, `clinic_alert_settings`, `clinic_alert_gate_audit` tablolarını ve dört yeni
+`SECURITY DEFINER`/`set search_path = ''` RPC'sini ekler; `sync_alert_delivery_candidates`,
+`claim_alert_delivery`, `schedule_alert_repeat_notifications` klinik
+kapsamlı gate/epoch kontrolü için yeniden oluşturulur, platform sinyal dalı
+byte-byte değişmeden kalır). Rollback-only fixture:
+`supabase/tests/056_clinic_alert_preferences.sql`. Uygulayıcı bu ikisini
+yalnız depoya yazdı; Codex incelemesi sonrasında migration disposable
+`vetai-test` üzerinde doğrudan sorgu olarak uygulandı, rollback-only fixture
+geçti ve bağımsız katalog/grant/sıfır-artık sorgusu temiz çıktı. Bu doğrudan
+kanıt migration-history kaydı değildir ve staging/production uygulaması
+değildir. `src/staffPage.ts` (kişisel tercih listesi)
+ve `src/adminPage.ts` (klinik anahtarı sütunu) tarafındaki istemci kodu ve
+`test/staffPage.test.ts`/`test/adminPage.test.ts` kapsamındaki statik/davranışsal
+testler yerel olarak geçti; gerçek staging deploy, gerçek e-posta gönderimi ve
+global aktivasyon bayrağı §3/§7'de tanımlandığı gibi hâlâ `NOT RUN`'dır.
+
 ## Referanslar
 
 - [Cloudflare Queues — limitler (retention/backlog boyutu)](https://developers.cloudflare.com/queues/platform/limits/) — kontrol 2026-09-05

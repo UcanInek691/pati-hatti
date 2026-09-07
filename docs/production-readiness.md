@@ -463,6 +463,16 @@ ve diğer alarm maddeleri tamamlanmadığı için kutular işaretsiz kalır.
 - [ ] Alert on repeated OpenAI extraction failures.
 - [ ] Document who owns responding to each alert above and their expected
       response time before go-live.
+- [ ] Note (Task 056, 2026-09-07): clinic alert mail now has three
+      independent tiers — a staff member's own subscription, a platform-admin
+      clinic-wide rollout gate, and the global Worker alert activation above.
+      This clarifies *who* within an already-notified clinic receives mail;
+      it does not close any unchecked box above. Its direct-query migration,
+      rollback fixture and catalog/grant/zero-residue proof passed only on
+      disposable `vetai-test`; no migration-history record was created and it
+      was not activated on staging/production. See
+      [`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
+      §11.
 
 ## 7. Go / no-go and rollback
 

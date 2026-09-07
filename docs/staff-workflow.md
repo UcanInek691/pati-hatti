@@ -353,6 +353,36 @@ document; there is still no second panel and no clinic-schedule route.
   times render with `timeZone: "Europe/Istanbul"` regardless of the
   operator's browser timezone.
 
+## Clinic alert preferences (Task 056)
+
+A fixed "Uyarı tercihleri" section — independent of the queue, automation, and
+schedule sections above — lists every clinic the caller belongs to, backed by
+`get_my_clinic_alert_preferences`/`set_my_clinic_alert_preference`
+([`docs/database-schema.md`](database-schema.md#clinic-alert-preferences-and-rollout-gate-task-056),
+full behavior in
+[`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
+§11). This is a personal, self-service subscription toggle — distinct from
+the clinic-wide rollout gate a platform admin controls (see
+[`docs/platform-admin-overview.md`](platform-admin-overview.md)) and from the
+global Worker alert activation described in `docs/operational-alerting.md`.
+
+- Each row shows the clinic name, whether the platform admin's clinic gate is
+  currently open, the caller's own checkbox, and the resulting effective
+  state (`effective_enabled = clinic gate AND my preference`) — so a staff
+  member can always tell whether their own subscription is actually live,
+  not just switched on.
+- Toggling calls `set_my_clinic_alert_preference` with only `clinic_id` and
+  the new boolean; the caller's own confirmed Auth e-mail is resolved
+  server-side, never entered or shown in the UI. `email_unconfirmed` is
+  surfaced as a fixed message rather than silently no-op'ing.
+- The toggle is guarded by a shared in-flight flag and always reloads
+  authoritative state from the server afterward, so a failed or racing
+  mutation can never leave the checkbox showing a state the server didn't
+  actually apply.
+- Disabling prevents unclaimed/expired-lease clinic alerts from being sent,
+  but an e-mail whose provider send already started before the toggle cannot
+  be recalled and may still arrive; the UI states this boundary explicitly.
+
 ## Pilot operating procedure
 
 Because there is no reassignment, release, or shared "who's on call" UI yet,
@@ -517,3 +547,15 @@ outbox rows. Final typecheck, all 1,283 normal tests, Worker dry-run, and
 this task changes no AI behavior. This was not a production migration or a
 Supabase migration-history entry. No claim is made that any person has been
 notified, assigned to, or has responded to any item.
+
+**Task 056 — disposable validation passed; not staging/production.** The implementer
+(Claude Sonnet) wrote `supabase/migrations/20260907000200_clinic_alert_preferences.sql`
+and its rollback fixture `supabase/tests/056_clinic_alert_preferences.sql` but,
+per a binding instruction, did not run either against any database. Codex
+later applied the reviewed migration only by direct query on disposable
+`vetai-test`; the rollback fixture and independent catalog/grant/zero-residue
+query passed. No migration-history record was created. The `/staff`
+alert-preferences section above and the underlying client code passed local
+typecheck and the full test suite. No
+claim is made that any e-mail was sent, that the mandatory Claude Opus review
+ran, or that staging/production were touched.

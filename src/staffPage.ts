@@ -145,6 +145,20 @@ export const STAFF_HTML = `<!doctype html>
   <ul id="slot-list"></ul>
 </section>
 
+<section id="alert-prefs-section" aria-labelledby="alert-prefs-heading" hidden>
+  <h2 id="alert-prefs-heading">E-posta uyarı tercihleri</h2>
+  <p id="alert-prefs-status-region" role="status" aria-live="polite"></p>
+  <p id="alert-prefs-error-region" role="alert" aria-live="assertive"></p>
+  <p>Klinik geneli anahtarı yalnızca platform yöneticisi açabilir. O anahtar kapalıyken, kendi tercihiniz açık olsa bile size e-posta gönderilmez. Kapatmadan önce gönderimi başlamış bir e-posta geri çağrılamaz ve yine de ulaşabilir.</p>
+  <table>
+    <caption>Klinik uyarıları</caption>
+    <thead>
+      <tr><th>Klinik</th><th>Klinik geneli anahtar</th><th>Benim tercihim</th><th>Etkin</th></tr>
+    </thead>
+    <tbody id="alert-prefs-body"></tbody>
+  </table>
+</section>
+
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
   <h2 id="detail-heading">Detay</h2>
   <p id="workitem-status-region"></p>
@@ -219,6 +233,10 @@ const closureList = document.getElementById("closure-list");
 const generateForm = document.getElementById("generate-form");
 const generateDateInput = document.getElementById("generate-date-input");
 const slotList = document.getElementById("slot-list");
+const alertPrefsSection = document.getElementById("alert-prefs-section");
+const alertPrefsStatusRegion = document.getElementById("alert-prefs-status-region");
+const alertPrefsErrorRegion = document.getElementById("alert-prefs-error-region");
+const alertPrefsBody = document.getElementById("alert-prefs-body");
 
 const KIND_LABELS = { human_handoff: "\\u0130nsan devri", delivery_failure: "Teslimat hatas\\u0131" };
 const REASON_LABELS = {
@@ -252,6 +270,7 @@ const REPLY_RESULT_MESSAGES = {
   inactive: "Klinik \\u015fu anda aktif de\\u011fil.",
   window_closed: "24 saatlik m\\u00fc\\u015fteri yan\\u0131t penceresi kapand\\u0131.",
 };
+const ALERT_PREF_RESULTS = ["forbidden", "already_disabled", "email_unconfirmed", "already_enabled", "enabled", "disabled"];
 
 let config = null;
 let currentUserId = null;
@@ -266,6 +285,7 @@ let routeSubmitInFlight = false;
 let clinics = [];
 let selectedClinicId = null;
 let scheduleMutationInFlight = false;
+let alertPrefsMutationInFlight = false;
 let composerEligible = false;
 let currentReplyRequestId = null;
 let lastReplyRequestContent = null;
@@ -305,6 +325,7 @@ function showLoginView() {
   detailSection.hidden = true;
   automationSection.hidden = true;
   scheduleSection.hidden = true;
+  alertPrefsSection.hidden = true;
 }
 
 function showQueueView() {
@@ -313,6 +334,7 @@ function showQueueView() {
   detailSection.hidden = true;
   automationSection.hidden = false;
   scheduleSection.hidden = false;
+  alertPrefsSection.hidden = false;
 }
 
 function showDetailView() {
@@ -321,6 +343,7 @@ function showDetailView() {
   detailSection.hidden = false;
   automationSection.hidden = true;
   scheduleSection.hidden = true;
+  alertPrefsSection.hidden = true;
 }
 
 function stopPolling() {
@@ -359,6 +382,9 @@ function clearSession() {
   scheduleReadonlyNotice.hidden = true;
   scheduleStatusRegion.textContent = "";
   scheduleErrorRegion.textContent = "";
+  alertPrefsBody.textContent = "";
+  alertPrefsStatusRegion.textContent = "";
+  alertPrefsErrorRegion.textContent = "";
   composerEligible = false;
   replyComposer.hidden = true;
   replyStatusRegion.textContent = "";
@@ -1686,6 +1712,149 @@ async function loadClinicSchedule() {
   }
 }
 
+async function fetchMyClinicAlertPreferences() {
+  const res = await authedFetch("/rest/v1/rpc/get_my_clinic_alert_preferences", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    throw new Error("alert preferences fetch failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length > 50 ||
+    !rows.every(
+      (row) =>
+        isExactRecord(row, [
+          "clinic_id",
+          "clinic_name",
+          "clinic_gate_enabled",
+          "my_preference_enabled",
+          "effective_enabled",
+        ]) &&
+        typeof row.clinic_id === "string" &&
+        UUID_PATTERN.test(row.clinic_id) &&
+        typeof row.clinic_name === "string" &&
+        row.clinic_name.length >= 1 &&
+        row.clinic_name.length <= 200 &&
+        typeof row.clinic_gate_enabled === "boolean" &&
+        typeof row.my_preference_enabled === "boolean" &&
+        typeof row.effective_enabled === "boolean" &&
+        row.effective_enabled === (row.clinic_gate_enabled && row.my_preference_enabled)
+    )
+  ) {
+    throw new Error("malformed alert preferences response");
+  }
+  const seenClinicIds = new Set();
+  for (const row of rows) {
+    if (seenClinicIds.has(row.clinic_id)) {
+      throw new Error("duplicate alert preference clinic");
+    }
+    seenClinicIds.add(row.clinic_id);
+  }
+  return rows;
+}
+
+async function callAlertPreferenceRpc(clinicId, enabled) {
+  const res = await authedFetch("/rest/v1/rpc/set_my_clinic_alert_preference", {
+    method: "POST",
+    headers: { "content-type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ p_clinic_id: clinicId, p_enabled: enabled }),
+  });
+  if (!res.ok) {
+    throw new Error("alert preference rpc failed");
+  }
+  const rows = await res.json();
+  if (
+    !Array.isArray(rows) ||
+    rows.length !== 1 ||
+    !isExactRecord(rows[0], ["result"]) ||
+    typeof rows[0].result !== "string" ||
+    ALERT_PREF_RESULTS.indexOf(rows[0].result) === -1
+  ) {
+    throw new Error("malformed alert preference rpc response");
+  }
+  return rows[0].result;
+}
+
+function renderAlertPreferences(rows) {
+  alertPrefsBody.textContent = "";
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+
+    const nameTd = document.createElement("td");
+    nameTd.textContent = row.clinic_name;
+    tr.appendChild(nameTd);
+
+    const gateTd = document.createElement("td");
+    gateTd.textContent = row.clinic_gate_enabled ? "A\\u00e7\\u0131k" : "Kapal\\u0131";
+    tr.appendChild(gateTd);
+
+    const prefTd = document.createElement("td");
+    const prefInput = document.createElement("input");
+    prefInput.type = "checkbox";
+    prefInput.checked = row.my_preference_enabled;
+    prefInput.disabled = alertPrefsMutationInFlight;
+    prefInput.setAttribute("aria-label", row.clinic_name + " e-posta uyarı tercihim");
+    prefInput.addEventListener("change", () => {
+      submitAlertPreference(row.clinic_id, prefInput.checked, prefInput);
+    });
+    prefTd.appendChild(prefInput);
+    tr.appendChild(prefTd);
+
+    const effectiveTd = document.createElement("td");
+    effectiveTd.textContent = row.effective_enabled ? "A\\u00e7\\u0131k" : "Kapal\\u0131";
+    tr.appendChild(effectiveTd);
+
+    alertPrefsBody.appendChild(tr);
+  }
+}
+
+async function loadAlertPreferences() {
+  alertPrefsErrorRegion.textContent = "";
+  try {
+    const rows = await fetchMyClinicAlertPreferences();
+    renderAlertPreferences(rows);
+  } catch {
+    alertPrefsBody.textContent = "";
+    alertPrefsErrorRegion.textContent = "Uyar\\u0131 tercihleri y\\u00fcklenemedi.";
+  }
+}
+
+async function submitAlertPreference(clinicId, enabled, checkbox) {
+  if (alertPrefsMutationInFlight) {
+    checkbox.checked = !enabled;
+    return;
+  }
+  alertPrefsErrorRegion.textContent = "";
+  alertPrefsStatusRegion.textContent = "";
+  alertPrefsMutationInFlight = true;
+  checkbox.disabled = true;
+  try {
+    const result = await callAlertPreferenceRpc(clinicId, enabled);
+    if (result === "forbidden") {
+      alertPrefsErrorRegion.textContent = "Bu klinik i\\u00e7in yetkiniz yok.";
+    } else if (result === "email_unconfirmed") {
+      alertPrefsErrorRegion.textContent = "E-posta adresiniz onayl\\u0131 de\\u011fil; abonelik a\\u00e7\\u0131lamad\\u0131.";
+    } else if (result === "already_enabled") {
+      alertPrefsStatusRegion.textContent = "Zaten a\\u00e7\\u0131kt\\u0131; de\\u011fi\\u015fiklik yap\\u0131lmad\\u0131.";
+    } else if (result === "already_disabled") {
+      alertPrefsStatusRegion.textContent = "Zaten kapal\\u0131yd\\u0131; de\\u011fi\\u015fiklik yap\\u0131lmad\\u0131.";
+    } else if (result === "enabled") {
+      alertPrefsStatusRegion.textContent = "Uyar\\u0131 aboneli\\u011finiz a\\u00e7\\u0131ld\\u0131.";
+    } else {
+      alertPrefsStatusRegion.textContent = "Uyar\\u0131 aboneli\\u011finiz kapat\\u0131ld\\u0131.";
+    }
+  } catch {
+    alertPrefsErrorRegion.textContent = "Uyar\\u0131 tercihi g\\u00fcncellenirken bir hata olu\\u015ftu.";
+  } finally {
+    alertPrefsMutationInFlight = false;
+    await loadAlertPreferences();
+  }
+}
+
 accountSelect.addEventListener("change", () => {
   selectedAccountId = accountSelect.value || null;
   automationErrorRegion.textContent = "";
@@ -1760,6 +1929,7 @@ loginForm.addEventListener("submit", async (event) => {
     await refreshQueue();
     await loadAutomationAccounts();
     await loadClinicSchedule();
+    await loadAlertPreferences();
     startPolling();
   } catch {
     clearSession();
@@ -1966,6 +2136,7 @@ async function init() {
       await refreshQueue();
       await loadAutomationAccounts();
       await loadClinicSchedule();
+      await loadAlertPreferences();
       startPolling();
     } catch {
       clearSession();
