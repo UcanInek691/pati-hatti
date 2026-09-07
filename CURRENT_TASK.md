@@ -1,10 +1,11 @@
 # Current task — 054 Verified webhook telemetry and staging alert activation
 
 Status: `IN_REVIEW` — Phase A repository implementation, Codex verification
-and mandatory Claude Opus read-only review are complete. Phase B live staging
-activation still requires an exact mutation/cost plan and separate owner
-approval. Worker secret installation, database migration, deploy, email send
-and alert enablement must not be inferred from this status.
+and mandatory Claude Opus read-only review are complete. The separately
+approved, flag-off Phase B staging installation package is also complete:
+managed migration, monitoring secret, Worker deploy and regression smoke all
+passed. Alert enablement, recipients, email delivery and the remaining live
+activation evidence must not be inferred from this status.
 
 Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). Task 053
 delivered and tested the alert-delivery foundation, but alerting is still off
@@ -144,7 +145,7 @@ return to Codex if repository evidence shows one is required.
    staging activation and production activation. Do not mark any Task 053
    nine-row activation item complete during Phase A.
 
-## Phase B — live staging activation (not yet authorized)
+## Phase B — live staging activation (partially authorized and executed)
 
 Codex may begin Phase B only after explicit owner approval for the exact
 account mutations and any cost. Before setting the feature flag to true:
@@ -212,7 +213,9 @@ deploy, run a database fixture, inspect live secrets or mutate an account.
 - Owner-approved Cloudflare evidence on 2026-09-06 confirmed the API token is
   current-account-only, expires after 90 days, and carries only Workers
   Observability Write + Queues Read. Codex never received the token value.
-  The token is not a Worker secret.
+  It was not a Worker secret during Phase A; the owner installed it directly
+  as the staging-only `CLOUDFLARE_ALERTS_MONITORING_TOKEN` during the approved
+  flag-off Phase B installation on 2026-09-07. Codex never read the value.
 - A harmless unsigned synthetic webhook POST returned 401 before body parsing,
   Supabase, Queue, Meta or OpenAI work. Two sanitized read-only aggregate calls
   established the exact response and status-group shapes recorded in the
@@ -311,8 +314,49 @@ notes were retained: the first live non-empty aggregate must re-confirm
 `interval`, `sampleInterval` and empty-series-data shape, and overlapping
 windows can inflate `occurrence_count`, which is therefore not an exact event
 count. The operational spec and staging runbook now state both limits. Phase A
-is complete; Phase B remains unexecuted and unauthorized pending the plan and
-owner approval required above.
+was complete; at the time of this closure, Phase B remained unexecuted and
+unauthorized pending the plan and owner approval required above.
+
+### Task 054 Phase B partial staging installation — 2026-09-07
+
+The owner separately approved the smallest reversible package: apply the
+already reviewed Task 053 migration to staging through managed history,
+install the existing account-scoped Cloudflare monitoring token as a staging
+Worker secret, deploy with operational alerts still disabled, and run
+non-mutating regression smoke checks. This approval did not include alert
+enablement, recipients, Resend, email delivery, production or a customer
+message.
+
+- `supabase db push --linked --dry-run` identified only
+  `20260905000100_operational_alerting.sql`; the real linked push then applied
+  that one migration successfully. The post-push migration list aligned local
+  and remote history through `20260905000100`.
+- Read-only staging catalog/data checks found all 11 expected RPCs with the
+  expected volatility, service-role-only execution, no anon/authenticated
+  execution, RLS enabled on all five alert tables, zero policies, zero browser
+  grants, zero alert/recipient/audit rows and an initially stale heartbeat.
+- The owner copied the existing `cfat...` value directly from the password
+  manager into a temporary ignored local helper. Wrangler reported successful
+  creation of `CLOUDFLARE_ALERTS_MONITORING_TOKEN`; a subsequent secret list
+  confirmed only its name/type, never its value. The helper was removed and
+  the clipboard cleared.
+- `wrangler.staging.toml` was checked immediately before deploy:
+  `name = "vetai-staging"` and `OPERATIONAL_ALERTS_ENABLED = "false"`.
+  Staging Worker version `d09a880d-c786-4cda-93d5-48ffc2987a9c` deployed
+  successfully with the existing three Queue bindings/consumers.
+- External regression smoke passed: `/health` 200, `/ready` 200, `/staff` 200,
+  `/admin` 200, and an unsigned `POST /webhooks/whatsapp` was rejected with
+  401 before any trusted webhook path. No signed WhatsApp event, Queue
+  mutation, Meta/OpenAI request or email was generated.
+
+Alerting remains disabled. The checked-in staging account-id and email values
+are still deliberate placeholders; there are no configured alert recipients.
+Before the flag can become true, Phase B must still complete plan/retention and
+non-empty aggregate-shape evidence, real staging account-id binding, Resend
+domain/key/sender setup, audited platform/clinic recipients, an independent
+external `/ready` monitor, the exception-alarm decision, all nine activation
+rows, a live WhatsApp smoke and the documented KVKK/veterinary/owner gates.
+Production remains unchanged.
 
 ---
 

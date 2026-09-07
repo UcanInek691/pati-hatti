@@ -1188,13 +1188,26 @@ occurred.
   observation. Frozen install, typecheck, 2,069 local tests (two pre-existing
   opt-in skips), both Worker dry-runs, whitespace validation and Opus closure
   passed.
-- Task 054 live activation remains blocked and production is unchanged. No
-  monitoring token was installed, Worker deployed, flag enabled or email sent.
-  Uncaught Worker exceptions are not assumed to carry a response-status field;
-  Phase B requires a controlled exception witness or separate Worker-exception
-  alarm. It must also verify Observability ingestion/plan quota, a non-empty
-  aggregate's interval/series shape and the fact that overlapping windows make
-  `occurrence_count` an observation count rather than an exact event count.
+- Task 054's separately approved flag-off staging installation completed on
+  2026-09-07. Managed staging migration history is aligned through
+  `20260905000100`; read-only checks found the 11 expected service-role RPCs,
+  five RLS-enabled/no-policy alert tables, no browser grants or alert data, and
+  an initially stale heartbeat. The existing account-scoped monitoring token
+  is installed as the staging-only Worker secret without Codex seeing its
+  value. Worker version `d09a880d-c786-4cda-93d5-48ffc2987a9c` deployed with
+  `OPERATIONAL_ALERTS_ENABLED="false"`; `/health`, `/ready`, `/staff` and
+  `/admin` returned 200 and an unsigned webhook POST returned 401. No email,
+  signed WhatsApp event, Queue mutation, Meta/OpenAI call or production change
+  occurred.
+- Task 054 alert activation remains blocked. Staging still has placeholder
+  Cloudflare account-id/email settings and no recipients. Phase B must verify
+  plan/retention, ingestion and a non-empty aggregate's interval/series shape;
+  configure the real staging account id, Resend domain/key/sender and audited
+  recipients; add an independent external `/ready` monitor; resolve the
+  uncaught-Worker-exception alarm boundary; execute all nine activation rows
+  and a live WhatsApp smoke; and pass the documented KVKK, veterinary and owner
+  gates. Overlapping windows mean `occurrence_count` is an observation count,
+  not an exact event count. Production remains unchanged.
 
 ## Context maintenance
 
