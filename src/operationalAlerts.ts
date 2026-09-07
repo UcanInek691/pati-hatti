@@ -414,8 +414,17 @@ function validTelemetryStatistics(value: unknown): boolean {
   );
 }
 
-// Exact outer/result/calculation shapes and sampling markers were confirmed
-// with sanitized staging-account aggregate responses on 2026-09-06. Only the
+function validTelemetryDatasetEcho(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.parameters)) return false;
+  const parameters = value.parameters;
+  if (!hasExactKeys(parameters, ["calculations", "datasets", "filterCombination", "filters", "groupBys", "limit"])) {
+    return false;
+  }
+  return Array.isArray(parameters.datasets) && parameters.datasets.length === 0;
+}
+
+// Exact outer/result/calculation shapes and sampling markers were reconfirmed
+// with the selected sanitized staging-account query on 2026-09-07. Only the
 // grouped status/count data is retained. Any partial run, sampling marker,
 // duplicate status group, extra field, or arithmetic inconsistency fails
 // closed instead of becoming a healthy zero.
@@ -440,7 +449,7 @@ function parseWebhookTelemetry(value: unknown, accountId: string): WebhookTeleme
   const run = result.run;
   if (
     typeof run.id !== "string" ||
-    !isRecord(run.query) ||
+    !validTelemetryDatasetEcho(run.query) ||
     run.accountId !== accountId ||
     !isRecord(run.timeframe) ||
     typeof run.userId !== "string" ||
@@ -516,7 +525,11 @@ async function checkWebhookTelemetry(env: Env): Promise<StageResult> {
     limit: 500,
     parameters: {
       calculations: [{ operator: "count", alias: "request_count" }],
-      datasets: ["workers_trace_events"],
+      // Query all datasets, per the query endpoint's documented empty-list
+      // semantics. The explicit
+      // `workers_trace_events` value returns a valid but empty aggregate for
+      // this account, which would turn real webhook failures into a false zero.
+      datasets: [],
       filterCombination: "and",
       filters: [
         { key: "$workers.scriptName", operation: "eq", type: "string", value: scriptName },

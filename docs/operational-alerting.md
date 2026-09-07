@@ -652,6 +652,28 @@ nesnelerini normalize ettiği için yankı, gönderilen JSON ile byte-byte aynı
 değildi. Bu sonuç, toplam olay sayısı veya uncaught-exception biçimi için
 kanıt sayılmadı ve ürüne tahmine dayalı ikinci bir sorgu eklenmedi.
 
+Faz B'deki ilk Worker-secret kontrolü bu boş sonucun gerçek sıfır olmadığını
+ortaya çıkardı. Cloudflare Query Builder aynı saklanmış webhook kayıtlarını
+gösterirken, sorguya açıkça `workers_trace_events` veri kümesi verilmesi
+başarılı fakat boş bir aggregate döndürüyordu. Cloudflare'ın **Run a query**
+uç noktası için belgelenen “tüm kullanılabilir veri kümelerini sorgula”
+anlamındaki boş `datasets` listesiyle aynı salt-okunur sorgu, son 15
+dakikadaki iki zararsız imzasız webhook tanığını tek `401` grubunda
+`value = count = 2`, `interval = sampleInterval = 1` olarak döndürdü. Böylece
+eski açık veri-kümesi seçiminin gerçek hataları sağlıklı sıfır gibi gösterecek
+fail-open bir yol olduğu doğrulandı. Depo sorgusu tüm kullanılabilir veri
+kümelerine çevrildi ve istek-şekli testi bu boş listeyi sabitledi. Ayrı
+sanitize kontrol, `run.query.parameters` yankısının tam olarak
+`calculations/datasets/filterCombination/filters/groupBys/limit` alanlarını ve
+boş `datasets` listesini taşıdığını doğruladı. Ayrıştırıcı artık bu yankı
+eksikse, doluysa veya fazladan bir parametre içeriyorsa `unavailable` döner;
+bu kontrol parametre-yankısı sözleşme kaymasını veya Cloudflare'ın ileride
+somut veri kümelerine çözümleme yapmasını fail-closed yakalar. Sunucunun aynı
+`[]` yankısını korurken boş listenin anlamını değiştirmesini bu yankı tek
+başına tespit edemez; sahte-sıfır sınıfının kalan kapısı aşağıda açıklanan
+bağımsız ingestion-canlılık kontrolüdür. Bu düzeltme henüz staging'e deploy
+edilmedi; alarm bayrağı hâlâ kapalıdır.
+
 Depo uygulaması iki dakikalık ingest gecikmesinden sonraki üç dakikalık
 aggregate pencereyi kullanır. Dakikalık Cron pencereleri bilerek üst üste
 biner; saatlik veritabanı dedup'ı tekrar e-postayı bastırırken küçük Cron
@@ -697,7 +719,7 @@ bağımsız periyodik bir kontrolle doğrulamadan tamamlanamaz.
 - [Cloudflare Notifications — mevcut bildirim türleri](https://developers.cloudflare.com/notifications/notification-available/) — kontrol 2026-09-05
 - [Cloudflare Workers Observability](https://developers.cloudflare.com/workers/observability/) (son güncelleme 2026-08-03) — kontrol 2026-09-05
 - [Cloudflare Workers Observability — Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/) — kontrol 2026-09-05; §2'de kullanılan `$workers.event.response.status` alanının kaynağı
-- [Cloudflare Workers Observability — Run a query API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) — kontrol 2026-09-06; `POST /accounts/{account_id}/workers/observability/telemetry/query`, Unix-ms zaman penceresi, aggregate/group-by sözleşmesi ve `Workers Observability Write` izni
+- [Cloudflare Workers Observability — Run a query API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) — kontrol 2026-09-06, yeniden kontrol 2026-09-07; `POST /accounts/{account_id}/workers/observability/telemetry/query`, Unix-ms pencere, aggregate/group-by, `Workers Observability Write` ve boş `datasets` listesinin tüm kullanılabilir veri kümelerini sorguladığı sözleşmesi
 - [Cloudflare Standalone Health Checks](https://developers.cloudflare.com/health-checks/) (son güncelleme 2026-08-14) — kontrol 2026-09-05
 - [Resend API referansı — e-posta gönderme](https://resend.com/docs/api-reference/emails/send-email) (illüstrasyon amaçlı, sağlayıcı seçimi değildir) — kontrol 2026-09-05
 - İç: [`docs/staff-workflow.md`](staff-workflow.md), [`docs/outbound-delivery.md`](outbound-delivery.md), [`docs/staff-work-items.md`](staff-work-items.md), [`docs/production-readiness.md`](production-readiness.md) §5–6, [`docs/olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md), [`docs/olaylar/2026-09-05-delivery-latency.md`](olaylar/2026-09-05-delivery-latency.md)

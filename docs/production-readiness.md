@@ -378,9 +378,19 @@ Task 054 Faz A (2026-09-06), yanıt durum alanı bulunan webhook 401/5xx
 ölçümünün gerçek staging hesabında sanitize edilmiş aggregate biçimini
 doğruladı ve fail-closed sorgu yolunu depoda uyguladı. Yakalanmamış Worker
 exception'ının aynı durum alanını taşıdığı doğrulanmadı; o dal ayrı Faz B
-kanıtı veya ayrı Worker-exception alarmı gerektirir. Worker secret kurulumu,
-staging deploy, Cron heartbeat, e-posta teslimi veya aşağıdaki aktivasyon
-kutularından herhangi biri için henüz kanıt yoktur. Hepsi işaretsiz kalır.
+kanıtı veya ayrı Worker-exception alarmı gerektirir. Sonraki bayrak-kapalı Faz
+B paketinde monitoring token secret'ı kuruldu ve staging Worker deploy edildi;
+ancak Cron heartbeat, e-posta teslimi veya aşağıdaki aktivasyon kutularından
+herhangi biri için henüz kanıt yoktur. Hepsi işaretsiz kalır.
+
+2026-09-07 Faz B ön kontrolü, açık `workers_trace_events` veri-kümesi
+seçiminin gerçek kayıtlar varken geçerli bir boş aggregate ürettiğini buldu.
+Run-a-query sözleşmesindeki tüm kullanılabilir veri kümelerini seçen boş
+listeyle iki güvenli `401` tanığı doğru sayıldı; yanıttaki query yankısının da
+bu boş listeyi koruduğu doğrulandı ve ayrıştırıcı eksik/dolu/değişmiş yankıyı
+reddedecek biçimde kapatıldı. Depo düzeltildi fakat henüz yeniden incelenip
+staging'e deploy edilmedi.
+Dolayısıyla alarm etkinleştirme kapısı ve aşağıdaki kutular açık kalır.
 
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503

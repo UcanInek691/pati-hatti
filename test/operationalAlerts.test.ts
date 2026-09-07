@@ -122,7 +122,16 @@ function telemetryResponse(statusCounts: ReadonlyArray<readonly [number, number]
     result: {
       run: {
         id: "telemetry-run-test-id",
-        query: {},
+        query: {
+          parameters: {
+            calculations: [],
+            datasets: [],
+            filterCombination: "and",
+            filters: [],
+            groupBys: [],
+            limit: 500,
+          },
+        },
         accountId: "0123456789abcdef0123456789abcdef",
         timeframe: {},
         userId: "telemetry-user-test-id",
@@ -701,7 +710,7 @@ describe("runOperationalAlertMonitor", () => {
       expect(query).toMatchObject({ view: "calculations", chart: false, chartType: "aggregate", dry: true, ignoreSeries: true });
       expect(query.parameters).toEqual({
         calculations: [{ operator: "count", alias: "request_count" }],
-        datasets: ["workers_trace_events"],
+        datasets: [],
         filterCombination: "and",
         filters: [
           { key: "$workers.scriptName", operation: "eq", type: "string", value: "vetai-staging" },
@@ -750,6 +759,9 @@ describe("runOperationalAlertMonitor", () => {
       ["top-level extra field", { ...(telemetryResponse() as Record<string, unknown>), extra: true }],
       ["missing calculations field", (() => { const v = structuredClone(telemetryResponse()) as any; delete v.result.calculations; return v; })()],
       ["incomplete run", (() => { const v = structuredClone(telemetryResponse()) as any; v.result.run.status = "RUNNING"; return v; })()],
+      ["missing echoed datasets", (() => { const v = structuredClone(telemetryResponse()) as any; delete v.result.run.query.parameters.datasets; return v; })()],
+      ["non-empty echoed datasets", (() => { const v = structuredClone(telemetryResponse()) as any; v.result.run.query.parameters.datasets = ["workers_trace_events"]; return v; })()],
+      ["extra echoed query parameter", (() => { const v = structuredClone(telemetryResponse()) as any; v.result.run.query.parameters.raw = true; return v; })()],
       ["sampled run", (() => { const v = structuredClone(telemetryResponse([[401, 1]])) as any; v.result.statistics.abr_level = 2; return v; })()],
       ["sampled aggregate", (() => { const v = structuredClone(telemetryResponse([[401, 1]])) as any; v.result.calculations[0].aggregates[0].sampleInterval = 2; return v; })()],
       ["duplicate status group", telemetryResponse([[401, 1], [401, 1]])],

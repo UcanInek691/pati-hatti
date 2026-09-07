@@ -78,7 +78,11 @@ stage really succeeds.
   `$workers.event.response.status`, with `groupKey = "401"`, `value = count =
   1`, `interval = sampleInterval = 1`. Empty matches produced an empty
   `aggregates` array. No raw body, header, identifier, address or token was
-  retained. This verifies response-status aggregation for Phase A; an
+  retained. This verifies response-status aggregation for Phase A, but the
+  surviving sanitized record does not identify which `datasets` selection
+  produced that witness; its request-shape detail is therefore not claimed as
+  evidence. The 2026-09-07 evidence below independently rechecks the selected
+  request and full response contract. An
   uncaught Worker runtime exception may omit the response-status field and
   remains a separately documented Phase B exception-alarm gate rather than
   being guessed into the 5xx count.
@@ -357,6 +361,54 @@ domain/key/sender setup, audited platform/clinic recipients, an independent
 external `/ready` monitor, the exception-alarm decision, all nine activation
 rows, a live WhatsApp smoke and the documented KVKK/veterinary/owner gates.
 Production remains unchanged.
+
+### Task 054 Phase B dataset correction — 2026-09-07
+
+The owner approved a read-only Queue/Observability proof after installing the
+monitoring secret and binding the verified staging account id. All three
+staging Queue names resolved to their expected ids; each reported zero backlog
+and an effective retention of 86,400 seconds. The Cloudflare Observability UI
+also showed the harmless unsigned webhook requests and their exact stored
+fields, but the repository's explicit `workers_trace_events` dataset returned
+a successful empty aggregate. Repeating the same sanitized read-only query
+with the run-a-query endpoint's documented all-available-datasets selection
+(`datasets: []`) returned one 401
+group containing the two harmless witnesses, with `value = count = 2` and
+`interval = sampleInterval = 1`. This proves the explicit dataset value was a
+fail-open false-zero path, not an absence of webhook events.
+
+A final sanitized query-echo check found that Cloudflare does not resolve the
+empty request to a concrete dataset name: `run.query.parameters.datasets`
+remains present as an empty array. Current official documentation for this
+exact query endpoint states that the empty array queries all available
+datasets. The parser now requires the echoed parameters to have exactly the
+observed six keys and requires `datasets` to remain an empty array. Missing,
+non-empty or extended parameter echoes fail closed; three discriminating tests
+pin those cases. No concrete dataset name is inferred. This echo guard detects
+response-contract drift, not a hypothetical server-side semantic change that
+still echoes `[]`; the independent ingestion-liveness activation gate remains
+required for that residual false-zero class.
+
+A direct read-only Cloudflare Workers Plans check on 2026-09-07 displayed
+**Free — Current plan**, resolving the earlier Task 036 Paid-plan inference in
+favor of the current Free-plan evidence. The already observed Queue retention
+of 86,400 seconds is consistent with that result. The old Task 036 working-tree
+record was corrected and its real account name/id removed; those values remain
+in pre-existing Git history, whose rewrite is destructive and requires a
+separate owner-approved remediation rather than Task 054 staging activation.
+
+Codex changed only the allowed telemetry implementation, discriminating
+request-shape test, operational/readiness/runbook documentation and this
+record so the query uses the verified all-available-datasets selection. The
+real account id was removed from `wrangler.staging.toml` under the repository's
+no-production-identifiers rule; it must be installed as a staging Worker
+secret before the replacement deploy. Alerting remains false; this
+correction passed frozen install, typecheck, the focused 98-test alert suite,
+the full 38-file suite (2,072 passed / 2 pre-existing skips), both Wrangler
+dry-runs and `git diff --check`. Mandatory Opus read-only review remains
+required before a replacement Worker deploy. No recipient, Resend sender/key,
+email, external readiness monitor, Cron activation, production change or
+customer message is authorized by this finding.
 
 ---
 
@@ -10195,15 +10247,16 @@ Options, in the order I would put them to Maya:
 3. **Leave it.** Legitimate only if a delay is wanted; nothing in the record
    suggests it is.
 
-**Plan verified 2026-08-26, before approval.** `wrangler whoami` reports the
-account `Mehmetsait7072@gmail.com's Account`
-(`1ac987ec7ff5add2ab333de15e8cff9f`), OAuth token, `queues (write)` in scope.
-`wrangler queues list` returns the provisioned intake queues and their DLQs.
-Cloudflare Queues cannot be provisioned on the Free plan at all, so this
-account is on **Workers Paid**. The "Free tier limits" framing in the draft was
-wrong and is withdrawn: neither option below is constrained by Free-plan
-limits, and the inline send adds no billable invocation, because it runs inside
-the queue-consumer invocation that already exists.
+**Historical preflight 2026-08-26.** `wrangler whoami` identified the intended
+account (real account name/id removed from the working tree) with an OAuth
+token carrying `queues (write)`; `wrangler queues list` returned the provisioned
+intake queues and their DLQs. The contemporaneous conclusion that Queues could
+not exist on Free and therefore the account must be Workers Paid was incorrect
+and is withdrawn. A later Task 036 correction recorded Queues availability on
+Workers Free, and a direct read-only Workers Plans check on 2026-09-07 showed
+**Free — Current plan**. The inline-send proposal still adds no separate Worker
+invocation because it runs inside the queue-consumer invocation already in
+progress.
 
 Two related facts found the same way, worth having on record:
 

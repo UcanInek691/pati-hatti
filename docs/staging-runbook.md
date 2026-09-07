@@ -1200,3 +1200,15 @@ dönen 5xx tanığında `interval`, `sampleInterval` ve `series[].data` biçimi
 yeniden okunur. Doğrulanmış şekilden saparsa heartbeat'in `unavailable` kalması
 beklenir ve aktivasyon durdurulur; ayrıştırıcı canlı veriye uyacak diye
 gevşetilmez.
+
+2026-09-07 Faz B ön kontrolünde bu kapı beklendiği gibi aktivasyonu durdurdu:
+Cloudflare arayüzünde saklanmış webhook kayıtları görünürken açık
+`workers_trace_events` veri-kümesi seçimi başarılı fakat boş aggregate
+döndürüyordu. Run-a-query sözleşmesinde tüm kullanılabilir veri kümelerini
+seçtiği belirtilen boş `datasets` listesi aynı salt-okunur sorguda iki imzasız
+webhook isteğini `401` grubunda doğru saydı ve
+`interval = sampleInterval = 1` biçimini yeniden doğruladı. Yanıtın
+`run.query.parameters.datasets` alanı da boş listeyi açıkça yankıladı; depo
+ayrıştırıcısı bu alanın varlığını ve boşluğunu artık fail-closed doğrular. Depo
+düzeltmesi inceleme ve deploy edilmeden alarm bayrağı açılmaz. Üç staging
+kuyruğunun bu kontrolde doğrulanan retention değeri 86.400 saniyedir (24 saat).
