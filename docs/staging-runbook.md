@@ -1232,14 +1232,14 @@ ile oluşturuldu. E-posta bildirimi primary responder'a açıktır.
 
 - [x] İlk dış kontrol `Up`; olay sayısı `0`, kullanılabilirlik `%100`.
 - [x] Better Stack `Send test alert` e-postası sahibine ulaştı.
-- [ ] Gerçek `/ready` failure/timeout olayı ve bildirim teslimi.
-- [ ] Endpoint düzeldikten sonra otomatik recovery bildirimi.
-- [ ] Güvenli rollback/pause ve yeniden etkinleştirme kanıtı.
+- [x] Gerçek `/ready` 503 olayı ve kesinti bildirimi.
+- [x] Endpoint düzeldikten sonra otomatik recovery bildirimi.
+- [x] Güvenli rollback ve yeniden `Up` kanıtı.
 
-İlk iki kutu yalnız bağımsız erişim ve sağlayıcı e-posta kanalını kanıtlar;
-VetAI alarm e-postası, Cron heartbeat'i veya §6 satır 2'nin kalan hücreleri
-değildir. `OPERATIONAL_ALERTS_ENABLED` bu sırada `false` kaldı; production ve
-müşteri trafiği değiştirilmedi.
+Bu kutular yalnız bağımsız erişim, gerçek readiness failure/recovery ve
+sağlayıcı e-posta kanalını kanıtlar; VetAI alarm sinyallerinin geri kalanını
+kanıtlamaz. Test sonunda `OPERATIONAL_ALERTS_ENABLED` yeniden `false` yapıldı;
+production ve müşteri trafiği değiştirilmedi.
 
 ### 26.2 Sınırlı Resend ve Worker-Cron smoke'u — 2026-09-07
 
@@ -1260,3 +1260,15 @@ Bu kayıt yalnız §6 satır 4'ün mevcut staging tanığıyla platform + klinik
 teslimini ve geri kapatma yolunu kanıtlar. Yanlış-kiracı, tekrar/retry,
 recovery, gerçek readiness failure, diğer sinyal satırları, özel alan adı ve
 production aktivasyonu hâlâ `NOT RUN`dır.
+
+### 26.3 Kontrollü dış readiness failure/recovery — 2026-09-07
+
+Sahip onayıyla yalnız `/ready`yi fail-closed düşüren geçici `.invalid`
+personel URL'i ve `OPERATIONAL_ALERTS_ENABLED="true"` deploy edildi. `/ready`
+503, `/health` ve `/staff` 200 kaldı; eksik yapılandırma kapısı nedeniyle Cron
+teslimat claim etmedi. Better Stack gerçek `Down` / devam eden olay açtı.
+
+Geçerli URL ve `OPERATIONAL_ALERTS_ENABLED="false"` hemen geri deploy edildi.
+Üç uç 200'e döndü; Better Stack `Validating recovery` sonrasında `Up` oldu ve
+olayı kapattı. Sahip hem kesinti hem recovery e-postasını doğruladı. Bu test
+satır 2'yi kapatır; diğer sinyal satırlarının kanıtı değildir.

@@ -406,7 +406,7 @@ edilir).
 | # | Durum | Yapılandırıldı | Sentetik tetikleme | Onaylı hedefe teslim | İnsan onayı | Kurtarma | Rollback |
 |---|---|---|---|---|---|---|---|
 | 1 | Webhook 503, `outcome=ok` ile birlikte (Task 052 tarzı) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
-| 2 | `/ready` başarısız/timeout | PASS — Better Stack, 3 dk | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| 2 | `/ready` başarısız/timeout | PASS — Better Stack, 3 dk | PASS — kontrollü geçersiz staging config, yalnız `/ready` 503 | PASS — kesinti + recovery e-postası | PASS — sahip ikisini de gördü | PASS — monitör yeniden `Up` | PASS — geçerli config + bayrak `false`, üç uç 200 |
 | 3 | Queue metriği ulaşılamıyor/bayat (kimlik doğrulama veya kaynak arızası) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 4 | Tek, izole başarısız iş örneği (outbox `failed` veya tek `staff_work_items` kaydı) | PASS — 1 platform + 1 test-kliniği alıcısı | NOT RUN — mevcut staging tanığı kullanıldı | PASS — ilgili 2 teslimat sağlayıcıca kabul edildi | PASS — sahip 4 e-postalık toplam kontrollü grubu gördü | NOT RUN | PASS — bayrak tekrar `false`, `/ready` 200 |
 | 5 | Tarayıcı bildirim izni reddedildi / sekme kapalı (mevcut pilot, dürüstlük yeniden doğrulaması) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
@@ -748,6 +748,21 @@ Hemen ardından `OPERATIONAL_ALERTS_ENABLED="false"` yeniden deploy edildi ve
 alıcıları değişmedi. Bu smoke yalnız §6 satır 4'te işaretlenen hücreleri
 kapatır; yanlış-kiracı, dedup/retry, recovery, gerçek readiness failure ve
 diğer sinyal satırları hâlâ `NOT RUN`dır.
+
+### Gerçek dış readiness failure/recovery tanığı — 2026-09-07
+
+Sahibin ayrı onayıyla staging'de alarm bayrağı geçici olarak `true`,
+`STAFF_LOGIN_URL` ise bilerek `.invalid` bir değerle deploy edildi. Bu,
+`isAlertingConfigured` kapısını fail-closed kapattı: Cron hiçbir teslimatı
+claim etmedi veya deneme tüketmedi; yalnız `/ready` 503 dönerken `/health` ve
+`/staff` 200 kaldı. Better Stack üç dakikalık dış kontrolünde gerçek `Down` /
+`Ongoing incident` açtı.
+
+Geçerli personel URL'i ve `OPERATIONAL_ALERTS_ENABLED="false"` hemen yeniden
+deploy edildi. Üç uç da 200 oldu; Better Stack önce `Validating recovery`,
+sonra `Up` durumuna döndü ve devam eden olayı kapattı. Sahip hem kesinti hem
+recovery e-postasının ulaştığını doğruladı. Bu kanıt §6 satır 2'nin tamamını
+kapatır; başka bir alarm satırını veya production hazırlığını kanıtlamaz.
 
 ## Referanslar
 

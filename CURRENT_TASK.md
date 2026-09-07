@@ -507,7 +507,30 @@ custom-domain DNS and real clinic recipients remain unchanged. This closes
 only the corresponding configured/delivery/human-confirmation/flag-rollback
 cells for the existing failure witness; cross-tenant rejection, duplicate/
 retry/recovery, real readiness failure and the other activation-matrix rows
-remain `NOT RUN`. The top-level task status therefore remains `IN_REVIEW`.
+remained `NOT RUN` at that point.
+
+### Task 054 Phase B external readiness failure/recovery — 2026-09-07
+
+The owner separately approved a controlled failure of the public staging
+`/ready` endpoint. Codex deployed version
+`ab39b468-70e9-472d-81c8-b8ccdbe6268c` with alerting temporarily enabled but
+`STAFF_LOGIN_URL` deliberately set to a reserved `.invalid` value. The shared
+configuration gate therefore prevented the Cron monitor from claiming any
+delivery or consuming any send attempt. `/ready` returned 503 while `/health`
+and `/staff` remained 200.
+
+Better Stack's independent three-minute check reported `Down`, opened an
+ongoing incident and sent the owner a real failure e-mail. Codex immediately
+restored the valid staging URL and `OPERATIONAL_ALERTS_ENABLED="false"` as
+version `492cc8b2-e914-49d4-af72-df0220652e25`; `/ready`, `/health` and
+`/staff` all returned 200. Better Stack moved through `Validating recovery`
+to `Up`, closed the incident and sent the owner the recovery e-mail. The owner
+confirmed both messages arrived.
+
+This closes every Task 053 activation-matrix cell for row 2 only. The tracked
+staging configuration is back to the committed flag-off state, production is
+unchanged, and the remaining matrix rows and external approvals still keep
+the top-level task status `IN_REVIEW`.
 
 ---
 

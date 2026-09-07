@@ -415,6 +415,13 @@ yapıldı ve `/ready` 200 doğrulandı. Özel gönderim alan adı, gerçek klini
 alıcıları, diğer hata/retry/recovery/yanlış-kiracı tanıkları ve production
 hâlâ açık olduğundan aşağıdaki birleşik kutular işaretsiz kalır.
 
+Bağımsız readiness yolu ayrıca kontrollü olarak gerçek 503'e düşürüldü:
+`/health` ve `/staff` 200 kalırken Better Stack kesinti olayı açtı ve sahibine
+bildirim gönderdi. Geçerli config + kapalı bayrak geri yüklendiğinde üç uç 200
+oldu, monitör `Up` durumuna döndü ve recovery e-postası ulaştı. Bu yalnız
+readiness failure/recovery kolunu kapatır; aşağıdaki birleşik webhook/exception
+ve diğer alarm maddeleri tamamlanmadığı için kutular işaretsiz kalır.
+
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
       with invocation `outcome=ok`; exception/outcome counters alone missed
