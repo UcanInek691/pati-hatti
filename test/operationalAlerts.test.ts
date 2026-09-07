@@ -31,7 +31,7 @@ const fullEnv: Env = {
   RESEND_API_KEY: "resend-test-key",
   RESEND_FROM_ADDRESS: "alerts@vetai-alerts.test",
   STAFF_LOGIN_URL: "https://portal.vetai-portal.test/staff",
-  CLOUDFLARE_ACCOUNT_ID: "cf-account-test-id",
+  CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
   CLOUDFLARE_ALERTS_MONITORING_TOKEN: "cf-monitoring-test-token",
   DEPLOYMENT_NAME: "staging",
   INTAKE_QUEUE_NAME: "vetai-intake-staging",
@@ -109,7 +109,47 @@ type FetchOverrides = {
   reopenedCount?: number;
   platformSignalResult?: string;
   resendBody?: unknown;
+  telemetry?: unknown;
+  telemetryStatus?: number;
 };
+
+function telemetryResponse(statusCounts: ReadonlyArray<readonly [number, number]> = []): unknown {
+  const statistics = { elapsed: 0.01, rows_read: 100, bytes_read: 1_000, abr_level: 1 };
+  return {
+    success: true,
+    errors: [],
+    messages: [{ message: "Successful request" }],
+    result: {
+      run: {
+        id: "telemetry-run-test-id",
+        query: {},
+        accountId: "0123456789abcdef0123456789abcdef",
+        timeframe: {},
+        userId: "telemetry-user-test-id",
+        status: "COMPLETED",
+        granularity: 30_000,
+        dry: true,
+        statistics,
+      },
+      calculations: [
+        {
+          alias: "request_count",
+          calculation: "count",
+          aggregates: statusCounts.map(([status, count]) => ({
+            groups: [{ key: "$workers.event.response.status", value: status }],
+            groupKey: String(status),
+            value: count,
+            interval: 1,
+            sampleInterval: 1,
+            count,
+          })),
+          series: [],
+        },
+      ],
+      statistics,
+    },
+  };
+}
 
 function backlogSignalQueueIds(fetchMock: ReturnType<typeof vi.fn>): (string | null)[] {
   return (fetchMock.mock.calls as FetchCall[])
@@ -141,6 +181,9 @@ function buildFetchMock(overrides: FetchOverrides = {}) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = urlOf(input);
 
+    if (url.includes("/workers/observability/telemetry/query")) {
+      return jsonResponse(overrides.telemetry ?? telemetryResponse(), overrides.telemetryStatus ?? 200);
+    }
     if (url.includes("/queues/") && url.includes("/metrics")) {
       const queueId = url.split("/queues/")[1]!.split("/metrics")[0]!;
       const m = overrides.metrics?.[queueId];
@@ -190,6 +233,7 @@ function buildFetchMock(overrides: FetchOverrides = {}) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("recordOpenAiExtractionFailureSignal", () => {
@@ -329,7 +373,7 @@ describe("runOperationalAlertMonitor", () => {
     expect(claimIndex).toBeGreaterThan(repeatIndex);
   });
 
-  it("never records the heartbeat even when queue backlog, sync, repeat scheduling and the drain all succeed, because webhook telemetry is permanently unavailable (Task 053 Codex review item 1 / re-review item 9)", async () => {
+  it("records the heartbeat when queue backlog, verified telemetry, sync, repeat scheduling and the drain all succeed", async () => {
     const { runOperationalAlertMonitor } = await loadOperationalAlerts();
     const fetchMock = buildFetchMock({
       queues: QUEUE_LIST,
@@ -340,7 +384,7 @@ describe("runOperationalAlertMonitor", () => {
 
     await runOperationalAlertMonitor(fullEnv);
 
-    expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(true);
   });
 
   describe("queue backlog (docs/operational-alerting.md section 1 rows 3-5; Task 053 Codex review item 2)", () => {
@@ -623,44 +667,59 @@ describe("runOperationalAlertMonitor", () => {
     });
   });
 
-  describe("webhook telemetry (Task 053 Codex re-review item 9: response shape never verified against a live account, so this source is a permanent, zero-side-effect stub)", () => {
-    it("never calls the observability telemetry endpoint, fully configured or not", async () => {
+  describe("verified webhook telemetry (Task 054 Phase A)", () => {
+    function webhookSignalKinds(fetchMock: ReturnType<typeof vi.fn>): string[] {
+      return (fetchMock.mock.calls as FetchCall[])
+        .filter((c) => urlOf(c[0]).includes("/rpc/record_platform_signal"))
+        .map((c) => (bodyOf(c) as { p_signal_kind: string }).p_signal_kind)
+        .filter((kind) => kind === "webhook_401" || kind === "webhook_5xx");
+    }
+
+    it("queries only the staging Worker POST webhook aggregate over a bounded window without raw event fields", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime("2026-09-07T00:06:42.000Z");
+      const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
       const { runOperationalAlertMonitor } = await loadOperationalAlerts();
       const fetchMock = buildFetchMock({});
       vi.stubGlobal("fetch", fetchMock);
 
       await runOperationalAlertMonitor(fullEnv);
 
-      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/workers/observability/telemetry/query"))).toBe(false);
+      const call = (fetchMock.mock.calls as FetchCall[]).find((c) => urlOf(c[0]).includes("/workers/observability/telemetry/query"));
+      expect(call).toBeDefined();
+      expect(urlOf(call![0])).toBe(
+        "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/observability/telemetry/query",
+      );
+      expect(call![1]?.method).toBe("POST");
+      expect(call![1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+      const query = bodyOf(call!) as Record<string, any>;
+      expect(query.timeframe).toEqual({
+        from: Date.parse("2026-09-07T00:01:00.000Z"),
+        to: Date.parse("2026-09-07T00:04:00.000Z"),
+      });
+      expect(query).toMatchObject({ view: "calculations", chart: false, chartType: "aggregate", dry: true, ignoreSeries: true });
+      expect(query.parameters).toEqual({
+        calculations: [{ operator: "count", alias: "request_count" }],
+        datasets: ["workers_trace_events"],
+        filterCombination: "and",
+        filters: [
+          { key: "$workers.scriptName", operation: "eq", type: "string", value: "vetai-staging" },
+          { key: "$metadata.origin", operation: "eq", type: "string", value: "fetch" },
+          { key: "$workers.eventType", operation: "eq", type: "string", value: "fetch" },
+          { key: "$workers.event.request.method", operation: "eq", type: "string", value: "POST" },
+          { key: "$workers.event.path", operation: "eq", type: "string", value: "/webhooks/whatsapp" },
+        ],
+        groupBys: [{ type: "number", value: "$workers.event.response.status" }],
+        limit: 500,
+      });
+      expect(JSON.stringify(query)).not.toMatch(/body|header|signature|phone|message|token|challenge|email/i);
     });
 
-    it("never records a webhook_5xx or webhook_401 platform signal", async () => {
-      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
-      const fetchMock = buildFetchMock({});
-      vi.stubGlobal("fetch", fetchMock);
-
-      await runOperationalAlertMonitor(fullEnv);
-
-      const signalKinds = fetchMock.mock.calls
-        .filter((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_platform_signal"))
-        .map((c) => (bodyOf(c as FetchCall) as { p_signal_kind: string }).p_signal_kind);
-      expect(signalKinds).not.toContain("webhook_5xx");
-      expect(signalKinds).not.toContain("webhook_401");
-    });
-
-    it("never sends a webhook-telemetry-sourced email (no /emails call attributable to this source)", async () => {
-      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
-      const fetchMock = buildFetchMock({ claims: [] });
-      vi.stubGlobal("fetch", fetchMock);
-
-      await runOperationalAlertMonitor(fullEnv);
-
-      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("api.resend.com"))).toBe(false);
-    });
-
-    it("keeps blocking the heartbeat even when every other stage succeeds, since this stage always reports unavailable (Task 053 Codex review item 1 / re-review item 9)", async () => {
+    it("treats a verified empty aggregate as a healthy zero and advances the heartbeat", async () => {
       const { runOperationalAlertMonitor } = await loadOperationalAlerts();
       const fetchMock = buildFetchMock({
+        telemetry: telemetryResponse(),
         queues: QUEUE_LIST,
         metrics: metricsFor({ backlogCount: 0, ageMs: 0 }, 0, { backlogCount: 0 }),
         claims: [],
@@ -669,7 +728,129 @@ describe("runOperationalAlertMonitor", () => {
 
       await runOperationalAlertMonitor(fullEnv);
 
+      expect(webhookSignalKinds(fetchMock)).toEqual([]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(true);
+    });
+
+    it.each([
+      ["401 only", [[401, 2]], ["webhook_401"]],
+      ["5xx only", [[503, 3]], ["webhook_5xx"]],
+      ["mixed", [[200, 7], [401, 2], [500, 1], [503, 3]], ["webhook_401", "webhook_5xx"]],
+    ] as const)("records exactly the required platform signal for %s", async (_label, statusCounts, expected) => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ telemetry: telemetryResponse(statusCounts), claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(webhookSignalKinds(fetchMock)).toEqual(expected);
+    });
+
+    it.each([
+      ["top-level extra field", { ...(telemetryResponse() as Record<string, unknown>), extra: true }],
+      ["missing calculations field", (() => { const v = structuredClone(telemetryResponse()) as any; delete v.result.calculations; return v; })()],
+      ["incomplete run", (() => { const v = structuredClone(telemetryResponse()) as any; v.result.run.status = "RUNNING"; return v; })()],
+      ["sampled run", (() => { const v = structuredClone(telemetryResponse([[401, 1]])) as any; v.result.statistics.abr_level = 2; return v; })()],
+      ["sampled aggregate", (() => { const v = structuredClone(telemetryResponse([[401, 1]])) as any; v.result.calculations[0].aggregates[0].sampleInterval = 2; return v; })()],
+      ["duplicate status group", telemetryResponse([[401, 1], [401, 1]])],
+      ["ambiguous group key", (() => { const v = structuredClone(telemetryResponse([[401, 1]])) as any; v.result.calculations[0].aggregates[0].groupKey = "500"; return v; })()],
+      ["count mismatch", (() => { const v = structuredClone(telemetryResponse([[500, 2]])) as any; v.result.calculations[0].aggregates[0].count = 1; return v; })()],
+      ["wrong account", (() => { const v = structuredClone(telemetryResponse()) as any; v.result.run.accountId = "ffffffffffffffffffffffffffffffff"; return v; })()],
+      ["out-of-range status", telemetryResponse([[600, 1]])],
+      ["negative count", telemetryResponse([[401, -1]])],
+      ["fractional count", telemetryResponse([[503, 1.5]])],
+      ["unknown response field", (() => { const v = structuredClone(telemetryResponse([[500, 1]])) as any; v.result.calculations[0].aggregates[0].raw = "forbidden"; return v; })()],
+    ])("fails closed for a malformed or ambiguous %s envelope", async (_label, telemetry) => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ telemetry, claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runOperationalAlertMonitor(fullEnv);
+
+      expect(webhookSignalKinds(fetchMock)).toEqual([]);
       expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed on a non-2xx telemetry response", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ telemetryStatus: 429, claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(webhookSignalKinds(fetchMock)).toEqual([]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed on invalid JSON", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const routed = buildFetchMock({ claims: [] });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (urlOf(input).includes("/workers/observability/telemetry/query")) return new Response("not-json", { status: 200 });
+        return routed(input, init);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it.each([new Error("network down"), new DOMException("timed out", "AbortError")])("fails closed on telemetry fetch rejection", async (error) => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const routed = buildFetchMock({ claims: [] });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (urlOf(input).includes("/workers/observability/telemetry/query")) throw error;
+        return routed(input, init);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed when a required webhook signal has no enabled platform recipient", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({ telemetry: telemetryResponse([[401, 1]]), platformSignalResult: "no_recipients", claims: [] });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(webhookSignalKinds(fetchMock)).toEqual(["webhook_401"]);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("fails closed when recording a required webhook signal returns non-2xx", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const routed = buildFetchMock({ telemetry: telemetryResponse([[503, 1]]), claims: [] });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (urlOf(input).includes("/rpc/record_platform_signal")) return new Response("", { status: 500 });
+        return routed(input, init);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor(fullEnv);
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/rpc/record_alert_monitor_heartbeat"))).toBe(false);
+    });
+
+    it("does not query telemetry for an unknown deployment name", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({});
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor({ ...fullEnv, DEPLOYMENT_NAME: "preview" });
+      expect(fetchMock.mock.calls.some((c) => urlOf(c[0] as RequestInfo | URL).includes("/workers/observability/telemetry/query"))).toBe(false);
+    });
+
+    it("does not call either Cloudflare API for a malformed account id", async () => {
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      const fetchMock = buildFetchMock({});
+      vi.stubGlobal("fetch", fetchMock);
+      await runOperationalAlertMonitor({ ...fullEnv, CLOUDFLARE_ACCOUNT_ID: "../wrong-account" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("never logs telemetry request or response data", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { runOperationalAlertMonitor } = await loadOperationalAlerts();
+      vi.stubGlobal("fetch", buildFetchMock({ telemetry: telemetryResponse([[401, 1], [503, 1]]), claims: [] }));
+      await runOperationalAlertMonitor(fullEnv);
+      expect(log).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
     });
   });
 

@@ -1176,3 +1176,27 @@ devreye girer. §19'daki gibi bir aktivasyon kaydı, alarm gerçekten
 `OPERATIONAL_ALERTS_ENABLED = "true"` ile etkinleştirilip
 [`docs/operational-alerting.md`](operational-alerting.md) §6'daki kanıt
 matrisi tamamlanınca buraya eklenir.
+
+## 26. Task 054 Faz A — webhook telemetri sözleşmesi (2026-09-06–07, aktivasyon yok)
+
+Sahip onaylı salt-okunur Cloudflare preflight'ında staging Worker'ın gerçek
+aggregate yanıt şekli, `$workers.event.response.status` alanı ve örneklenmemiş
+401 tanığı sanitize edilerek doğrulandı. Task 054 Faz A bu sözleşmeyi
+`src/operationalAlerts.ts` içinde fail-closed uyguladı ve mock testlerle
+doğruladı. Token değeri depoya alınmadı; Worker secret kurulmadı, deploy/flag/
+Cron/e-posta çalıştırılmadı. [`docs/operational-alerting.md`](operational-alerting.md)
+§6'daki dokuz aktivasyon satırı bu nedenle hâlâ tamamen NOT RUN'dır. Bir
+sonraki adım ancak Task 054 Faz A Codex ve zorunlu Opus incelemesi geçtikten
+sonra, ayrı sahip onaylı Faz B sırasıdır.
+
+Faz B'de durum alanı bulunan dönen 5xx ile runtime'ın yakalanmamış exception
+olayı aynı kanıt sayılmaz. Kontrollü exception tanığı güvenle üretilemiyorsa
+ayrı Cloudflare Worker-exception alarmı seçilip gerçek teslimi görülmeden
+§24/§6 aktivasyon matrisi kapatılmaz. Aynı kapıda Observability etkinliği,
+günlük plan/kota tüketimi ve alım-örneklemesi Cron'dan bağımsız olarak
+doğrulanır; sorgu yanıtındaki `abr_level = 1` tek başına bu kanıt değildir.
+İlk canlı Cron kanıtı boş aggregate ile geçilmez: güvenli, dolu bir 401 veya
+dönen 5xx tanığında `interval`, `sampleInterval` ve `series[].data` biçimi
+yeniden okunur. Doğrulanmış şekilden saparsa heartbeat'in `unavailable` kalması
+beklenir ve aktivasyon durdurulur; ayrıştırıcı canlı veriye uyacak diye
+gevşetilmez.

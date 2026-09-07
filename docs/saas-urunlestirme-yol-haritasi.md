@@ -49,7 +49,7 @@ gereksinim çıktığında değerlendirilir.
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
 | Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
-| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` artık sentetik sabit kontakla gerçek PostgREST rota çözümleme çağrısını (Worker isolate başına 30 sn cache + eşzamanlı probe birleştirme ile) kontrol ediyor; Wrangler Workers Observability tam invocation örneklemesi ve query-string redaction ile etkinleştirildi. Yerel kontroller ve Codex/Opus incelemeleri geçti; staging deploy, `/health`, `/ready`, redaksiyon ve gerçek WhatsApp mesaj/cevap smoke'u 2026-09-04'te geçti. Production değişmedi. |
+| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 Faz A, gerçek staging hesabında sanitize edilmiş Workers Observability aggregate biçimini doğrulayıp durum alanı bulunan webhook 401/5xx için fail-closed kod yolunu ekledi; yakalanmamış Worker exception'ı, alım örneklemesi, Worker secret/deploy/flag/heartbeat ve alarm teslimi aktivasyonu henüz kanıtlanmadı. Production değişmedi. |
 
 Task 052 gecikme araştırması tamamlandı: eşleşen üç eski yanıtın 61–74
 dakikalık farkı başarılı kayıttan önce; kayıt sonrası kabul 18–23 saniyedir.

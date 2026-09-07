@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-09-06 by Codex.
+Last verified: 2026-09-07 by Codex.
 
 ## Product
 
@@ -1177,6 +1177,24 @@ occurred.
   a separately approved migration-first staging activation and production
   canary/rollback proof remain mandatory. No external activation or production
   approval has occurred.
+- Task 054 Phase A is complete at repository, Codex and mandatory Claude Opus
+  review gates as of 2026-09-07. The permanent telemetry stub is replaced by a
+  native, strict Workers Observability aggregate query for response-status
+  bearing staging/production `POST /webhooks/whatsapp` calls. It uses a
+  three-minute lookback aligned every minute after a two-minute ingestion lag,
+  accepts only the verified unsampled envelope, validates the account as 32
+  hexadecimal characters, records 401 and returned 5xx signals through the
+  existing recipient/dedup gate, and blocks heartbeat on any unknown or failed
+  observation. Frozen install, typecheck, 2,069 local tests (two pre-existing
+  opt-in skips), both Worker dry-runs, whitespace validation and Opus closure
+  passed.
+- Task 054 live activation remains blocked and production is unchanged. No
+  monitoring token was installed, Worker deployed, flag enabled or email sent.
+  Uncaught Worker exceptions are not assumed to carry a response-status field;
+  Phase B requires a controlled exception witness or separate Worker-exception
+  alarm. It must also verify Observability ingestion/plan quota, a non-empty
+  aggregate's interval/series shape and the fact that overlapping windows make
+  `occurrence_count` an observation count rather than an exact event count.
 
 ## Context maintenance
 

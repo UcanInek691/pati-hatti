@@ -512,3 +512,17 @@ başarısız denemeler aynı mesaja kimlik-korumalı biçimde bağlanamadığın
 tamamlanmasını engellemez; yeni bir runtime yaması veya üretim onayı değildir.
 Saat kaynakları, beş örnek, son durum ve tekrarında gereken en küçük ölçüm
 [Task 052 raporunda](2026-09-05-delivery-latency.md) kayıtlıdır.
+
+## Task 054 webhook durum telemetrisi — 2026-09-06 depo eki
+
+Bu olayda `outcome=ok` değerinin HTTP 503'ü saklayabildiği bulgudan hareketle,
+Task 054 Faz A gerçek staging Workers Observability aggregate sözleşmesini
+sanitize edilmiş salt-okunur kanıtla doğruladı. Uygulanan sorgu yalnız
+`vetai-staging` üzerindeki `POST /webhooks/whatsapp` çağrılarını ve
+`$workers.event.response.status` gruplarını okur; 401 ile 500–599 ayrı platform
+sinyalleridir. Yanıt tamamlanmamış, örneklenmiş, belirsiz veya biçim dışıysa
+sonuç sağlıklı sıfır değil `unavailable` olur. Bu yalnız depo uygulamasıdır;
+Task 054 Faz B secret/deploy/flag/gerçek alarm kanıtı henüz yapılmamıştır.
+Bu sorgu, durum alanı bulunan dönen HTTP 5xx'i kapsar; Cloudflare runtime'ının
+yakalanmamış exception olayında aynı alanı üretip üretmediği doğrulanmadığı
+için exception alarmı ayrı Faz B kanıtı olarak açık kalır.

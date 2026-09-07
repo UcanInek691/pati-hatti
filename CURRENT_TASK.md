@@ -1,9 +1,10 @@
 # Current task — 054 Verified webhook telemetry and staging alert activation
 
-Status: `READY` — Phase A repository implementation is authorized. Any live
-account change, secret creation, database migration, deploy, email send or
-alert enablement remains separately gated and must not be inferred from this
-status.
+Status: `IN_REVIEW` — Phase A repository implementation, Codex verification
+and mandatory Claude Opus read-only review are complete. Phase B live staging
+activation still requires an exact mutation/cost plan and separate owner
+approval. Worker secret installation, database migration, deploy, email send
+and alert enablement must not be inferred from this status.
 
 Created by Codex on 2026-09-06 after Task 053 closure (`b7d3b74`). Task 053
 delivered and tested the alert-delivery foundation, but alerting is still off
@@ -62,9 +63,24 @@ stage really succeeds.
 - Current official API documentation describes aggregate results under
   `result.calculations[].aggregates[]`, with aggregate `value` and `count`
   fields, and requires Workers Observability Write for the query endpoint.
-  No API token was created and no authenticated REST aggregate query was run.
-  The exact staging-account aggregate envelope therefore remains unverified;
-  criterion 1 still blocks implementation from guessing its shape.
+- Owner-approved read-only evidence was completed on 2026-09-06 with a
+  current-account-only, 90-day token carrying Workers Observability Write and
+  Queues Read. The token value was never shown to Codex or written to the
+  repository and is not installed as a Worker secret. Two sanitized aggregate
+  responses returned HTTP 200 with exact outer fields
+  `success/errors/messages/result`, exact result fields
+  `run/calculations/statistics`, `run.status = COMPLETED`, `run.dry = true`,
+  `abr_level = 1`, and calculation fields
+  `alias/calculation/aggregates/series`. A harmless unsigned synthetic POST to
+  `/webhooks/whatsapp` returned 401 before parsing or any DB/Queue/provider
+  path; the following aggregate contained exactly one status group keyed by
+  `$workers.event.response.status`, with `groupKey = "401"`, `value = count =
+  1`, `interval = sampleInterval = 1`. Empty matches produced an empty
+  `aggregates` array. No raw body, header, identifier, address or token was
+  retained. This verifies response-status aggregation for Phase A; an
+  uncaught Worker runtime exception may omit the response-status field and
+  remains a separately documented Phase B exception-alarm gate rather than
+  being guessed into the 5xx count.
 
 ## Phase A — repository implementation
 
@@ -110,8 +126,10 @@ return to Codex if repository evidence shows one is required.
    positive signal that cannot be recorded as `recorded` makes the stage
    `unavailable`. Preserve existing hourly deduplication and recipient gates.
 5. **Heartbeat truth.** The monitor heartbeat may advance only after Queue
-   metrics, webhook telemetry, OpenAI signal recording, candidate sync/repeat,
-   and delivery drain all succeed under complete configuration. The current
+   metrics, webhook telemetry, candidate sync/repeat, and delivery drain all
+   succeed under complete configuration. Inline OpenAI-failure recording is a
+   separate Queue-consumer signal and is not falsely represented as a Cron
+   stage by this heartbeat. The current
    intentional permanent-stale behavior may be removed only by the verified
    implementation above. `/health` remains dependency-free and alerting-off
    readiness behavior remains unchanged.
@@ -185,13 +203,116 @@ deploy, run a database fixture, inspect live secrets or mutate an account.
 
 ## Task 054 observed context
 
-To be filled by the implementer from repository evidence only.
+- `src/operationalAlerts.ts` contained the intentional Task 053 telemetry stub;
+  the complete monitor already required Queue metrics, telemetry, candidate
+  sync, repeat scheduling and delivery drain before heartbeat write.
+- Production and staging Wrangler names are `vetai` / `vetai-staging`, while
+  `DEPLOYMENT_NAME` is `production` / `staging`; no new environment field or
+  dependency is needed for the bounded mapping.
+- Owner-approved Cloudflare evidence on 2026-09-06 confirmed the API token is
+  current-account-only, expires after 90 days, and carries only Workers
+  Observability Write + Queues Read. Codex never received the token value.
+  The token is not a Worker secret.
+- A harmless unsigned synthetic webhook POST returned 401 before body parsing,
+  Supabase, Queue, Meta or OpenAI work. Two sanitized read-only aggregate calls
+  established the exact response and status-group shapes recorded in the
+  preflight above; all temporary helper/output files were removed afterward.
+- Pre-existing `.gitignore` and untracked `docs/043-opus-inceleme.md` changes
+  remain unrelated and untouched.
 
 ## Task 054 delivery record
 
-To be filled by the implementer. Include changed files, exact checks/results,
-checks not run and why, sanitized account evidence provenance, remaining
-limitations and the points Codex/Opus must inspect.
+- Changed only the allowed Phase A files: `src/operationalAlerts.ts`,
+  `test/operationalAlerts.test.ts`, `test/index.test.ts`, this Task 054 record,
+  and the five allowed operational/readiness/runbook/incident/roadmap
+  documents. The index test's synthetic Cloudflare account id was updated to
+  the newly enforced 32-hex shape; runtime routing was not changed.
+- Replaced the permanent stub with one native-fetch Cloudflare aggregate query:
+  a completed three-minute lookback aligned every minute and delayed two
+  minutes for ingestion, exact
+  deployment/script mapping, `fetch` + `POST /webhooks/whatsapp` filters,
+  numeric grouping on `$workers.event.response.status`, no raw event fields,
+  10-second timeout and a 250,000-character response ceiling.
+- Parsing is closed over the sanitized verified envelope. It rejects non-2xx,
+  fetch/timeout/JSON failure, missing/extra outer/result/calculation/group
+  fields, non-completed runs, wrong account/dry mode, sampling markers,
+  duplicate/invalid groups, non-safe/non-integer counts, arithmetic mismatch
+  and oversized responses as `unavailable`. Verified empty aggregates are a
+  healthy zero. Positive 401 and 500–599 groups record only `webhook_401` and
+  `webhook_5xx`; any non-`recorded` result blocks heartbeat advancement.
+- Tests grew from 53 Task 053 alarm tests to 95 total and discriminate the
+  bounded request, zero/401/5xx/mixed results, malformed/partial/ambiguous/
+  sampled envelopes, non-2xx, invalid JSON, network/abort, configuration,
+  recipient/record failures, no logging and full-success heartbeat.
+- Final required checks: `pnpm install --frozen-lockfile` PASS (already up to
+  date); `pnpm typecheck` PASS; `pnpm test` PASS (38 files, 2069 passed, 2
+  pre-existing skips, 0 failed); production and staging Wrangler dry-runs PASS;
+  final `git diff --check` PASS (only harmless CRLF conversion warnings).
+- NOT RUN: no Task 053 migration/fixture or any SQL was executed; the token was
+  not installed as a Worker secret; no Worker was deployed; alerting remained
+  false; no Resend email, signed WhatsApp message, Queue mutation, Meta/OpenAI
+  call, commit or push occurred. Live calls were limited to the original
+  preflight and the bounded remediation evidence described below: harmless
+  unsigned webhook probes, read-only aggregate queries, and one rejected
+  authentication attempt; none reached a database, Queue, Meta, OpenAI or
+  email path.
+- Remaining limits for Opus: `abr_level = 1` and aggregate `sampleInterval =
+  1` cannot prove that ingestion was enabled or unsampled before query time;
+  this needs an independent Phase B plan/quota/ingestion control. The verified
+  response-status query counts returned HTTP 5xx but does not claim that an
+  uncaught runtime exception carries the same field; a controlled exception
+  witness or separate Worker-exception alert remains an activation gate. Phase
+  B and all nine Task 053 activation rows remain unauthorized/NOT RUN.
+
+### Task 054 mandatory Opus review remediation — 2026-09-07
+
+Opus returned `CHANGES_REQUIRED` for two Phase A issues and five lower-risk
+items. Codex applied the smallest repository correction: the telemetry
+lookback is now three minutes but remains aligned on each one-minute boundary,
+so adjacent Cron ticks overlap by two minutes and small scheduling drift cannot
+silently skip a minute; existing hourly database dedup absorbs repeated
+observations. `CLOUDFLARE_ACCOUNT_ID` is restricted to exactly 32 hexadecimal
+characters before either Cloudflare API can be called. Focused malformed-
+envelope tests now cover a wrong account id, out-of-range status, negative
+count and fractional count; the query-window test pins exact minute alignment
+and three-minute coverage. Acceptance criterion 5 was corrected above so the
+inline OpenAI extraction-failure signal is not falsely described as a Cron
+heartbeat stage.
+
+With owner approval, Codex made one additional read-only, sanitized Cloudflare
+control query after one harmless unsigned webhook POST returned 401 before any
+database/Queue/provider path. The query returned HTTP 200 and the already
+verified closed envelope, but its method-group aggregate was empty. Its echoed
+`run.query.parameters` also normalized filters/group-bys rather than matching
+the sent JSON byte-for-byte. Neither observation was promoted into an
+unverified runtime invariant: no second query was added, and the documents now
+state explicitly that uncaught runtime exceptions and ingestion-stage
+sampling/disablement remain separate Phase B activation gates. The temporary
+helper and sanitized output are removed after this evidence is recorded; no
+token value or raw event was read or retained.
+
+Final remediation verification: focused `operationalAlerts` tests passed
+95/95; focused `operationalAlerts` + `index` tests passed 196/196. The first
+full-suite run exposed only the stale synthetic account-id shape in
+`test/index.test.ts`; after correcting that fixture, the final full suite
+passed 38/38 files, 2069 tests passed with the same two pre-existing opt-in
+skips. Frozen install, typecheck, both production/staging Wrangler dry-runs and
+`git diff --check` also passed. No deployment, secret installation, database
+execution, email, commit or push occurred; alerting remains false.
+
+### Task 054 mandatory Opus closure — 2026-09-07
+
+Decision: `PASS`. Opus verified the exact three-minute lookback / one-minute
+alignment mathematics and its discriminating test; accepted the documented
+uncaught-exception boundary as the explicitly permitted second closure path;
+and found no new blocker in the 32-hex account-id gate, new malformed-envelope
+tests, `/ready` fixture correction or documentation. Two non-blocking Phase B
+notes were retained: the first live non-empty aggregate must re-confirm
+`interval`, `sampleInterval` and empty-series-data shape, and overlapping
+windows can inflate `occurrence_count`, which is therefore not an exact event
+count. The operational spec and staging runbook now state both limits. Phase A
+is complete; Phase B remains unexecuted and unauthorized pending the plan and
+owner approval required above.
 
 ---
 

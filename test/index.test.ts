@@ -87,7 +87,7 @@ describe("worker fetch routing", () => {
     RESEND_API_KEY: "resend-test-key",
     RESEND_FROM_ADDRESS: "alerts@vetai-alerts.test",
     STAFF_LOGIN_URL: "https://portal.vetai-portal.test/staff",
-    CLOUDFLARE_ACCOUNT_ID: "cf-account-test-id",
+    CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
     CLOUDFLARE_ALERTS_MONITORING_TOKEN: "cf-monitoring-test-token",
     DEPLOYMENT_NAME: "staging",
     INTAKE_QUEUE_NAME: "intake-queue-test",

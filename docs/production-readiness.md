@@ -374,13 +374,22 @@ Faz A aktivasyon planı: [`docs/operational-alerting.md`](operational-alerting.m
 kutuların hiçbiri bu planla karşılanmış sayılmaz; yalnız Codex incelemesi ve
 ayrı sahip onayıyla yürütülen gerçek Faz B aktivasyonundan sonra işaretlenir.
 
+Task 054 Faz A (2026-09-06), yanıt durum alanı bulunan webhook 401/5xx
+ölçümünün gerçek staging hesabında sanitize edilmiş aggregate biçimini
+doğruladı ve fail-closed sorgu yolunu depoda uyguladı. Yakalanmamış Worker
+exception'ının aynı durum alanını taşıdığı doğrulanmadı; o dal ayrı Faz B
+kanıtı veya ayrı Worker-exception alarmı gerektirir. Worker secret kurulumu,
+staging deploy, Cron heartbeat, e-posta teslimi veya aşağıdaki aktivasyon
+kutularından herhangi biri için henüz kanıt yoktur. Hepsi işaretsiz kalır.
+
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
       with invocation `outcome=ok`; exception/outcome counters alone missed
       this failure class. Monitoring needs an owner and a verified notification
       path, not just an enabled log dashboard. `/ready` is cached for up to
       30 seconds per isolate and is not a Meta/OpenAI end-to-end probe. A
-      real HTTP-5xx alert path does not exist yet — see
+      Dönen HTTP 5xx'ler için depo yolu vardır fakat staging'de aktive
+      edilmemiştir; yakalanmamış exception yolu ayrıca açık kalır — see
       [`docs/operational-alerting.md`](operational-alerting.md#2-en-küçük-desteklenen-yol)
       §2 for the two smallest supported fallback options and the open Phase B
       blocker on choosing between them.

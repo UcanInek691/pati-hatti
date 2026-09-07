@@ -22,6 +22,14 @@ const QUEUE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 // is not verified in this phase, so the conservative recovery budget is a
 // flat 24h floor until that is confirmed; row 5's rule is half of it.
 const TERMINAL_DLQ_AGE_THRESHOLD_MS = 12 * 60 * 60_000;
+const WEBHOOK_TELEMETRY_WINDOW_MS = 3 * 60_000;
+const WEBHOOK_TELEMETRY_INGESTION_LAG_MS = 2 * 60_000;
+// Keep the three-minute lookback moving every minute; aligning to the window
+// itself would create adjacent, non-overlapping buckets and reintroduce gaps.
+const WEBHOOK_TELEMETRY_ALIGNMENT_MS = 60_000;
+const WEBHOOK_TELEMETRY_MAX_RESPONSE_CHARS = 250_000;
+const WEBHOOK_TELEMETRY_STATUS_KEY = "$workers.event.response.status";
+const CLOUDFLARE_ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 
 // Duplicated from readiness.ts per this repo's per-file config-validation
 // duplication convention rather than importing it.
@@ -49,12 +57,32 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
 function hasResendConfig(env: Env): boolean {
   return isNonPlaceholderString(env.RESEND_API_KEY) && isNonReservedTldString(env.RESEND_FROM_ADDRESS);
 }
 
-function hasCloudflareMonitoringConfig(env: Env): boolean {
-  return isNonPlaceholderString(env.CLOUDFLARE_ACCOUNT_ID) && isNonPlaceholderString(env.CLOUDFLARE_ALERTS_MONITORING_TOKEN);
+function hasCloudflareMonitoringConfig(
+  env: Env,
+): env is Env & { CLOUDFLARE_ACCOUNT_ID: string; CLOUDFLARE_ALERTS_MONITORING_TOKEN: string } {
+  return (
+    typeof env.CLOUDFLARE_ACCOUNT_ID === "string" &&
+    CLOUDFLARE_ACCOUNT_ID_PATTERN.test(env.CLOUDFLARE_ACCOUNT_ID) &&
+    isNonPlaceholderString(env.CLOUDFLARE_ALERTS_MONITORING_TOKEN)
+  );
 }
 
 function hasStaffLoginUrl(env: Env): env is Env & { STAFF_LOGIN_URL: string } {
@@ -179,7 +207,7 @@ export async function runOperationalAlertMonitor(env: Env): Promise<void> {
   // making a real send.
   if (!isAlertingConfigured(env)) return;
 
-  const [queueResult, telemetryResult] = await Promise.all([checkQueueBacklogs(env), checkWebhookTelemetry()]);
+  const [queueResult, telemetryResult] = await Promise.all([checkQueueBacklogs(env), checkWebhookTelemetry(env)]);
   const syncResult = await syncAlertDeliveryCandidates(env);
   // Reopen accepted deliveries whose repeat schedule has elapsed before
   // draining, so a due repeat is claimable in this same tick (Task 053
@@ -364,15 +392,167 @@ export async function checkQueueBacklogs(env: Env): Promise<StageResult> {
   return sawFailure ? "unavailable" : "success";
 }
 
-// Task 053 Codex re-review item 5: the Workers Observability query shape
-// (field names, request/response contract) is NOT VERIFIED against a live
-// account. Until it is, this source must produce zero platform-signal
-// mutations and zero emails -- not even as a "best-effort" side effect --
-// and must keep reporting unavailable so the heartbeat stays blocked.
-// docs/operational-alerting.md section 2 tracks the verification work; wire
-// the real query back in here once a real account confirms the shape.
-async function checkWebhookTelemetry(): Promise<StageResult> {
-  return "unavailable";
+type WebhookTelemetryCounts = { unauthorized: number; serverErrors: number };
+
+// The two deployed script names are fixed by wrangler.toml and
+// wrangler.staging.toml. An unfamiliar deployment label must not produce a
+// broad account-wide query or turn "queried the wrong Worker" into a healthy
+// zero.
+function monitoredScriptName(env: Env): string | null {
+  if (env.DEPLOYMENT_NAME === "staging") return "vetai-staging";
+  if (env.DEPLOYMENT_NAME === "production") return "vetai";
+  return null;
+}
+
+function validTelemetryStatistics(value: unknown): boolean {
+  if (!hasExactKeys(value, ["elapsed", "rows_read", "bytes_read", "abr_level"])) return false;
+  return (
+    isFiniteNonNegative(value.elapsed) &&
+    isSafeNonNegativeInteger(value.rows_read) &&
+    isSafeNonNegativeInteger(value.bytes_read) &&
+    value.abr_level === 1
+  );
+}
+
+// Exact outer/result/calculation shapes and sampling markers were confirmed
+// with sanitized staging-account aggregate responses on 2026-09-06. Only the
+// grouped status/count data is retained. Any partial run, sampling marker,
+// duplicate status group, extra field, or arithmetic inconsistency fails
+// closed instead of becoming a healthy zero.
+function parseWebhookTelemetry(value: unknown, accountId: string): WebhookTelemetryCounts | null {
+  if (!hasExactKeys(value, ["success", "errors", "messages", "result"])) return null;
+  if (
+    value.success !== true ||
+    !Array.isArray(value.errors) ||
+    value.errors.length !== 0 ||
+    !Array.isArray(value.messages) ||
+    value.messages.length !== 1 ||
+    !hasExactKeys(value.messages[0], ["message"]) ||
+    typeof value.messages[0].message !== "string"
+  ) {
+    return null;
+  }
+  if (!hasExactKeys(value.result, ["run", "calculations", "statistics"])) return null;
+
+  const result = value.result;
+  if (!validTelemetryStatistics(result.statistics) || !Array.isArray(result.calculations) || result.calculations.length !== 1) return null;
+  if (!hasExactKeys(result.run, ["id", "query", "accountId", "timeframe", "userId", "status", "granularity", "dry", "statistics"])) return null;
+  const run = result.run;
+  if (
+    typeof run.id !== "string" ||
+    !isRecord(run.query) ||
+    run.accountId !== accountId ||
+    !isRecord(run.timeframe) ||
+    typeof run.userId !== "string" ||
+    run.status !== "COMPLETED" ||
+    !isSafeNonNegativeInteger(run.granularity) ||
+    run.granularity === 0 ||
+    run.dry !== true ||
+    !validTelemetryStatistics(run.statistics)
+  ) {
+    return null;
+  }
+
+  const calculation = result.calculations[0];
+  if (!hasExactKeys(calculation, ["alias", "calculation", "aggregates", "series"])) return null;
+  if (calculation.alias !== "request_count" || calculation.calculation !== "count") return null;
+  if (!Array.isArray(calculation.aggregates) || calculation.aggregates.length > 500 || !Array.isArray(calculation.series)) return null;
+  if (
+    !calculation.series.every(
+      (entry) =>
+        hasExactKeys(entry, ["time", "data"]) &&
+        typeof entry.time === "string" &&
+        entry.time.length > 0 &&
+        Array.isArray(entry.data) &&
+        entry.data.length === 0,
+    )
+  ) {
+    return null;
+  }
+
+  let unauthorized = 0;
+  let serverErrors = 0;
+  const statuses = new Set<number>();
+  for (const aggregate of calculation.aggregates) {
+    if (!hasExactKeys(aggregate, ["groups", "groupKey", "value", "interval", "sampleInterval", "count"])) return null;
+    if (!Array.isArray(aggregate.groups) || aggregate.groups.length !== 1) return null;
+    const group = aggregate.groups[0];
+    if (!hasExactKeys(group, ["key", "value"]) || group.key !== WEBHOOK_TELEMETRY_STATUS_KEY) return null;
+    const status = group.value;
+    if (!Number.isSafeInteger(status) || typeof status !== "number" || status < 100 || status > 599 || statuses.has(status)) return null;
+    if (
+      aggregate.groupKey !== String(status) ||
+      !isSafeNonNegativeInteger(aggregate.value) ||
+      aggregate.value !== aggregate.count ||
+      aggregate.interval !== 1 ||
+      aggregate.sampleInterval !== 1
+    ) {
+      return null;
+    }
+    statuses.add(status);
+    if (status === 401) unauthorized += aggregate.value;
+    if (status >= 500) serverErrors += aggregate.value;
+  }
+  return { unauthorized, serverErrors };
+}
+
+async function checkWebhookTelemetry(env: Env): Promise<StageResult> {
+  if (!hasCloudflareMonitoringConfig(env)) return "unavailable";
+  const scriptName = monitoredScriptName(env);
+  if (!scriptName) return "unavailable";
+
+  const to =
+    Math.floor((Date.now() - WEBHOOK_TELEMETRY_INGESTION_LAG_MS) / WEBHOOK_TELEMETRY_ALIGNMENT_MS) *
+    WEBHOOK_TELEMETRY_ALIGNMENT_MS;
+  const from = to - WEBHOOK_TELEMETRY_WINDOW_MS;
+  const query = {
+    queryId: "vetai-webhook-status-monitor",
+    timeframe: { from, to },
+    view: "calculations",
+    chart: false,
+    chartType: "aggregate",
+    dry: true,
+    ignoreSeries: true,
+    limit: 500,
+    parameters: {
+      calculations: [{ operator: "count", alias: "request_count" }],
+      datasets: ["workers_trace_events"],
+      filterCombination: "and",
+      filters: [
+        { key: "$workers.scriptName", operation: "eq", type: "string", value: scriptName },
+        { key: "$metadata.origin", operation: "eq", type: "string", value: "fetch" },
+        { key: "$workers.eventType", operation: "eq", type: "string", value: "fetch" },
+        { key: "$workers.event.request.method", operation: "eq", type: "string", value: "POST" },
+        { key: "$workers.event.path", operation: "eq", type: "string", value: "/webhooks/whatsapp" },
+      ],
+      groupBys: [{ type: "number", value: WEBHOOK_TELEMETRY_STATUS_KEY }],
+      limit: 500,
+    },
+  };
+
+  try {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/observability/telemetry/query`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${env.CLOUDFLARE_ALERTS_MONITORING_TOKEN}` },
+        body: JSON.stringify(query),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) return "unavailable";
+    const raw = await response.text();
+    if (raw.length === 0 || raw.length > WEBHOOK_TELEMETRY_MAX_RESPONSE_CHARS) return "unavailable";
+    const counts = parseWebhookTelemetry(JSON.parse(raw), env.CLOUDFLARE_ACCOUNT_ID);
+    if (!counts) return "unavailable";
+
+    let recorded = true;
+    if (counts.unauthorized > 0) recorded = (await recordPlatformSignal(env, "webhook_401", null)) && recorded;
+    if (counts.serverErrors > 0) recorded = (await recordPlatformSignal(env, "webhook_5xx", null)) && recorded;
+    return recorded ? "success" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
 }
 
 const SIGNAL_KINDS = new Set([

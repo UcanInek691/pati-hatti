@@ -529,11 +529,12 @@ yalnız §7'nin açık maddelerinden hangilerinin kodda karşılığı olduğunu
 - Cloudflare Queues çözümlemesi, aynı isimde birden fazla kuyruk eşleşirse
   hangi `queue_id`'nin gerçek olduğunu tahmin etmek yerine o çalışmada tüm
   backlog kontrolünü atlıyor (fail-closed).
-- Workers Observability sorgusu henüz uygulanmadı: Worker bu aşamada hiçbir
-  telemetri çağrısı yapmadan `unavailable` döndüren yan etkisiz bir saplama
-  kullanıyor. Gelecekteki sorgunun POST `/webhooks/whatsapp` ile nasıl
-  daraltılacağı ve gerçek alan adları hesapta doğrulanmadan bu aşama başarı
-  sayılmayacak; §7'nin ilgili maddesi hâlâ açık.
+- Task 054 Faz A'da Workers Observability sorgusu gerçek staging hesabının
+  yalnız toplu/sayısal yanıt biçimiyle doğrulanıp depoda uygulandı. Sorgu
+  `vetai-staging`, `fetch`, `POST` ve `/webhooks/whatsapp` ile daraltılır;
+  `$workers.event.response.status` gruplarından 401 ile 500–599 ayrı sayılır.
+  Ham olay, gövde veya başlık istenmez. Bu **yerel depo uygulamasıdır**;
+  Worker secret kurulumu, deploy ve alarm aktivasyonu hâlâ NOT RUN'dır.
 - Heartbeat artık yalnız backlog kontrolü, webhook telemetrisi,
   `sync_alert_delivery_candidates` ve teslim drain'i tamamlandıktan **sonra**
   yazılıyor; çökme/erken dönüş senaryosunda bayat kalır, yanlışlıkla taze
@@ -577,13 +578,12 @@ kaydında):
   dolu ve geçerli olmasını zorunlu kılan ayrı bir kontrolle kilitleniyor;
   eksik/bozuk yapılandırmada `/ready` artık heartbeat RPC'sine hiç gitmeden
   503 dönüyor.
-- Heartbeat artık BEŞ aşamanın (kuyruk backlog, webhook telemetrisi,
+- Heartbeat BEŞ aşamanın (kuyruk backlog, webhook telemetrisi,
   `sync_alert_delivery_candidates`, tekrar/iyileşme zamanlaması,
-  teslim drain) HEPSİ kapalı bir "success" sonucu dönmeden yazılmıyor. Webhook
-  telemetrisi aşağıdaki doğrulanmamış-API-şekli maddesi yüzünden kalıcı olarak
-  "unavailable" döndüğünden, bu haliyle heartbeat şu an hiç ilerlemiyor — bu
-  kasıtlı ve sözleşme gereği bir sonuçtur, gerçek hesap doğrulaması
-  tamamlanana kadar geçerlidir.
+  teslim drain) HEPSİ kapalı bir "success" sonucu dönmeden yazılmıyor. Task
+  054 Faz A doğrulanmış telemetri yolunu ekledi; ancak heartbeat'in staging'de
+  gerçekten ilerlediği henüz iddia edilmez, çünkü secret/deploy/flag ve dokuz
+  satırlık aktivasyon matrisi çalıştırılmadı.
 - `schedule_alert_repeat_notifications` RPC'si artık her tick'te sync ile
   teslim drain'i arasında çağrılıyor (migration'da vardı ama önceden hiç
   tetiklenmiyordu).
@@ -625,8 +625,64 @@ kaydında):
   `send_failed | attempts_exhausted` kapalı kümesidir.
 - Çözülmüş işe bağlı seçilemeyen `pending` artıklar, serbest metin alıcı-audit
   gerekçesi ve isolate-yerel backlog trend geçmişi bloklayıcı olmayan izleme/
-  KVKK kalemleri olarak açık kalır. Telemetri saplaması nedeniyle heartbeat'in
-  ilerlememesi de aktivasyon öncesi sahip kararı olmaya devam eder.
+  KVKK kalemleri olarak açık kalır. Telemetri kodunun gerçek staging Cron ve
+  Worker-secret yolunda kanıtlanması da aktivasyon öncesi açık kalır.
+
+## 9. Task 054 Faz A — doğrulanmış webhook telemetri yolu (2026-09-06–07)
+
+Sahibin açık onayıyla yalnız mevcut Cloudflare hesabına kapsamlı, 90 gün
+süreli `Workers Observability Write` + `Queues Read` token'ı oluşturuldu ve
+salt-okunur sorgu kanıtında kullanıldı. Token değeri Codex tarafından
+okunmadı, depoya yazılmadı ve Worker secret'ı olarak kurulmadı. Zararsız,
+imzasız sentetik webhook POST'u kaynak kod sırasına uygun biçimde 401 dönerek
+DB/Queue/Meta/OpenAI yoluna ulaşmadı.
+
+Sanitize edilmiş gerçek hesap yanıtları şu durum-grubu sözleşmesini doğruladı:
+`success/errors/messages/result`; `result.run/calculations/statistics`;
+`run.status = COMPLETED`, `run.dry = true`; hem run hem result istatistiğinde
+`abr_level = 1`; tek `request_count/count` hesabı; boş eşleşmede boş
+`aggregates`, 401 tanığında ise `$workers.event.response.status = 401`,
+`groupKey = "401"`, `value = count = 1`, `interval = sampleInterval = 1`.
+Ham olay/başlık/gövde veya müşteri verisi kaydedilmedi.
+
+2026-09-07'de aynı sabit filtrelerle yapılan ek yöntem-gruplu kontrol çağrısı
+HTTP 200 ve aynı kapalı dış zarfı döndürdü, fakat eşleşen aggregate üretmedi;
+Cloudflare ayrıca `run.query.parameters` içindeki filtre ve group-by
+nesnelerini normalize ettiği için yankı, gönderilen JSON ile byte-byte aynı
+değildi. Bu sonuç, toplam olay sayısı veya uncaught-exception biçimi için
+kanıt sayılmadı ve ürüne tahmine dayalı ikinci bir sorgu eklenmedi.
+
+Depo uygulaması iki dakikalık ingest gecikmesinden sonraki üç dakikalık
+aggregate pencereyi kullanır. Dakikalık Cron pencereleri bilerek üst üste
+biner; saatlik veritabanı dedup'ı tekrar e-postayı bastırırken küçük Cron
+sapmalarının bir dakikayı sessizce atlamasını önler. Yalnız bilinen
+`staging → vetai-staging` ve
+`production → vetai` eşlemesini kabul eder. Yanıtın tam doğrulanmış dış/sonuç/
+hesap/grup şekli, tamamlanma durumu, hesap kimliği, tamsayı sayaçları ve
+örneklenmemiş göstergeleri uyuşmazsa sonuç `unavailable` olur. 401 yalnız
+`webhook_401`, 500–599 yalnız `webhook_5xx` üretir; sıfır doğrulanmış sağlıklı
+ölçümdür. Pozitif sinyal `recorded` dönmezse heartbeat ilerlemez. Bu bölüm
+yerel uygulama + mock test kanıtıdır; gerçek Worker secret, deploy, Cron,
+e-posta ve dokuz aktivasyon satırının tamamı hâlâ NOT RUN'dır.
+
+Örtüşme nedeniyle aynı gerçek hata üç ardışık ölçümde yeniden görülebilir.
+Saatlik dedup yeni e-postayı engeller, fakat `occurrence_count` ölçüm tekrarını
+da artırabilir; bu alan benzersiz olay adedi veya SLA metriği değildir.
+
+Bu yol yalnız `$workers.event.response.status` taşıyan tamamlanmış HTTP
+yanıtlarını sayar. Worker runtime'ının üst düzey yakalanmamış bir exception
+için bu alanı üretip üretmediği bu hesapta güvenli bir tanıkla
+doğrulanmamıştır; böyle bir olayı sessizce `webhook_5xx` diye varsaymak da
+doğru değildir. Faz B'de kontrollü sentetik exception kanıtı veya ayrı bir
+Cloudflare Worker-exception alarmı kurulup teslimi görülmeden §1 satır 1'in
+**exception** yarısı tamamlanmış sayılamaz.
+
+Benzer biçimde `abr_level = 1` ve aggregate `sampleInterval = 1`, sorgu
+çalışırken örnekleme olmadığını gösterir; Observability alımının kapanmış
+olmasını veya günlük plan kotası aşıldıktan sonra olayların daha önce
+örneklenmesini kanıtlayamaz. Faz B aktivasyonu, Observability'nin açık olduğunu,
+plan/kota kullanımını ve bu kaynağın veri almaya devam ettiğini Cron'dan
+bağımsız periyodik bir kontrolle doğrulamadan tamamlanamaz.
 
 ## Referanslar
 
@@ -641,6 +697,7 @@ kaydında):
 - [Cloudflare Notifications — mevcut bildirim türleri](https://developers.cloudflare.com/notifications/notification-available/) — kontrol 2026-09-05
 - [Cloudflare Workers Observability](https://developers.cloudflare.com/workers/observability/) (son güncelleme 2026-08-03) — kontrol 2026-09-05
 - [Cloudflare Workers Observability — Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/) — kontrol 2026-09-05; §2'de kullanılan `$workers.event.response.status` alanının kaynağı
+- [Cloudflare Workers Observability — Run a query API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) — kontrol 2026-09-06; `POST /accounts/{account_id}/workers/observability/telemetry/query`, Unix-ms zaman penceresi, aggregate/group-by sözleşmesi ve `Workers Observability Write` izni
 - [Cloudflare Standalone Health Checks](https://developers.cloudflare.com/health-checks/) (son güncelleme 2026-08-14) — kontrol 2026-09-05
 - [Resend API referansı — e-posta gönderme](https://resend.com/docs/api-reference/emails/send-email) (illüstrasyon amaçlı, sağlayıcı seçimi değildir) — kontrol 2026-09-05
 - İç: [`docs/staff-workflow.md`](staff-workflow.md), [`docs/outbound-delivery.md`](outbound-delivery.md), [`docs/staff-work-items.md`](staff-work-items.md), [`docs/production-readiness.md`](production-readiness.md) §5–6, [`docs/olaylar/2026-09-04-route-resolver-405.md`](olaylar/2026-09-04-route-resolver-405.md), [`docs/olaylar/2026-09-05-delivery-latency.md`](olaylar/2026-09-05-delivery-latency.md)
