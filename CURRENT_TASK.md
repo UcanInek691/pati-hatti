@@ -469,6 +469,46 @@ heartbeat or rollback; those activation-matrix cells remain `NOT RUN`.
 `OPERATIONAL_ALERTS_ENABLED` remains `false`, no VetAI/Resend e-mail was sent,
 and production remains unchanged.
 
+### Task 054 Phase B bounded owner-email smoke — 2026-09-07
+
+The owner explicitly approved storing the owner's account address as the
+staging platform recipient and as the recipient for the one active test clinic
+where the same user is an administrator, then approved a bounded alert-on
+window expected to produce at most four generic e-mails. Both recipient writes
+used the reviewed audited RPCs. Verification returned one enabled platform
+recipient, one enabled clinic recipient and one audit row for the platform
+write; no address is copied into repository documentation.
+
+A sending-only Resend key was installed as the staging `RESEND_API_KEY` secret.
+Its value was never read, printed or stored in the repository and the local
+clipboard was cleared after upload. Because no custom sending domain was
+purchased, `wrangler.staging.toml` uses Resend's testing sender and the real
+staging `/staff` URL; the test sender is limited to the address associated with
+the Resend account and is not a pilot/production sender. The flag-off deploy
+completed as version `373d9b69-ee74-4e4b-abd1-8514c101d20d` and `/ready`
+returned 200.
+
+Before activation the database had zero deliveries, zero pending/claimed/
+failed rows and a null heartbeat. The first flag-on deploy attempt timed out at
+the Cloudflare API and a read-only deployment listing proved it created no new
+version; the retry succeeded as version
+`062c10ca-b6be-44e1-a396-50a303779950`. The controlled Cron window created
+exactly four deliveries: the single existing delivery-failure witness fanned
+out to the platform and clinic recipients, and two eligible normal handoff
+witnesses produced clinic deliveries. All four reached `accepted`; pending,
+claimed and failed counts were zero; heartbeat advanced at
+`2026-09-07 12:03:39.419558+00`; `/ready` returned 200. The owner confirmed all
+four generic e-mails arrived.
+
+Codex immediately restored `OPERATIONAL_ALERTS_ENABLED="false"` in staging;
+the rollback deploy completed as version
+`92c6c59d-0e36-4052-ac0f-54a229bbdad0` and `/ready` returned 200. Production,
+custom-domain DNS and real clinic recipients remain unchanged. This closes
+only the corresponding configured/delivery/human-confirmation/flag-rollback
+cells for the existing failure witness; cross-tenant rejection, duplicate/
+retry/recovery, real readiness failure and the other activation-matrix rows
+remain `NOT RUN`. The top-level task status therefore remains `IN_REVIEW`.
+
 ---
 
 # Completed task — 053 Operational alerts and staff-notification activation plan

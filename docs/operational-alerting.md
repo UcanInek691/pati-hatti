@@ -408,7 +408,7 @@ edilir).
 | 1 | Webhook 503, `outcome=ok` ile birlikte (Task 052 tarzı) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 2 | `/ready` başarısız/timeout | PASS — Better Stack, 3 dk | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 3 | Queue metriği ulaşılamıyor/bayat (kimlik doğrulama veya kaynak arızası) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
-| 4 | Tek, izole başarısız iş örneği (outbox `failed` veya tek `staff_work_items` kaydı) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| 4 | Tek, izole başarısız iş örneği (outbox `failed` veya tek `staff_work_items` kaydı) | PASS — 1 platform + 1 test-kliniği alıcısı | NOT RUN — mevcut staging tanığı kullanıldı | PASS — ilgili 2 teslimat sağlayıcıca kabul edildi | PASS — sahip 4 e-postalık toplam kontrollü grubu gördü | NOT RUN | PASS — bayrak tekrar `false`, `/ready` 200 |
 | 5 | Tarayıcı bildirim izni reddedildi / sekme kapalı (mevcut pilot, dürüstlük yeniden doğrulaması) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 6 | Yanlış-klinik alıcı reddi (cross-tenant e-posta asla gitmez) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | 7 | Tekrarlanan/duplicate tetikleme (aynı koşul penceresinde bastırılır) | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
@@ -723,6 +723,31 @@ satır 2'de yalnız “Yapılandırıldı” hücresi bu nedenle kapatılmış, 
 hücreler `NOT RUN` bırakılmıştır. Sağlayıcının test e-postası ayrı kanal
 kanıtıdır; gerçek failure satırının insan onayı değildir. Alarm bayrağı
 `false`, production değişmemiştir.
+
+### Sınırlı sahip-adresi Resend smoke'u — 2026-09-07
+
+Sahibin açık onayıyla Resend'de yalnız gönderim yetkili ayrı staging anahtarı
+oluşturuldu ve değer yalnız staging Worker secret'ına yazıldı; anahtar değeri
+okunmadı veya depoya alınmadı. Özel gönderim alan adı satın alınmadığı için bu
+smoke Resend'in `onboarding@resend.dev` test göndericisini ve yalnız Resend
+hesap sahibinin adresini kullandı. Bu yol gerçek klinik veya pilot alıcılarına
+gönderim yetkisi vermez.
+
+Staging'de aynı kişi için bir platform alıcısı ve üyesi olduğu aktif test
+kliniğinde bir klinik alıcısı, denetimli RPC'lerle etkinleştirildi. İlk durum
+0 teslimat ve boş heartbeat idi. Alarm bayrağı kontrollü pencere için `true`
+yapıldığında tek mevcut `delivery_failure` tanığı platform + klinik olmak üzere
+2 teslimat, iki süresi dolmuş normal `human_handoff` tanığı da klinik için 2
+teslimat üretti. Dördü de `accepted` oldu; `pending`, `claimed` ve `failed`
+sayıları sıfır kaldı, heartbeat ilerledi ve `/ready` 200 döndü. Sahip dört
+genel, kişisel/klinik mesaj içeriği taşımayan e-postanın tamamını gelen kutusunda
+gördüğünü doğruladı.
+
+Hemen ardından `OPERATIONAL_ALERTS_ENABLED="false"` yeniden deploy edildi ve
+`/ready` tekrar 200 doğrulandı. Production, özel alan adı ve gerçek klinik
+alıcıları değişmedi. Bu smoke yalnız §6 satır 4'te işaretlenen hücreleri
+kapatır; yanlış-kiracı, dedup/retry, recovery, gerçek readiness failure ve
+diğer sinyal satırları hâlâ `NOT RUN`dır.
 
 ## Referanslar
 

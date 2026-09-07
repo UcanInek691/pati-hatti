@@ -1240,3 +1240,23 @@ ile oluşturuldu. E-posta bildirimi primary responder'a açıktır.
 VetAI alarm e-postası, Cron heartbeat'i veya §6 satır 2'nin kalan hücreleri
 değildir. `OPERATIONAL_ALERTS_ENABLED` bu sırada `false` kaldı; production ve
 müşteri trafiği değiştirilmedi.
+
+### 26.2 Sınırlı Resend ve Worker-Cron smoke'u — 2026-09-07
+
+Sahibin ayrı onayıyla yalnız staging'de aşağıdaki sınırlı yol çalıştırıldı:
+
+- [x] Gönderim yetkili ayrı Resend anahtarı yalnız Worker secret'ına yazıldı;
+      değer okunmadı veya depoya kaydedilmedi.
+- [x] Özel alan adı olmadan Resend test göndericisi yalnız hesap sahibinin
+      adresine kullanıldı; gerçek klinik/pilot adresi eklenmedi.
+- [x] Denetimli RPC'lerle 1 platform ve 1 aktif test-kliniği alıcısı kuruldu.
+- [x] Başlangıçta teslimat sayısı 0 ve heartbeat boştu.
+- [x] Kontrollü `true` penceresinde 4 genel teslimatın tamamı `accepted` oldu;
+      `pending=0`, `claimed=0`, `failed=0`; heartbeat ilerledi ve `/ready` 200.
+- [x] Sahip dört e-postanın tamamını gelen kutusunda gördü.
+- [x] Bayrak hemen yeniden `false` deploy edildi; `/ready` tekrar 200.
+
+Bu kayıt yalnız §6 satır 4'ün mevcut staging tanığıyla platform + klinik
+teslimini ve geri kapatma yolunu kanıtlar. Yanlış-kiracı, tekrar/retry,
+recovery, gerçek readiness failure, diğer sinyal satırları, özel alan adı ve
+production aktivasyonu hâlâ `NOT RUN`dır.

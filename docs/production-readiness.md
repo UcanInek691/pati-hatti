@@ -406,6 +406,15 @@ oluşturuldu. İlk dış kontrol `Up` oldu; sağlayıcının kendi test e-postas
 sahibine ulaştı. Gerçek failure/timeout, olay, kurtarma ve rollback tanıkları
 çalıştırılmadığından aşağıdaki birleşik alarm kutusu işaretsiz kalır.
 
+Aynı gün ayrı sahip onayıyla Resend test göndericisi ve yalnız sahibin adresi
+kullanılarak sınırlı staging smoke'u yapıldı. Bir denetimli platform alıcısı ve
+bir aktif test-kliniği alıcısı üzerinden oluşan dört genel alarm teslimatının
+dördü de `accepted` oldu; bekleyen/claim edilmiş/başarısız teslimat kalmadı,
+heartbeat ilerledi ve sahip dört e-postayı gördü. Bayrak hemen tekrar `false`
+yapıldı ve `/ready` 200 doğrulandı. Özel gönderim alan adı, gerçek klinik
+alıcıları, diğer hata/retry/recovery/yanlış-kiracı tanıkları ve production
+hâlâ açık olduğundan aşağıdaki birleşik kutular işaretsiz kalır.
+
 - [ ] Alert on Worker exceptions **and actual webhook HTTP 5xx responses**,
       plus dependency-aware `/ready` failures. Task 052 observed HTTP 503
       with invocation `outcome=ok`; exception/outcome counters alone missed
