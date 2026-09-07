@@ -1,4 +1,201 @@
-# Current task — 055 Worker exception alert and pilot ingress canary
+# Current task — 056 Clinic e-mail alert preferences and rollout control
+
+Status: `READY`
+
+Created by Codex on 2026-09-07 after Task 055 closure (`683559b`). Task 053
+already stores clinic recipients and delivers PII-free e-mail alerts, but those
+recipients can currently be changed only through service-role operations. This
+task gives each authenticated clinic staff member control of their own
+subscription and gives the MFA-protected platform administrator a separate
+clinic-wide rollout switch.
+
+## Goal
+
+Add two independent, auditable controls for clinic-scoped alert e-mails:
+
+1. a `/staff` user may enable or disable only their own subscription for each
+   clinic membership; and
+2. the platform administrator may enable or disable the feature for selected
+   clinics from `/admin`, without seeing or editing staff e-mail addresses.
+
+A clinic e-mail is eligible only when the global Worker alert flag, the
+clinic-wide rollout switch and that staff member's own preference are all on.
+Platform-scoped operational alerts are unchanged.
+
+## Fixed decisions and boundaries
+
+- "Account" means a clinic tenant, not an individual Auth user. `/admin`
+  controls the clinic-wide gate; it never impersonates a staff member or
+  overrides an individual's opt-out.
+- The clinic-wide gate defaults off. Applying the migration must not start
+  sending clinic e-mails, create a recipient or enable global alerting.
+- The personal preference is per `(clinic_id, auth.uid())`. No RPC accepts a
+  target user id or e-mail address from the browser. Enabling derives the
+  current confirmed e-mail from Supabase Auth; missing/unconfirmed/malformed
+  e-mail fails closed.
+- Any current `clinic_staff` role may manage only its own preference. A removed
+  membership immediately loses access and the existing composite cascade
+  remains authoritative.
+- `/admin` clinic control requires both `platform_admins` membership and exact
+  JWT `aal2`, using the existing null-safe authorization helper. AAL1,
+  non-member and malformed claims return the same closed result.
+- Turning either gate off stops new clinic delivery creation, new claims and
+  repeats. Re-enabling starts a new eligibility epoch: previously pending or
+  expired-lease clinic deliveries must not become newly sendable. A send whose
+  claim already passed the gate before the toggle cannot be recalled and the
+  UI/docs must say so. New qualifying work after re-enabling may create a fresh
+  delivery. Do not delete accepted history or relabel a configuration stop as
+  a provider failure.
+- Platform-scope recipients and signals remain independent: disabling a
+  clinic's staff e-mail gate must not suppress legitimate platform alerts.
+- Store no new patient, owner, pet, message or phone data. `/admin` receives no
+  staff e-mail or recipient identity. UI text must make the two-key behavior
+  explicit.
+- Reuse the current tables, auth model, native DOM/fetch code and audit style.
+  Add no dependency, secret, provider, background job or generalized settings
+  framework.
+- Task 055 has not yet been deployed to staging. This implementation phase
+  changes no database or external service and does not activate alerting.
+- `.gitignore` and `docs/043-opus-inceleme.md` are pre-existing excluded
+  changes. Do not touch, stage or attribute them to Task 056.
+
+## Allowed changes
+
+- `CURRENT_TASK.md` (implementer: only **Task 056 observed context** and
+  **Task 056 delivery record**);
+- `src/staffPage.ts`, `test/staffPage.test.ts`;
+- `src/adminPage.ts`, `test/adminPage.test.ts`;
+- `supabase/migrations/20260907000200_clinic_alert_preferences.sql` (new);
+- `supabase/tests/056_clinic_alert_preferences.sql` (new, rollback-only);
+- `docs/operational-alerting.md`, `docs/staff-workflow.md`,
+  `docs/platform-admin-overview.md`, `docs/database-schema.md`,
+  `docs/production-readiness.md`, `docs/staging-runbook.md`,
+  `docs/saas-urunlestirme-yol-haritasi.md`, and
+  `docs/kvkk-inceleme-paketi.md`.
+
+No package/lockfile, Wrangler, Worker alert sender/parser, queue/intake,
+appointment, lifecycle/offboarding, unrelated migration, production
+configuration or existing migration edit is allowed. If the required
+eligibility change cannot be made in a new migration while preserving the
+reviewed Task 053 behavior, stop and report the conflict.
+
+## Required database contract
+
+1. Add the smallest clinic-wide gate plus activation epoch needed to default
+   off and prevent stale clinic deliveries from becoming sendable after a
+   disable/re-enable cycle. The epoch is database-authored; browser time is
+   never trusted.
+2. Add an authenticated, `SECURITY DEFINER`, empty-`search_path`, tenant-safe
+   read RPC returning only the caller's clinic memberships and closed setting
+   fields needed by `/staff`: clinic id/name, clinic gate, personal preference
+   and effective preference. Do not return an e-mail address.
+3. Add an authenticated self-service mutation RPC that accepts only clinic id
+   and desired boolean. It resolves `auth.uid()`, locks/rechecks the exact
+   membership, obtains the caller's confirmed Auth e-mail server-side and
+   changes only `(clinic_id, auth.uid())`. Return a small closed result set.
+4. Reuse the existing recipient audit trail with the authenticated caller as
+   actor and a fixed machine-authored reason. Do not accept free-form audit
+   text from either panel. Disabling a missing self-subscription is an
+   idempotent no-op and must not store the e-mail merely to represent `false`.
+5. Add an authenticated platform read RPC returning only clinic id and gate
+   state, plus an authenticated platform mutation RPC returning a closed
+   `forbidden/enabled/already_enabled/disabled/already_disabled/not_found`
+   result. Both enforce exact `platform_admins + aal2` inside the database.
+6. Record clinic-gate state changes in a minimized append-only audit relation
+   containing only actor id, clinic id, desired state and timestamp. Do not
+   expose it to browser roles and do not store clinic name, e-mail, patient or
+   message data.
+7. Recreate only the Task 053 functions whose eligibility predicates must
+   change. Preserve their signatures, result shapes, volatility, invoker/
+   definer mode, empty search path and grants byte-for-byte except for the
+   clinic-gate/personal-epoch predicates.
+8. Every clinic branch of candidate sync requires the clinic gate and enabled
+   recipient. Claim and repeat scheduling recheck both current gates and their
+   activation/update epochs. Platform branches remain behaviorally unchanged.
+9. Define and verify one lock order across clinic, membership, recipient and
+   delivery rows. No new deadlock edge may be introduced against claim,
+   resolve, offboarding or recipient cascade paths.
+10. Direct table access remains closed to `anon` and `authenticated`; only the
+    exact new browser RPCs receive `authenticated` execute. Service-only RPCs
+    and existing RLS/no-policy boundaries remain unchanged.
+
+## Required UI behavior
+
+- `/staff` shows one compact row per current clinic membership with the
+  clinic-wide state, the user's own e-mail preference and the effective state.
+  A staff member can toggle only their own row. The page never asks for or
+  displays an e-mail address and refreshes authoritative state after mutation.
+- When the clinic gate is off, the page clearly says the saved personal
+  preference cannot send mail until the platform enables the clinic. It must
+  not falsely claim that an e-mail was sent.
+- `/admin` shows an e-mail-alert on/off control beside each clinic. It uses the
+  separate platform setting RPC, validates exact response shapes and disables
+  the clicked control while the request is in flight. It shows no recipient
+  e-mail, person id or recipient count.
+- Both pages fail closed on malformed rows/results, clear sessions on 401/403,
+  use `textContent`/native controls, and preserve all existing login, MFA,
+  lifecycle, queue, composer, schedule and browser-notification behavior.
+
+## Acceptance criteria
+
+1. Default migration state sends no new clinic e-mail and leaves the global
+   alert flag untouched.
+2. Same-clinic self enable/disable works; cross-clinic, removed-member,
+   anonymous and target-other-user paths are impossible or return the same
+   closed sentinel without leaking membership.
+3. Browser input cannot choose the stored e-mail or audit actor/reason.
+4. Platform gate mutation requires exact AAL2 plus platform membership; AAL1,
+   malformed/missing AAL and non-members all fail identically with zero audit
+   or delivery mutation.
+5. Effective delivery requires both gates. Clinic-off or personal-off creates,
+   claims and repeats no clinic delivery, while the corresponding platform
+   branch remains intact where applicable.
+6. Disable/re-enable never releases a stale pre-disable unclaimed or expired-
+   lease clinic delivery. A pre-toggle in-flight send is documented as
+   irreversible; a new post-enable work item can still produce a new candidate.
+7. Settings mutations are idempotent, audit only real state changes and use
+   database time. Concurrent equivalent toggles cannot create duplicate state
+   or contradictory audit rows.
+8. Fixture verifies function metadata/grants, tenant isolation, authoritative
+   Auth e-mail, both gates, stale-delivery suppression, platform independence,
+   idempotency, audit minimization and zero residue through real SQL behavior;
+   it states any single-session concurrency limitation honestly.
+9. Staff and admin tests execute the relevant handlers and prove success,
+   idempotent, forbidden/not-found, malformed and session-expiry paths without
+   weakening the existing tests.
+10. Documentation distinguishes personal subscription, clinic rollout gate
+    and global Worker activation, and keeps staging/production/KVKK/operator
+    evidence explicitly `NOT RUN`.
+
+## Required verification and review
+
+Run affected tests first, then once after the last relevant change:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+Run the migration and fixture only on disposable `vetai-test`; never staging or
+production during implementation. Mandatory Claude Opus read-only review is
+required for the AAL2/RLS/tenant, Auth-email, delivery-epoch, concurrency and
+KVKK boundaries. Sonnet does not commit, push, deploy or mutate any service.
+
+## Task 056 observed context
+
+To be filled by the implementing agent from repository evidence.
+
+## Task 056 delivery record
+
+To be filled by the implementing agent from actual work and checks.
+
+---
+
+# Completed task — 055 Worker exception alert and pilot ingress canary
 
 Status: `COMPLETE`
 
