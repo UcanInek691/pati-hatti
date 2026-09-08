@@ -927,8 +927,33 @@ kanıt migration-history kaydı değildir ve staging/production uygulaması
 değildir. `src/staffPage.ts` (kişisel tercih listesi)
 ve `src/adminPage.ts` (klinik anahtarı sütunu) tarafındaki istemci kodu ve
 `test/staffPage.test.ts`/`test/adminPage.test.ts` kapsamındaki statik/davranışsal
-testler yerel olarak geçti; gerçek staging deploy, gerçek e-posta gönderimi ve
-global aktivasyon bayrağı §3/§7'de tanımlandığı gibi hâlâ `NOT RUN`'dır.
+testler yerel olarak geçti. Bu paragraf Task 056'nın kendi kapanış anını
+anlatır; sonraki Task 057 staging deploy/flag-on/e-posta kanıtı ve final
+flag-off durumu aşağıdaki §12'de ayrı tutulur.
+
+## 12. Task 057 — staging aktivasyon kanıtı (2026-09-08, final bayrak kapalı)
+
+Task 055 ve 056 yalnız `vetai-staging` üzerinde yönetilen migration history'ye
+uygulandı ve gerçek browser/RPC/telemetri yollarıyla sınandı. Gerçek hesap
+`$workers.outcome` aggregate şekli katı parser ile uyuştu; geçici aktivasyonda
+heartbeat `fresh` oldu. Platform kapsamlı `worker_exception` e-postası Resend
+tarafından kabul edildi ve hesap sahibi teslimi doğruladı. Allowlist WhatsApp
+kanaryası iki dakikalık PASS sınırı içinde yanıtlandı; ayrıca acil-devir
+kanaryasının outbound kaydı `accepted:read` oldu.
+
+Klinik kapsamlı e-posta kanıtı **PASS değildir**: Auth-owned klinik alıcısına
+oluşan `human_handoff_urgent` teslimatı üç sınırlı denemede sağlayıcı tarafından
+kabul edilmedi ve sabit `send_failed` ile terminal oldu. Bu sonuç, Resend test
+göndericisinin keyfi alıcı kısıtıyla tutarlıdır ve `BLOCKED` olarak kaydedildi;
+alıcı adresi değiştirilmedi veya başka bir hesapla bypass edilmedi. Özel,
+doğrulanmış gönderici alan adı gerçek klinik e-postası önkoşulu olarak kalır.
+
+Pencere sonunda klinik rollout anahtarı ve global Worker bayrağı kapatıldı.
+Etkin klinik anahtarı ve claimed teslimat sıfır; açıklanmış tek yeni klinik
+teslimat yukarıdaki `send_failed` satırıdır. Dört HTTP yüzeyi 200 ve bağımsız
+Better Stack monitörü `Up` olarak doğrulandı. Ayrıntılı, sanitize edilmiş sıra
+[`docs/staging-runbook.md`](staging-runbook.md) §29'dadır. Production ve sürekli
+aktivasyon değişmedi; veteriner/KVKK/operasyon sahibi kapıları açık kaldı.
 
 ## Referanslar
 
@@ -939,7 +964,7 @@ global aktivasyon bayrağı §3/§7'de tanımlandığı gibi hâlâ `NOT RUN`'d�
 - [Cloudflare Queues — değişiklik günlüğü, gerçek zamanlı backlog metrikleri (2026-04-28)](https://developers.cloudflare.com/changelog/post/2026-04-28-improved-queues-metrics/) — kontrol 2026-09-05
 - [Cloudflare Queues — JavaScript API referansı](https://developers.cloudflare.com/queues/configuration/javascript-apis/) (`dateModified: 2026-07-06`) — kontrol 2026-09-05; bu görevde kullanılan yol değildir (producer binding gerektirir), yalnız arka plan referansı
 - [Cloudflare Queues — gerçek zamanlı backlog metrikleri (REST API)](https://developers.cloudflare.com/queues/observability/metrics/) — kontrol 2026-09-05; §2/§3'te kullanılan `GET /accounts/{account_id}/queues/{queue_id}/metrics` uç noktasının kaynağı
-- [Cloudflare Queues — Get Queue Metrics API referansı (`Queues Read` izni burada listelenir)](https://developers.cloudflare.com/api/resources/queues/methods/get_metrics/) — kontrol 2026-09-05; Codex Faz A incelemesinin kabul ettiği doğrudan API-referans kaynağı (yalnız gözlemlenebilirlik rehberine ek); gerçek token oluşturma/staging çağrısı hâlâ NOT RUN
+- [Cloudflare Queues — Get Queue Metrics API referansı (`Queues Read` izni burada listelenir)](https://developers.cloudflare.com/api/resources/queues/methods/get_metrics/) — kontrol 2026-09-05; gerçek staging credential/call yolu Task 057'nin fresh-heartbeat penceresinde çalıştı, fakat production aktivasyonu yapılmadı
 - [Cloudflare Notifications — mevcut bildirim türleri](https://developers.cloudflare.com/notifications/notification-available/) — kontrol 2026-09-05
 - [Cloudflare Workers Observability](https://developers.cloudflare.com/workers/observability/) (son güncelleme 2026-08-03) — kontrol 2026-09-05
 - [Cloudflare Workers Observability — Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/) — kontrol 2026-09-05; §2'de kullanılan `$workers.event.response.status` alanının kaynağı

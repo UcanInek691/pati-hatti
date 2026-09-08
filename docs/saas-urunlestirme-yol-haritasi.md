@@ -43,13 +43,13 @@ gereksinim çıktığında değerlendirilir.
 | Pet ve randevu akışı | Kayıt, düzeltme, randevu oluşturma, mevcut randevuyu bildirme ve iptal staging'de doğrulandı. |
 | Hızlı ardışık mesajlar | Task 039 ile tek sınırlı burst olarak işleniyor. |
 | Seçmeli otomasyon | Strict AI allowlist, manual/personal yollar ve grup dışlama mevcut. |
-| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme, rota yönetimi ve composer (Task 048) staging'de mevcut. Task 051 ile çözüm sonrası yeni konuşmaya dönüş staging'de doğrulandı; ticari ürün için gerçek bildirim/sorumlu takip yolu ve gönderim hız sınırı doğrulaması hâlâ açık — Task 053 Faz A (2026-09-05) onaylandı ve Faz B depo uygulaması yalnız disposable `vetai-test` kanıtını geçti ([`docs/operational-alerting.md`](operational-alerting.md)); migration-history/staging/gerçek e-posta aktivasyonu henüz yapılmadı. |
+| Personel yüzeyi | İş kuyruğu, görme/sahiplenme/çözme, rota yönetimi ve composer (Task 048) staging'de mevcut. Task 051 ile çözüm sonrası yeni konuşmaya dönüş staging'de doğrulandı. Task 057, personel opt-in ve platform klinik rollout kontrollerini staging'de doğruladı; platform e-postası geçti, klinik e-postası Resend test-alıcısı sınırında `BLOCKED` kaldı. Ticari ürün için doğrulanmış gönderici alan adı, gerçek klinik alıcısı ve sorumlu takip yolu hâlâ açıktır ([`docs/operational-alerting.md`](operational-alerting.md) §12). |
 | İnsan onay paketleri | Veteriner ve KVKK taslakları üretildi; dış uzman onayı hâlâ üretim kapısıdır. |
 | Production | Kurulmadı ve hiçbir Task 039 değişikliği production'a uygulanmadı. |
 | Çok-klinik Meta gönderimi | Task 040 ile hesap başına kimlik bilgisi izolasyonu var; kayıt en fazla 10 hesaplı manuel pilot secret'ı olarak sınırlı. |
 | Kullanım/faturalama | Task 042 ile tenant-kapsamlı kullanım defteri var; tarife, kota, tahsilat ve fatura doğruluk kaynağı henüz yok. |
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
-| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 doğrulanmış Workers Observability yolunu ve staging secret/deploy'unu tamamladı. Better Stack Free staging `/ready`yi üç dakikada bir bağımsız kontrol ediyor; gerçek 503 olayı, kesinti e-postası, otomatik recovery ve recovery e-postası doğrulandı. Sınırlı sahip-adresi smoke'unda 4/4 genel VetAI/Resend teslimatı kabul edildi, heartbeat ilerledi ve sahip e-postaları gördü; bayrak hemen tekrar kapatıldı. Task 055 (2026-09-07), yakalanmamış Worker exception'ı yanıt durumundan bağımsız `$workers.outcome` alanıyla sayan ayrı sorgu yolunu depoda uyguladı (yerel/mock + disposable `vetai-test` SQL kanıtı; gerçek hesap sorgusu ve staging deploy henüz yok) ve ilk pilot dönemi için sınırlı, sahip-tetiklemeli bir alım-canlılığı kanaryası tanımladı (yalnız tanım, `NOT RUN`) — bkz. [`docs/operational-alerting.md`](operational-alerting.md#10-task-055--worker_exception-sinyali-2026-09-07-aktivasyon-yok) §10 ve [`docs/staging-runbook.md`](staging-runbook.md#27-task-055--pilot-dönemi-gelen-kanarya-tanımı-2026-09-07-not-run) §27. Kalan matris yolları açık; özel alan adı ve production değişmedi. |
+| Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 doğrulanmış Workers Observability yolunu ve Better Stack `/ready` takibini kurdu. Task 057, Task 055'in `$workers.outcome` sorgu şeklini gerçek staging hesabında, heartbeat'i canlı pencerede ve platform e-postası ile allowlist WhatsApp kanaryasını uçtan uca doğruladı. Final bayrak tekrar kapatıldı. Kalan alarm matrisi, klinik gönderici alan adı ve production değişiklikleri hâlâ açık; bkz. [`docs/staging-runbook.md`](staging-runbook.md) §29. |
 
 Task 052 gecikme araştırması tamamlandı: eşleşen üç eski yanıtın 61–74
 dakikalık farkı başarılı kayıttan önce; kayıt sonrası kabul 18–23 saniyedir.
@@ -494,10 +494,25 @@ klinik başına rollout anahtarı, ve mevcut global Worker aktivasyonu (bkz.
 [`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
 §11). `/staff` ve `/admin` arayüzlerine karşılık gelen kontroller eklendi;
 implementer (Claude Sonnet) migration ve rollback fixture'ı yalnız yazdı.
-Codex'in dar düzeltmelerinden sonra migration yalnız disposable `vetai-test`
+Codex'in dar düzeltmelerinden sonra migration önce disposable `vetai-test`
 üzerinde direct-query olarak uygulandı; rollback fixture ve bağımsız katalog/
-grant/sıfır-artık kanıtı geçti, migration history değişmedi. Claude Opus'un zorunlu bağımsız incelemesi ve
-staging aktivasyonu henüz yapılmadı; production'a hiçbir etkisi yok.
+grant/sıfır-artık kanıtı geçti. Claude Opus'un zorunlu bağımsız incelemesi de
+PASS verdi. Task 057 daha sonra migration'ı staging history'ye uyguladı ve iki
+panel kontrolünü canlı doğruladı; production'a hiçbir etkisi olmadı.
+
+## 10f. Task 057 (staging entegrasyonu geçti, klinik e-postası sağlayıcıda bloklu)
+
+Task 055/056 migration'ları 2026-09-08'de yalnız `vetai-staging` history'sine
+uygulandı. `/staff` kişisel opt-in ve `/admin` klinik rollout kontrolü gerçek
+oturumlarla çalıştı; Cloudflare outcome şekli gerçek hesapta doğrulandı,
+heartbeat tazelendi, platform e-postası kabul edildi ve canlı allowlist
+WhatsApp kanaryası iki dakikalık PASS sınırını karşıladı. Klinik kapsamlı acil
+e-posta adayı doğru tenant'a üretildi fakat Resend test göndericisi Auth-owned
+klinik adresine gönderimi üç denemede kabul etmedi; sonuç `BLOCKED` kaldı ve
+adres değiştirilmedi. Final staging bayrağı ve klinik anahtarı kapalıdır;
+production değişmedi. Satış/pilot öncesi doğrulanmış gönderici alan adı,
+gerçek klinik alıcısı kanıtı, operasyon sahipliği ve veteriner/KVKK kapıları
+hâlâ gereklidir (bkz. [`docs/staging-runbook.md`](staging-runbook.md) §29).
 
 ## 11. Kaynak ve yeniden doğrulama notu
 

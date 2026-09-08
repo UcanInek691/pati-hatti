@@ -1,6 +1,7 @@
-# Current task — 057 Staging alert controls activation and proof
+# Completed task — 057 Staging alert controls activation and proof
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-08 after managed staging migration,
+browser/telemetry/canary proof, conservative restoration and Codex checks)
 
 Created by Codex on 2026-09-07 after Task 056 closure (`1f080c3`). Tasks 055
 and 056 are complete at repository, local-test, disposable-database and
@@ -188,11 +189,108 @@ documentation.
 
 ## Task 057 observed context
 
-To be filled by Codex from repository and sanitized staging evidence.
+- Starting HEAD was `d884e71`; Tasks 055 and 056 were committed at `683559b`
+  and `1f080c3`. The only unrelated worktree entries were the pre-existing
+  `.gitignore` modification and untracked `docs/043-opus-inceleme.md`; neither
+  was touched or staged.
+- The linked Supabase project was the exact staging ref
+  `qtgvddejjjiivjwicxdq`. Managed history initially lacked 055/056; they were
+  applied once each in exact order and history aligned. Catalog checks passed
+  for the nine-value signal CHECK, Task 056 settings/audit/epoch trigger,
+  RLS/no-policy boundaries, exact grants, volatility, security mode and empty
+  search paths. Default clinic rollout state was off.
+- The flag-off Worker/UI smoke passed. `/staff` returned one setting row per
+  membership without an e-mail field and permitted only own-preference
+  transitions. `/admin` returned one gate row per clinic without recipient
+  identity and exercised the test-clinic off/on/off sequence under the existing
+  AAL2 platform session. Audit counts changed only on real transitions.
+- The real staging Cloudflare `vetai-worker-exception-monitor` query returned
+  one non-empty sanitized `ok` aggregate with the exact documented key/value,
+  `interval=1`, `sampleInterval=1`, completed/dry/account/script echoes and no
+  raw event series. The credential was never written to the repository or
+  retained in evidence.
+- In the first approved flag-on window, `/ready` became fresh within three
+  minutes. Better Stack saw one short transition incident and recovered to
+  `Up`. A platform `worker_exception` delivery reached `accepted`; the owner
+  confirmed the e-mail. One harmless allowlisted WhatsApp canary received its
+  reply inside two minutes and the owner confirmed it on-device.
+- A second approved short window exercised the clinic branch with an explicitly
+  simulated urgent message. Sanitized DB evidence showed one inbound, one
+  outbound and outbox `accepted:read`, plus the correct urgent clinic delivery
+  candidate. The clinic e-mail was not accepted after three bounded attempts
+  and became terminal `send_failed`. This is recorded as `BLOCKED`, consistent
+  with the Resend test sender's arbitrary-recipient limitation; the Auth-owned
+  e-mail was not changed or bypassed.
+- Final remote state was conservative: Worker version
+  `bdf98791-101d-4841-916b-d7bfa16c872f` advertised
+  `OPERATIONAL_ALERTS_ENABLED="false"`; enabled clinic gates `0`, claimed alert
+  deliveries `0`, one explained recent clinic `send_failed`, one accepted
+  platform delivery, gate audit rows `6`, recipient audit rows `6`. The own
+  personal subscription remains enabled but ineffective while clinic/global
+  gates are off. `/health`, `/ready`, `/staff`, `/admin` were HTTP 200 and
+  Better Stack was `Up`. The explicitly simulated urgent work item remains
+  visible as `open` for the next authenticated staff session; its WhatsApp
+  reply is already `accepted:read` and both e-mail gates are off. Production
+  was never changed.
 
 ## Task 057 delivery record
 
-To be filled by Codex from actual work and checks.
+### Repository changes
+
+- `docs/staging-runbook.md`, `docs/operational-alerting.md`,
+  `docs/production-readiness.md` and
+  `docs/saas-urunlestirme-yol-haritasi.md` now distinguish exact staging PASS,
+  clinic-mail BLOCKED, final flag-off state and the still-open production/
+  provider/legal/clinical gates.
+- `PROJECT_CONTEXT.md` records only durable Task 057 outcomes.
+- `CURRENT_TASK.md` records this evidence and closure. The temporary
+  `wrangler.staging.toml` `true` transition was restored to committed `false`,
+  leaving no configuration diff. No source, test, migration, package or
+  production file changed.
+
+### Live execution and acceptance
+
+- Managed staging migrations 055 then 056: PASS; exact history/catalog/RLS/
+  grant/default-off checks: PASS.
+- Flag-off `/health`, `/ready`, `/staff`, `/admin`: PASS. Staff self-service and
+  admin AAL2 gate browser/RPC boundaries: PASS; no e-mail/recipient identity in
+  either UI.
+- Sanitized real-account outcome parser preflight: PASS. Fresh heartbeat and
+  independent Better Stack recovery: PASS.
+- Platform-scope alert e-mail: PASS (`accepted`, owner confirmed). Allowlisted
+  live WhatsApp canary: PASS inside two minutes, with sanitized persistence and
+  on-device owner confirmation.
+- Clinic urgent candidate/tenant routing/retry cap: PASS. Arbitrary clinic
+  recipient e-mail through the Resend test sender: `BLOCKED` after exactly
+  three `send_failed` attempts; no recipient substitution was made.
+- Final restoration: PASS — global flag off, clinic gate off, no claimed row,
+  the single failed row explained, four HTTP surfaces healthy, Better Stack
+  `Up`, production untouched.
+
+### Final local checks
+
+- `pnpm typecheck` — PASS, zero errors.
+- Focused Vitest (`operationalAlerts`, `index`, `staffPage`, `adminPage`) — PASS,
+  4 files / 434 tests.
+- Staging Wrangler dry-run — PASS and explicitly reported
+  `OPERATIONAL_ALERTS_ENABLED ("false")`.
+- `git diff --check` — PASS; only line-ending notices.
+- The first sandboxed Node attempts stopped with a Windows parent-directory
+  `EPERM`; the same three commands were rerun in the approved workspace context
+  and passed. The full suite was not repeated because Task 057 left no net code
+  or configuration change and no focused check failed, as the task contract
+  permits.
+
+### Remaining boundaries
+
+- A verified sender domain and real clinic-recipient delivery proof are still
+  required before clinic e-mail can be sold or enabled continuously.
+- Operational ownership/escalation hours, production secrets/deploy/canary,
+  veterinary approval and KVKK/legal approval remain outside Task 057 and
+  `NOT RUN`.
+- The single explicitly simulated urgent work item remains open for an
+  authenticated staff member to resolve. It is not an unexplained delivery or
+  an active e-mail path; the global and clinic gates are off.
 
 ---
 

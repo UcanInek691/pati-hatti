@@ -1218,12 +1218,12 @@ occurred.
   full suite passed 2,097 tests with two unchanged opt-in skips, and frozen
   install, typecheck, both Worker dry-runs, whitespace validation, Codex review
   and mandatory Claude Opus re-review all passed.
-- Task 055 has not been deployed or account-verified in staging or production;
-  operational alerting remains `false`. Before activation, §27 requires a
-  sanitized non-empty real-account outcome-shape preflight, immediate rollback
-  if the heartbeat is not fresh within three minutes, and a human pilot canary
-  that records two minutes as `LATE` and five minutes as `FAIL`. No canary or
-  real Task 055 alert e-mail has been run.
+- Task 057 applied Task 055 and 056 to managed `vetai-staging` migration
+  history on 2026-09-08. Sanitized real-account `$workers.outcome` evidence
+  matched the strict parser, a bounded flag-on window produced a fresh
+  heartbeat, one platform `worker_exception` e-mail was accepted and confirmed
+  by the owner, and an allowlisted WhatsApp canary met the two-minute PASS
+  boundary. Production was not changed.
 - Task 056 is complete at repository and disposable-database gates as of
   2026-09-07. `/staff` now lets an authenticated clinic member manage only
   their own confirmed-Auth-email subscription, while `/admin` lets an exact
@@ -1241,12 +1241,23 @@ occurred.
   migration-history entry. The affected suite passed 210/210, the full suite
   2,115 tests with two unchanged opt-in skips, and all required local gates,
   Codex review and mandatory Claude Opus review passed.
-- Task 056 has not been deployed to staging or production, has sent no real
-  e-mail and does not enable operational alerting. Applying it defaults every
-  clinic rollout gate off; any older clinic delivery would remain suppressed
-  after first enable by design. Staging migration/smoke, provider-domain
-  readiness, alerting activation and the documented veterinary/KVKK/operator
-  approvals remain separate gates.
+- Task 057 proved both Task 056 browser controls on staging: `/staff` changes
+  only the authenticated member's own preference without showing e-mail, and
+  `/admin` changes only the clinic rollout gate under AAL2 without showing any
+  recipient identity. A real urgent clinic candidate was tenant-routed, but
+  the Resend test sender did not accept the Auth-owned clinic recipient after
+  three bounded attempts; that path is `BLOCKED`, not PASS. A verified sender
+  domain and arbitrary-clinic-recipient proof remain pilot prerequisites.
+- Task 057 ended conservatively: `OPERATIONAL_ALERTS_ENABLED="false"`, zero
+  enabled clinic gates, zero claimed alert deliveries, `/health`, `/ready`,
+  `/staff` and `/admin` at HTTP 200, and Better Stack `Up`. One enabled personal
+  preference remains stored but is ineffective while the clinic/global gates
+  are off. The single new clinic delivery is an explained terminal
+  `send_failed`; platform delivery was accepted. Continuous alerting,
+  production, veterinary/KVKK and named operational-owner approvals remain
+  open. The explicitly simulated urgent work item remains visible for the next
+  authenticated staff session to resolve; its WhatsApp reply is already
+  `accepted:read` and it cannot send e-mail while both gates are off.
 
 ## Context maintenance
 

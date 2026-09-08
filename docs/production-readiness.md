@@ -428,17 +428,18 @@ ve diğer alarm maddeleri tamamlanmadığı için kutular işaretsiz kalır.
       this failure class. Monitoring needs an owner and a verified notification
       path, not just an enabled log dashboard. `/ready` is cached for up to
       30 seconds per isolate and is not a Meta/OpenAI end-to-end probe. A
-      Dönen HTTP 5xx'ler için depo yolu vardır fakat staging'de aktive
-      edilmemiştir. Task 055 (2026-09-07), yakalanmamış exception'ı yanıt
-      durumundan bağımsız `$workers.outcome` alanıyla sayan ayrı bir sorgu
-      yolunu depoda uyguladı ve yereldeyken doğruladı — bu box'ı kapatmaya
-      yetmez, çünkü gerçek Cloudflare hesabına karşı doğrulama, staging
-      deploy'u ve alarm bayrağının açılması hâlâ yapılmadı; see
+      Task 055 (2026-09-07), yakalanmamış exception'ı yanıt durumundan bağımsız
+      `$workers.outcome` alanıyla sayan ayrı bir sorgu yolu ekledi. Task 057
+      (2026-09-08) bu şekli gerçek Cloudflare hesabında, staging deploy'unda ve
+      sınırlı bir flag-on penceresinde doğruladı; heartbeat tazelendi ve bir
+      platform alarm e-postası kabul edildi. Bu kutu yine açık kalır: pencere
+      sonunda bayrak kapatıldı ve sürekli production alarm sahipliği ile tüm
+      gerçek exception/HTTP-5xx dalları kanıtlanmadı. See
       [`docs/operational-alerting.md`](operational-alerting.md#10-task-055--worker_exception-sinyali-2026-09-07-aktivasyon-yok)
       §10 for the local implementation evidence and
       [`docs/operational-alerting.md`](operational-alerting.md#2-en-küçük-desteklenen-yol)
       §2 for the two smallest supported fallback options and the open Phase B
-      blocker on choosing between them.
+      remaining production/owner gates.
 - [ ] Alert on backlog depth for all three queues: `vetai-intake`,
       `vetai-intake-dlq`, and `vetai-intake-terminal-dlq`. A non-zero
       `vetai-intake-terminal-dlq` backlog is the last-resort signal that a
@@ -468,11 +469,15 @@ ve diğer alarm maddeleri tamamlanmadığı için kutular işaretsiz kalır.
       clinic-wide rollout gate, and the global Worker alert activation above.
       This clarifies *who* within an already-notified clinic receives mail;
       it does not close any unchecked box above. Its direct-query migration,
-      rollback fixture and catalog/grant/zero-residue proof passed only on
-      disposable `vetai-test`; no migration-history record was created and it
-      was not activated on staging/production. See
+      rollback fixture and catalog/grant/zero-residue proof first passed on
+      disposable `vetai-test`; Task 057 then applied it to staging and proved
+      both browser controls. A bounded window proved platform mail and the
+      live WhatsApp path, but clinic mail remained `BLOCKED` by the Resend test
+      sender/recipient boundary. The window ended with global and clinic gates
+      off; production was not changed. This still does not close the unchecked
+      production/owner/KVKK/veterinary boxes above. See
       [`docs/operational-alerting.md`](operational-alerting.md#11-task-056--klinik-e-posta-uyarı-tercihleri-üç-bağımsız-katman-2026-09-07-aktivasyon-yok)
-      §11.
+      §11–12 and [`docs/staging-runbook.md`](staging-runbook.md) §29.
 
 ## 7. Go / no-go and rollback
 

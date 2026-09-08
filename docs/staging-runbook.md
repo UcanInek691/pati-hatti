@@ -1359,3 +1359,50 @@ aktivasyon adımlarının **hiçbiri** çalıştırılmadı:
 Yerel olarak çalıştırılan ve geçen: `pnpm typecheck`, `pnpm test` (tüm suite,
 Codex/staging kanıtı hariç), ilgili dry-run deploy komutları. Bunların hiçbiri
 staging/production kanıtı yerine geçmez.
+
+## 29. Task 057 — staging alarm kontrolleri aktivasyon kaydı (2026-09-08, tamamlandı ve kapatıldı)
+
+Bu bölüm yalnız `vetai-staging` üzerinde, sahip onayıyla yürütülen sınırlı
+entegrasyon penceresinin sanitize edilmiş kaydıdır. Production değiştirilmedi.
+
+- `20260907000100_worker_exception_alert` ve
+  `20260907000200_clinic_alert_preferences` yönetilen migration history'ye bu
+  sırayla uygulandı. Dokuz sinyal değeri, RLS/no-policy, grant, volatility,
+  `search_path`, trigger/epoch ve varsayılan-kapalı klinik anahtarı katalogdan
+  doğrulandı.
+- Bayrak kapalı Worker önce yayımlandı. `/health`, `/ready`, `/staff` ve
+  `/admin` 200 verdi. `/staff` yalnız çağıranın kendi tercihini, `/admin`
+  yalnız klinik rollout anahtarını değiştirdi; hiçbir arayüz e-posta veya
+  alıcı kimliği göstermedi. Gerçek durum geçişleri audit'e yazıldı,
+  idempotent durumlar yeni audit üretmedi.
+- Gerçek Cloudflare hesabında tam `vetai-worker-exception-monitor` sorgusu
+  sanitize edilmiş biçimde çalıştırıldı. Dolu `ok` aggregate'ı; beklenen
+  outcome/group anahtarını, `interval=1`, `sampleInterval=1`, tamamlanmış/dry
+  run, doğru hesap/script echo'su ve boş raw-series yüzeyini doğruladı. Token,
+  ham olay, header, mesaj veya sağlayıcı kimliği saklanmadı.
+- İlk kontrollü `true` penceresinde heartbeat üç dakika içinde `fresh` oldu.
+  Geçiş sırasında Better Stack kısa bir readiness olayı gördü ve sonra `Up`
+  durumuna döndü. Platform kapsamlı sentetik `worker_exception` teslimatı
+  `accepted` oldu ve sahip e-postayı gördüğünü doğruladı. Aynı penceredeki
+  zararsız allowlist WhatsApp kanaryası iki dakikadan kısa sürede yanıtlandı;
+  sahip yanıtı cihazında doğruladı.
+- İkinci kısa pencerede açıkça test olduğu belirtilen acil-devir mesajı bir
+  `human_handoff_urgent` adayı üretti. Sanitized DB kanıtı bir inbound ve bir
+  outbound mesaj, outbox'ta `accepted:read` ve doğru klinik kapsamını gösterdi.
+  Klinik e-postası üç sınırlı denemenin ardından sabit `send_failed` nedeniyle
+  `BLOCKED` kaldı; bu, Resend test göndericisinin keyfi klinik alıcısını
+  kanıtlayamama sınırıyla tutarlıdır. Auth-owned alıcı adresi değiştirilmedi,
+  sağlayıcı hatası veya kişisel veri kaydedilmedi.
+- Kapanışta klinik rollout anahtarı denetimli RPC ile kapatıldı ve Worker
+  `OPERATIONAL_ALERTS_ENABLED="false"` olarak yeniden yayımlandı. Son kanıt:
+  etkin klinik anahtarı `0`, claimed teslimat `0`, platform accepted `1`,
+  klinik accepted `0`, açıklanmış urgent `send_failed` `1`, gate audit `6`,
+  recipient audit `6`; kişisel opt-in etkisiz biçimde saklı kaldı. `/health`,
+  `/ready`, `/staff`, `/admin` tekrar 200 ve Better Stack `Up` idi. Açıkça
+  sentetik olan urgent work item, personel oturumu sona erdiği için `open`
+  bırakıldı; WhatsApp cevabı zaten `accepted:read` ve iki e-posta kapısı da
+  kapalıdır. Sonraki yetkili personel oturumunda normal çözüm akışıyla
+  kapatılmalıdır.
+
+Bu kanıt özel gönderici alan adı, keyfi klinik alıcısı, sürekli alarm
+aktivasyonu, production, veteriner onayı veya KVKK/hukuk onayı değildir.
