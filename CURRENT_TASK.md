@@ -1,6 +1,7 @@
-# Current task — 058 Staff/admin panel productization and custom-domain readiness
+# Completed task — 058 Staff/admin panel productization and custom-domain readiness
 
-Status: `READY`
+Status: `COMPLETE` (closed 2026-09-08 after Codex diff/security review,
+targeted fixes, local Chromium visual proof and all required gates)
 
 Created by Codex on 2026-09-08 after Task 057 closure (`1045dea`). The existing
 staff and platform-admin panels are functionally verified on staging, but their
@@ -244,14 +245,144 @@ implementer.
 
 ## Task 058 observed context
 
-To be filled by the implementing agent from repository evidence only.
+- Before this task, `/staff` and `/admin` each declared their own inline
+  `<style>` block with duplicated color tokens (`#172033`/`#f5f7fb`/`#dce2ed`/
+  `#eef2f8`/`#a11919`) and no `:root` custom properties — no shared design
+  tokens existed anywhere in the repo.
+- `src/staffPage.ts`'s `showQueueView`/`showDetailView` set each section's
+  `hidden` flag independently and never cleared the others, so the queue,
+  schedule, and alert-preferences sections were all visible simultaneously
+  once shown once; there was no destination/section-switcher UI at all
+  (`test/staffPage.test.ts` had assertions, e.g. on
+  `scheduleSection.hidden = false;` inside `showQueueView`, that pinned this
+  behavior — a sign it was the existing shape, not an oversight in the test).
+- `/admin`'s overview table rendered "Askıya al" (suspend) and "Devam ettir"
+  (resume) as visually identical default `<button>` elements with no
+  danger/warning distinction.
+- Staff's CSP (`default-src 'none'; script-src 'self'; connect-src 'self'
+  ${origin}; ...`) had no `style-src`, which blocked inline styles; admin's
+  CSP carried `style-src 'unsafe-inline'; img-src data:;`. Codex review
+  replaced both cases with the exact SHA-256 hash of the shared static style,
+  so the staff style works without adding `unsafe-inline` and admin's policy
+  is now stricter than before.
+- No browser automation tool is connected in this session (`tabs_context_mcp`
+  returned "Browser extension is not connected"), and `rtk` (mandated by the
+  user's global CLAUDE.md command prefix) is not installed/on `PATH` in this
+  environment — both are environment facts, not something this task could fix.
+- The two reviewed test files (`test/staffPage.test.ts`, `test/adminPage.test.ts`)
+  rely on brittle exact-substring and non-greedy-regex extraction of the HTML/JS
+  template literals, and on a `new Function(...)` runtime-harness pattern
+  (already used 7 times pre-task) to exercise sliced source against fake DOM
+  objects — this constrained edits to be additive/positional rather than
+  reflow the surrounding markup.
 
 ## Task 058 delivery record
 
-To be filled by the implementing agent. Include changed files, behavior retained,
-new UX behavior, exact checks/results, visual inspection evidence or `NOT RUN`,
-known limitations and anything Codex should inspect. Do not edit the task status,
-scope, acceptance criteria or any completed-task record.
+**Changed files** (all within the Allowed-changes list):
+`src/panelStyles.ts` (new), `src/staffPage.ts`, `src/adminPage.ts`,
+`test/staffPage.test.ts`, `test/adminPage.test.ts`, `test/panelStyles.test.ts`
+(new), `docs/staff-workflow.md`, `docs/platform-admin-overview.md`,
+`docs/production-readiness.md`, `docs/staging-runbook.md`,
+`docs/saas-urunlestirme-yol-haritasi.md`, and this file (this section pair
+only). `test/index.test.ts` needed no change (its only CSP assertion is
+scoped to the unrelated `/privacy` route). `.gitignore` and
+`docs/043-opus-inceleme.md` were not touched by this task (`.gitignore`'s
+pre-existing `M` status and `docs/043-opus-inceleme.md`'s untracked status
+both predate this task, per `git log -1 -- .gitignore`).
+
+**Behavior retained:** no new dependency, external font, or CDN; no new
+Worker route; auth/MFA/session/RPC/tenant/RLS/queue logic untouched. The
+shared static CSS is authorized by its exact `sha256-...` CSP source in both
+panels; `unsafe-inline` is not used. Staff still has no image source, while
+admin retains only its pre-existing `img-src data:` allowance for the TOTP QR.
+
+**New UX behavior:**
+- Shared native CSS module `src/panelStyles.ts` (`PANEL_STYLES`, plain CSS
+  template literal with `:root` custom properties) is now interpolated into
+  both `STAFF_HTML` and `ADMIN_HTML` via `<style>${PANEL_STYLES}</style>`.
+- `/staff` gained a keyboard-accessible `<nav aria-label="Panel bölümleri">`
+  with four destinations (İşler, WhatsApp otomasyonu, Takvim, E-posta
+  uyarıları) as plain `<button aria-current="true|false">` elements. A
+  `DESTINATIONS` table + `activeDestination` state + `renderActiveDestination()`
+  / `selectDestination()` now show exactly one section at a time, fixing the
+  pre-existing all-sections-visible behavior. Nav switching issues no network
+  call and never calls `resetReplyDraftState()`. Codex review added the small
+  queue subview state needed to restore an open detail/composer when the user
+  switches away and returns to `İşler`, so the preserved draft is reachable
+  rather than merely remaining in a hidden DOM node.
+  Selecting an unknown/tampered destination is ignored (stays on the current
+  one) instead of blanking the shell.
+- `/admin`'s "Askıya al" button now gets `className = "btn-danger"` (white
+  background, red border/text — not a solid danger fill, so it is not the
+  visually dominant default); "Devam ettir" never gets this class.
+- Both panels gained a `<main>` landmark, `:focus-visible` outlines,
+  `@media (prefers-reduced-motion: reduce)`, `min-height: 2.75rem` (~44px)
+  touch targets, and a `.table-wrap` scroll container around staff's
+  weekly-hours and alert-preferences tables (mirroring admin's pre-existing
+  `#overview-content` pattern; `display:block` on `<table>` was avoided as a
+  known accessibility antipattern).
+
+**Exact checks/results (in contract order):**
+1. `pnpm install --frozen-lockfile` — already up to date, exit 0.
+2. `pnpm typecheck` — exit 0.
+3. `pnpm exec vitest run test/staffPage.test.ts test/adminPage.test.ts test/index.test.ts` — all passed (staffPage 132, adminPage 91, index 101; `test/panelStyles.test.ts` was also run alongside, 3/3 passed).
+4. `pnpm test` (full suite) — 39 files, 2131 passed, 2 pre-existing/unrelated skipped, 0 failed.
+5. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — exit 0.
+6. `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging` — exit 0.
+7. `git diff --check` — exit 0 (only pre-existing CRLF/LF line-ending warnings, no reported whitespace errors).
+
+**Visual inspection at 1440px/768px/375px: PASS (Codex review).** Codex ran
+the Worker locally with non-secret loopback Supabase placeholders and captured
+both unauthenticated panels in headless Chrome at all three widths. The first
+render exposed two real defects missed by static tests: the author rule for
+`#section-nav` overrode `hidden`, and mobile forms caused horizontal overflow.
+Codex added a global `[hidden]` guard and narrow-screen one-column form/two-column
+navigation layout, then recaptured all six views. The final views have no
+pre-login staff navigation, clipped controls, overlapping text or body-level
+horizontal overflow. Admin's long security boundary is now a native collapsed
+`details` disclosure, keeping the first viewport compact. This was local-only;
+authenticated staging views remain outside Task 058.
+
+**Known limitations:**
+- The custom-domain activation checklist (single-sourced in
+  `docs/production-readiness.md` §8, referenced from
+  `docs/staging-runbook.md` §30) is entirely `NOT RUN`, as required — no
+  domain, Cloudflare route, Supabase Auth setting, or monitor was touched.
+- The staff nav uses plain `<button aria-current>` rather than a full ARIA
+  `tablist`/`tab` + roving-tabindex pattern — a deliberate simplification
+  since native `<button>` elements are already fully keyboard-operable via
+  Tab/Enter/Space, and adding `role="tabpanel"` risked breaking the
+  pre-existing pinned exact-substring assertions on the section tags.
+- Only unauthenticated local views were visually inspected. Authenticated
+  staging and custom-domain views remain part of the later activation task.
+
+**Codex review outcome:** the listed source assertions and runtime harnesses
+were inspected. Codex additionally fixed the CSP relaxation, hidden-navigation
+override, mobile overflow, inaccessible preserved draft, and oversized admin
+warning described above. The CSP hash is recomputed by
+`test/panelStyles.test.ts`, preventing CSS/hash drift. Final gates and commit
+details: frozen install and typecheck passed; the focused four-file suite passed
+328/328; the full suite passed 2,132 tests with two unchanged opt-in skips;
+both production and staging Worker dry-runs passed; `git diff --check` passed.
+No database, external service, staging Worker, production Worker or domain was
+mutated.
+
+**For Codex to inspect:**
+- The 3 pre-existing `test/staffPage.test.ts` assertions that were rewritten
+  because they pinned the old simultaneous-visibility bug (CSP string test at
+  the old line 85, the schedule-section and alert-prefs-section visibility
+  tests) — confirm the new assertions actually verify the required behavior
+  and were not weakened.
+- The fail-closed unknown-destination test and the runtime-harness
+  destination-switching test in `test/staffPage.test.ts`, and the
+  danger/warning ordering test in `test/adminPage.test.ts`.
+- That the working-tree diff touches only the files listed above (`git status
+  --porcelain` was checked in this session and confirmed only those files,
+  plus the pre-existing unrelated `.gitignore` change and untracked
+  `docs/043-opus-inceleme.md`, both predating this task).
+
+No commit, push, deploy, or mutation of any real service, database, or
+domain was performed.
 
 ---
 

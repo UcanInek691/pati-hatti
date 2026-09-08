@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { PANEL_STYLES, PANEL_STYLES_CSP_HASH } from "./panelStyles";
 
 export interface AdminConfig {
   supabaseUrl: string;
@@ -57,30 +58,22 @@ export const ADMIN_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VetAI Platform Yönetici Paneli</title>
-<style>
-  :root { color-scheme: light; font-family: system-ui, sans-serif; }
-  body { max-width: 96rem; margin: 0 auto; padding: 1rem; color: #172033; background: #f5f7fb; }
-  header, section { background: white; border: 1px solid #dce2ed; border-radius: .75rem; padding: 1rem; margin-bottom: 1rem; }
-  form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; }
-  label { font-weight: 600; }
-  input, button { font: inherit; padding: .55rem .7rem; }
-  button { cursor: pointer; }
-  #overview-content { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; background: white; }
-  th, td { padding: .65rem; border-bottom: 1px solid #e5e9f0; text-align: left; white-space: nowrap; }
-  th { background: #eef2f8; }
-  #error-region { color: #a11919; font-weight: 600; }
-  @media (max-width: 42rem) { body { padding: .5rem; } header, section { padding: .75rem; } }
-</style>
+<style>${PANEL_STYLES}</style>
 </head>
 <body>
-<header>
+<header class="app-header">
+  <p class="app-eyebrow">VetAI Operasyon</p>
   <h1>VetAI Platform Yönetici Paneli</h1>
-  <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Klinik oluşturma (her zaman askıya alınmış durumda başlar), askıya alma ve devam ettirme dışında müdahale yetkisi yoktur; kapanış, fiyatlandırma, faturalandırma, e-posta/parola/Meta kimlik bilgisi işlemleri ve müşteri içeriğine erişim bu panelden yapılamaz. MVP sürümünde bu panele erişim, şifre girişinin ardından veritabanı düzeyinde zorunlu kılınan TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir; yalnızca ikinci faktörü (aal2) doğrulanmış oturumlar genel bakış verisini görebilir. Bu denetim staging ortamında uçtan uca doğrulanana kadar panel üretimde onaylı ayrıcalıklı erişim olarak kabul edilemez.</p>
+  <p class="app-subtitle">Klinik yaşam döngüsü ve platform görünürlüğü</p>
+  <details class="security-notice">
+    <summary>Yetki ve güvenlik sınırları</summary>
+    <p>Bu panel yalnızca salt-okunur operasyonel metadata ve seçilen ayın kullanım özetini gösterir; müşteri mesajlarını veya telefon numaralarını göstermez. Klinik oluşturma (her zaman askıya alınmış durumda başlar), askıya alma ve devam ettirme dışında müdahale yetkisi yoktur; kapanış, fiyatlandırma, faturalandırma, e-posta/parola/Meta kimlik bilgisi işlemleri ve müşteri içeriğine erişim bu panelden yapılamaz. MVP sürümünde bu panele erişim, şifre girişinin ardından veritabanı düzeyinde zorunlu kılınan TOTP tabanlı çok faktörlü doğrulamayı (MFA) gerektirir; yalnızca ikinci faktörü (aal2) doğrulanmış oturumlar genel bakış verisini görebilir. Staging doğrulaması production erişim onayı değildir; production için ayrı aktivasyon, kurtarma ve operasyon onayı gerekir.</p>
+  </details>
   <p id="status-region" role="status" aria-live="polite"></p>
   <p id="error-region" role="alert" aria-live="assertive"></p>
 </header>
 
+<main>
 <section id="login-section" aria-labelledby="login-heading">
   <h2 id="login-heading">Giriş</h2>
   <form id="login-form">
@@ -88,7 +81,7 @@ export const ADMIN_HTML = `<!doctype html>
     <input type="email" id="email-input" name="email" required autocomplete="username">
     <label for="password-input">Şifre</label>
     <input type="password" id="password-input" name="password" required autocomplete="current-password">
-    <button type="submit">Giriş yap</button>
+    <button type="submit" class="btn-primary">Giriş yap</button>
   </form>
 </section>
 
@@ -167,6 +160,7 @@ export const ADMIN_HTML = `<!doctype html>
     </form>
   </section>
 </section>
+</main>
 
 <script src="/admin/app.js"></script>
 </body>
@@ -958,6 +952,7 @@ function renderOverview(rows, alertGates) {
       const suspendButton = document.createElement("button");
       suspendButton.type = "button";
       suspendButton.textContent = "Ask\\u0131ya al";
+      suspendButton.className = "btn-danger";
       suspendButton.addEventListener("click", () => handleSuspend(row.clinic_id, suspendButton));
       actionsTd.appendChild(suspendButton);
     } else if (row.operational_status === "suspended") {
@@ -1244,7 +1239,7 @@ export function handleAdminShell(env: Env): Response {
     return serviceUnavailable();
   }
   const origin = new URL(config.supabaseUrl).origin;
-  const csp = `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  const csp = `default-src 'none'; script-src 'self'; style-src ${PANEL_STYLES_CSP_HASH}; img-src data:; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
   return new Response(ADMIN_HTML, {
     status: 200,
     headers: {

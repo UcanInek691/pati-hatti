@@ -1406,3 +1406,13 @@ entegrasyon penceresinin sanitize edilmiş kaydıdır. Production değiştirilme
 
 Bu kanıt özel gönderici alan adı, keyfi klinik alıcısı, sürekli alarm
 aktivasyonu, production, veteriner onayı veya KVKK/hukuk onayı değildir.
+
+## 30. Task 058 — özel alan adı aktivasyon kontrol listesi (yalnızca belge, NOT RUN)
+
+Tek kaynak [`docs/production-readiness.md`](production-readiness.md) §8'dedir;
+burada tekrar edilmiyor. Bu görevde tüm adımlar `NOT RUN` kaldı: hiçbir alan
+adı bağlanmadı, Supabase Auth ayarı değişmedi, Better Stack monitor
+güncellenmedi. Görev yalnızca `/staff` ve `/admin`'i ortak native bir kabukla
+(paylaşılan `src/panelStyles.ts`, 4 sekmeli personel navigasyonu, admin'de
+açık tehlike/uyarı ayrımı) yeniden düzenledi; staging'in `workers.dev` hedefi
+ve bu runbook'taki mevcut kanıtlar değişmeden kaldı.

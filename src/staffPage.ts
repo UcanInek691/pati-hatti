@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { PANEL_STYLES, PANEL_STYLES_CSP_HASH } from "./panelStyles";
 
 export interface StaffConfig {
   supabaseUrl: string;
@@ -54,14 +55,25 @@ export const STAFF_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VetAI Personel Paneli</title>
+<style>${PANEL_STYLES}</style>
 </head>
 <body>
-<header>
+<header class="app-header">
+  <p class="app-eyebrow">VetAI Operasyon</p>
   <h1>VetAI Personel Paneli</h1>
+  <p class="app-subtitle">Klinik işleri, otomasyon ve çalışma takvimi</p>
   <p id="status-region" role="status" aria-live="polite"></p>
   <p id="error-region" role="alert" aria-live="assertive"></p>
 </header>
 
+<nav id="section-nav" aria-label="Panel bölümleri" hidden>
+  <button type="button" class="nav-tab" id="nav-tab-queue" data-destination="queue" aria-controls="queue-section" aria-current="true">İşler</button>
+  <button type="button" class="nav-tab" id="nav-tab-automation" data-destination="automation" aria-controls="automation-section" aria-current="false">WhatsApp otomasyonu</button>
+  <button type="button" class="nav-tab" id="nav-tab-schedule" data-destination="schedule" aria-controls="schedule-section" aria-current="false">Takvim</button>
+  <button type="button" class="nav-tab" id="nav-tab-alerts" data-destination="alerts" aria-controls="alert-prefs-section" aria-current="false">E-posta uyarıları</button>
+</nav>
+
+<main>
 <section id="login-section" aria-labelledby="login-heading">
   <h2 id="login-heading">Giriş</h2>
   <form id="login-form">
@@ -69,7 +81,7 @@ export const STAFF_HTML = `<!doctype html>
     <input type="email" id="email-input" name="email" required autocomplete="username">
     <label for="password-input">Şifre</label>
     <input type="password" id="password-input" name="password" required autocomplete="current-password">
-    <button type="submit">Giriş yap</button>
+    <button type="submit" class="btn-primary">Giriş yap</button>
   </form>
 </section>
 
@@ -120,6 +132,7 @@ export const STAFF_HTML = `<!doctype html>
   <p id="schedule-error-region" role="alert" aria-live="assertive"></p>
   <p>Saat ve kapanış değişiklikleri onaylı veya tutulan randevuları iptal etmez, taşımaz ve sahiplerine bildirim göndermez.</p>
 
+  <div class="table-wrap">
   <table>
     <caption>Haftalık çalışma saatleri</caption>
     <thead>
@@ -127,6 +140,7 @@ export const STAFF_HTML = `<!doctype html>
     </thead>
     <tbody id="weekly-hours-body"></tbody>
   </table>
+  </div>
 
   <h3>Kapanış günleri</h3>
   <form id="closure-form" hidden>
@@ -150,6 +164,7 @@ export const STAFF_HTML = `<!doctype html>
   <p id="alert-prefs-status-region" role="status" aria-live="polite"></p>
   <p id="alert-prefs-error-region" role="alert" aria-live="assertive"></p>
   <p>Klinik geneli anahtarı yalnızca platform yöneticisi açabilir. O anahtar kapalıyken, kendi tercihiniz açık olsa bile size e-posta gönderilmez. Kapatmadan önce gönderimi başlamış bir e-posta geri çağrılamaz ve yine de ulaşabilir.</p>
+  <div class="table-wrap">
   <table>
     <caption>Klinik uyarıları</caption>
     <thead>
@@ -157,6 +172,7 @@ export const STAFF_HTML = `<!doctype html>
     </thead>
     <tbody id="alert-prefs-body"></tbody>
   </table>
+  </div>
 </section>
 
 <section id="detail-section" aria-labelledby="detail-heading" hidden>
@@ -176,6 +192,7 @@ export const STAFF_HTML = `<!doctype html>
   <button type="button" id="resolve-button">Çözüldü olarak işaretle</button>
   <button type="button" id="back-button">Listeye dön</button>
 </section>
+</main>
 
 <script src="/staff/app.js"></script>
 </body>
@@ -237,6 +254,11 @@ const alertPrefsSection = document.getElementById("alert-prefs-section");
 const alertPrefsStatusRegion = document.getElementById("alert-prefs-status-region");
 const alertPrefsErrorRegion = document.getElementById("alert-prefs-error-region");
 const alertPrefsBody = document.getElementById("alert-prefs-body");
+const sectionNav = document.getElementById("section-nav");
+const navTabQueue = document.getElementById("nav-tab-queue");
+const navTabAutomation = document.getElementById("nav-tab-automation");
+const navTabSchedule = document.getElementById("nav-tab-schedule");
+const navTabAlerts = document.getElementById("nav-tab-alerts");
 
 const KIND_LABELS = { human_handoff: "\\u0130nsan devri", delivery_failure: "Teslimat hatas\\u0131" };
 const REASON_LABELS = {
@@ -319,8 +341,45 @@ function clearMessages() {
   statusRegion.textContent = "";
 }
 
+const DESTINATIONS = [
+  ["queue", queueSection, navTabQueue],
+  ["automation", automationSection, navTabAutomation],
+  ["schedule", scheduleSection, navTabSchedule],
+  ["alerts", alertPrefsSection, navTabAlerts],
+];
+
+let activeDestination = "queue";
+let queueSubview = "list";
+
+function renderActiveDestination() {
+  for (const [key, section, tab] of DESTINATIONS) {
+    section.hidden = key !== activeDestination;
+    tab.setAttribute("aria-current", key === activeDestination ? "true" : "false");
+  }
+  if (activeDestination === "queue" && queueSubview === "detail") {
+    queueSection.hidden = true;
+    detailSection.hidden = false;
+  } else {
+    detailSection.hidden = true;
+  }
+}
+
+function selectDestination(destination) {
+  if (!DESTINATIONS.some(([key]) => key === destination)) {
+    return;
+  }
+  activeDestination = destination;
+  renderActiveDestination();
+}
+
+navTabQueue.addEventListener("click", () => selectDestination("queue"));
+navTabAutomation.addEventListener("click", () => selectDestination("automation"));
+navTabSchedule.addEventListener("click", () => selectDestination("schedule"));
+navTabAlerts.addEventListener("click", () => selectDestination("alerts"));
+
 function showLoginView() {
   loginSection.hidden = false;
+  sectionNav.hidden = true;
   queueSection.hidden = true;
   detailSection.hidden = true;
   automationSection.hidden = true;
@@ -330,20 +389,18 @@ function showLoginView() {
 
 function showQueueView() {
   loginSection.hidden = true;
-  queueSection.hidden = false;
-  detailSection.hidden = true;
-  automationSection.hidden = false;
-  scheduleSection.hidden = false;
-  alertPrefsSection.hidden = false;
+  sectionNav.hidden = false;
+  activeDestination = "queue";
+  queueSubview = "list";
+  renderActiveDestination();
 }
 
 function showDetailView() {
   loginSection.hidden = true;
-  queueSection.hidden = true;
-  detailSection.hidden = false;
-  automationSection.hidden = true;
-  scheduleSection.hidden = true;
-  alertPrefsSection.hidden = true;
+  sectionNav.hidden = false;
+  activeDestination = "queue";
+  queueSubview = "detail";
+  renderActiveDestination();
 }
 
 function stopPolling() {
@@ -2155,7 +2212,7 @@ export function handleStaffShell(env: Env): Response {
     return serviceUnavailable();
   }
   const origin = new URL(config.supabaseUrl).origin;
-  const csp = `default-src 'none'; script-src 'self'; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  const csp = `default-src 'none'; script-src 'self'; style-src ${PANEL_STYLES_CSP_HASH}; connect-src 'self' ${origin}; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
   return new Response(STAFF_HTML, {
     status: 200,
     headers: {

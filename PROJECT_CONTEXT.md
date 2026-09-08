@@ -482,8 +482,10 @@ Verified evidence before the context-system change:
   echoes, and operator expectations have not been verified on the intended
   Turkish pilot account. The repository now provides explicit routing, but
   Meta-side coexistence remains a staging gate.
-- External/background staff notification and administrative user or clinic
-  management.
+- General self-service Auth-user administration and platform-managed credential
+  rotation are not implemented. Clinic lifecycle controls and bounded e-mail
+  alert preferences exist, but production delivery still requires an owner
+  domain, verified sender and operational/KVKK approvals.
 - New-pet creation is **live on staging only**. Task 035's code
   (`supabase/migrations/20260825000100_pet_registration.sql`,
   `src/petRegistration.ts`, the fixture `supabase/tests/035_pet_registration.sql`)
@@ -502,7 +504,6 @@ Verified evidence before the context-system change:
   The Task 037 migration and Worker are not yet on staging or production.
 - Deterministic triage and actual staff notification/handoff operations.
 - Summaries, memory, embeddings, or RAG.
-- A full staff/admin panel beyond the minimal read/detail/resolve surface.
 - No self-service clinic credential provisioning, dynamic credential broker,
   or platform-admin secret-management surface exists. Task 040's encrypted
   pilot registry is deliberately capped at ten WhatsApp accounts.
@@ -1258,6 +1259,25 @@ occurred.
   open. The explicitly simulated urgent work item remains visible for the next
   authenticated staff session to resolve; its WhatsApp reply is already
   `accepted:read` and it cannot send e-mail while both gates are off.
+- Task 058 is complete at the repository and local-browser gates as of
+  2026-09-08. `/staff` and `/admin` now share a dependency-free native CSS
+  shell; the staff panel has four keyboard-operable operational destinations,
+  preserves and restores an open reply composer across section switches, and
+  the admin panel keeps availability-affecting suspend controls visually
+  distinct without making them the default action. Authentication, AAL2,
+  session, RPC, RLS, tenant, clinical and database contracts were unchanged.
+- Both panels authorize the exact shared inline stylesheet by SHA-256 CSP hash;
+  neither uses `unsafe-inline` for styles. Codex rendered the unauthenticated
+  staff/admin surfaces locally in Chromium at 1440, 768 and 375 pixels and
+  verified the corrected hidden-state, mobile form, compact admin-warning and
+  no-horizontal-overflow behavior. The full suite passed 2,132 tests with two
+  unchanged opt-in skips; frozen install, typecheck, focused tests, both Worker
+  dry-runs and whitespace validation passed.
+- The custom-domain sequence is documented but entirely `NOT RUN`. No domain,
+  DNS, Cloudflare custom-domain binding, Supabase Auth redirect, Resend sender
+  domain, Better Stack production monitor, staging Worker or production system
+  changed in Task 058. Exact owner hostname selection and authenticated staging/
+  custom-origin smoke belong to the next activation task.
 
 ## Context maintenance
 

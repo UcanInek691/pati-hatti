@@ -82,7 +82,7 @@ describe("handleStaffShell", () => {
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expectSecurityHeaders(res);
     const csp = res.headers.get("Content-Security-Policy");
-    expect(csp).toBe("default-src 'none'; script-src 'self'; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'sha256-YPvTUDSxjpMTosU17ou+TQQ+PibSHCUhQCJMsxMJLoY='; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(await res.text()).toBe(STAFF_HTML);
   });
 
@@ -477,22 +477,20 @@ describe("handleStaffScript: Klinik takvimi (Task 044)", () => {
     expect(STAFF_HTML).toContain('<ul id="slot-list"></ul>');
   });
 
-  it("toggles the schedule section together with the queue section and hides it elsewhere", () => {
-    const showQueueBody = STAFF_APP_JS.slice(
-      STAFF_APP_JS.indexOf("function showQueueView() {"),
-      STAFF_APP_JS.indexOf("function showDetailView() {"),
+  it("shows the schedule section only when Takvim is the active destination, and hides it on login/detail", () => {
+    const renderActiveBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function renderActiveDestination() {"),
+      STAFF_APP_JS.indexOf("function selectDestination("),
     );
-    expect(showQueueBody).toContain("scheduleSection.hidden = false;");
+    expect(STAFF_APP_JS).toContain('["schedule", scheduleSection, navTabSchedule]');
+    expect(renderActiveBody).toContain("section.hidden = key !== activeDestination;");
     const showLoginBody = STAFF_APP_JS.slice(
       STAFF_APP_JS.indexOf("function showLoginView() {"),
       STAFF_APP_JS.indexOf("function showQueueView() {"),
     );
     expect(showLoginBody).toContain("scheduleSection.hidden = true;");
-    const showDetailBody = STAFF_APP_JS.slice(
-      STAFF_APP_JS.indexOf("function showDetailView() {"),
-      STAFF_APP_JS.indexOf("function showDetailView() {") + 250,
-    );
-    expect(showDetailBody).toContain("scheduleSection.hidden = true;");
+    expect(renderActiveBody).toContain("section.hidden = key !== activeDestination;");
+    expect(renderActiveBody).toContain('activeDestination === "queue" && queueSubview === "detail"');
   });
 
   it("loads clinic memberships scoped to the current user only, validating exact shape, canonical UUIDs, closed role/status enums, bounded size and uniqueness", () => {
@@ -776,23 +774,20 @@ describe("handleStaffScript: Klinik takvimi (Task 044)", () => {
 });
 
 describe("handleStaffScript: Klinik uyari tercihleri (Task 056)", () => {
-  it("renders the alert-prefs section hidden until login, shown on queue view, hidden on detail view", () => {
+  it("renders the alert-prefs section hidden until login, reachable via the E-posta uyarıları destination, hidden on detail view", () => {
     expect(STAFF_HTML).toContain('<section id="alert-prefs-section" aria-labelledby="alert-prefs-heading" hidden>');
     const showLoginBody = STAFF_APP_JS.slice(
       STAFF_APP_JS.indexOf("function showLoginView() {"),
       STAFF_APP_JS.indexOf("function showQueueView() {"),
     );
-    const showQueueBody = STAFF_APP_JS.slice(
-      STAFF_APP_JS.indexOf("function showQueueView() {"),
-      STAFF_APP_JS.indexOf("function showDetailView() {"),
-    );
-    const showDetailBody = STAFF_APP_JS.slice(
-      STAFF_APP_JS.indexOf("function showDetailView() {"),
-      STAFF_APP_JS.indexOf("function clearSession() {"),
+    const renderActiveBody = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("function renderActiveDestination() {"),
+      STAFF_APP_JS.indexOf("function selectDestination("),
     );
     expect(showLoginBody).toContain("alertPrefsSection.hidden = true;");
-    expect(showQueueBody).toContain("alertPrefsSection.hidden = false;");
-    expect(showDetailBody).toContain("alertPrefsSection.hidden = true;");
+    expect(STAFF_APP_JS).toContain('["alerts", alertPrefsSection, navTabAlerts]');
+    expect(renderActiveBody).toContain("section.hidden = key !== activeDestination;");
+    expect(renderActiveBody).toContain('activeDestination === "queue" && queueSubview === "detail"');
   });
 
   it("loads alert preferences via get_my_clinic_alert_preferences with an empty body and strictly validates the closed 5-key row shape", () => {
@@ -1542,5 +1537,164 @@ describe("handleStaffConfig", () => {
     const res = handleStaffConfig({ ...baseEnv, SUPABASE_URL: "http://example.supabase.co" });
     expect(res.status).toBe(503);
     expectSecurityHeaders(res);
+  });
+});
+
+describe("handleStaffScript: application shell and section navigation (Task 058)", () => {
+  it("renders exactly one inline style block, no external stylesheet, font or CDN asset", () => {
+    expect((STAFF_HTML.match(/<style>/g) || []).length).toBe(1);
+    expect(STAFF_HTML).not.toMatch(/<link[^>]*stylesheet/i);
+    expect(STAFF_HTML).not.toMatch(/https?:\/\//);
+    expect(STAFF_HTML).not.toMatch(/\/\/[a-z0-9.-]+\.(?:googleapis|gstatic|jsdelivr|cloudflare)\.com/i);
+    expect(STAFF_HTML).not.toContain("@import");
+  });
+
+  it("respects prefers-reduced-motion and remains usable at the 42rem narrow breakpoint", () => {
+    expect(STAFF_HTML).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(STAFF_HTML).toContain("@media (max-width: 42rem)");
+  });
+
+  it("does not introduce a new client-side storage mechanism", () => {
+    expect(STAFF_APP_JS).not.toContain("localStorage");
+    expect(STAFF_APP_JS).not.toContain("indexedDB");
+  });
+
+  it("renders the four staff navigation destinations with the exact required Turkish labels and ARIA wiring, hidden before login", () => {
+    expect(STAFF_HTML).toContain('<nav id="section-nav" aria-label="Panel bölümleri" hidden>');
+    expect(STAFF_HTML).toContain(
+      '<button type="button" class="nav-tab" id="nav-tab-queue" data-destination="queue" aria-controls="queue-section" aria-current="true">İşler</button>',
+    );
+    expect(STAFF_HTML).toContain(
+      '<button type="button" class="nav-tab" id="nav-tab-automation" data-destination="automation" aria-controls="automation-section" aria-current="false">WhatsApp otomasyonu</button>',
+    );
+    expect(STAFF_HTML).toContain(
+      '<button type="button" class="nav-tab" id="nav-tab-schedule" data-destination="schedule" aria-controls="schedule-section" aria-current="false">Takvim</button>',
+    );
+    expect(STAFF_HTML).toContain(
+      '<button type="button" class="nav-tab" id="nav-tab-alerts" data-destination="alerts" aria-controls="alert-prefs-section" aria-current="false">E-posta uyarıları</button>',
+    );
+  });
+
+  it("switching the active destination toggles exactly one visible section, invokes no loader, and never touches the reply draft", () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("const DESTINATIONS = ["),
+      STAFF_APP_JS.indexOf("function stopPolling() {"),
+    );
+    expect(source).not.toMatch(/resetReplyDraftState|authedFetch|fetch\(|replyContentInput/);
+
+    function makeSection(hidden: boolean) {
+      return { hidden };
+    }
+    function makeTab() {
+      let handler: (() => void) | null = null;
+      const attrs: Record<string, string> = {};
+      return {
+        setAttribute: (key: string, value: string) => {
+          attrs[key] = value;
+        },
+        getAttribute: (key: string) => attrs[key],
+        addEventListener: (type: string, fn: () => void) => {
+          if (type === "click") handler = fn;
+        },
+        click: () => handler && handler(),
+      };
+    }
+    const deps = {
+      loginSection: makeSection(false),
+      sectionNav: { hidden: true },
+      queueSection: makeSection(true),
+      automationSection: makeSection(true),
+      scheduleSection: makeSection(true),
+      alertPrefsSection: makeSection(true),
+      detailSection: makeSection(true),
+      navTabQueue: makeTab(),
+      navTabAutomation: makeTab(),
+      navTabSchedule: makeTab(),
+      navTabAlerts: makeTab(),
+    };
+    const makeHarness = new Function(
+      "deps",
+      `"use strict";
+       const { loginSection, sectionNav, queueSection, automationSection, scheduleSection, alertPrefsSection, detailSection, navTabQueue, navTabAutomation, navTabSchedule, navTabAlerts } = deps;
+       ${source}
+       return { showQueueView, showDetailView, getActiveDestination: () => activeDestination, getQueueSubview: () => queueSubview };`,
+    ) as (deps: unknown) => {
+      showQueueView: () => void;
+      showDetailView: () => void;
+      getActiveDestination: () => string;
+      getQueueSubview: () => string;
+    };
+    const harness = makeHarness(deps);
+
+    harness.showQueueView();
+    expect(deps.queueSection.hidden).toBe(false);
+    expect(deps.automationSection.hidden).toBe(true);
+    expect(deps.scheduleSection.hidden).toBe(true);
+    expect(deps.alertPrefsSection.hidden).toBe(true);
+
+    harness.showDetailView();
+    expect(deps.detailSection.hidden).toBe(false);
+    expect(deps.queueSection.hidden).toBe(true);
+    expect(harness.getQueueSubview()).toBe("detail");
+
+    deps.navTabSchedule.click();
+    expect(harness.getActiveDestination()).toBe("schedule");
+    expect(deps.scheduleSection.hidden).toBe(false);
+    expect(deps.detailSection.hidden).toBe(true);
+    expect(deps.queueSection.hidden).toBe(true);
+    expect(deps.automationSection.hidden).toBe(true);
+    expect(deps.alertPrefsSection.hidden).toBe(true);
+
+    deps.navTabQueue.click();
+    expect(harness.getActiveDestination()).toBe("queue");
+    expect(deps.queueSection.hidden).toBe(true);
+    expect(deps.detailSection.hidden).toBe(false);
+    expect(deps.scheduleSection.hidden).toBe(true);
+  });
+
+  it("ignores an unknown or tampered destination instead of blanking the shell (fail-closed)", () => {
+    const source = STAFF_APP_JS.slice(
+      STAFF_APP_JS.indexOf("const DESTINATIONS = ["),
+      STAFF_APP_JS.indexOf("function showLoginView() {"),
+    );
+    function makeSection(hidden: boolean) {
+      return { hidden };
+    }
+    const deps = {
+      queueSection: makeSection(false),
+      automationSection: makeSection(true),
+      scheduleSection: makeSection(true),
+      alertPrefsSection: makeSection(true),
+      detailSection: makeSection(false),
+      navTabQueue: { setAttribute: () => {}, addEventListener: () => {} },
+      navTabAutomation: { setAttribute: () => {}, addEventListener: () => {} },
+      navTabSchedule: { setAttribute: () => {}, addEventListener: () => {} },
+      navTabAlerts: { setAttribute: () => {}, addEventListener: () => {} },
+    };
+    const makeHarness = new Function(
+      "deps",
+      `"use strict";
+       const { queueSection, automationSection, scheduleSection, alertPrefsSection, detailSection, navTabQueue, navTabAutomation, navTabSchedule, navTabAlerts } = deps;
+       ${source}
+       return { selectDestination, getActiveDestination: () => activeDestination };`,
+    ) as (deps: unknown) => { selectDestination: (destination: string) => void; getActiveDestination: () => string };
+    const harness = makeHarness(deps);
+
+    harness.selectDestination("__proto__");
+    expect(harness.getActiveDestination()).toBe("queue");
+    expect(deps.detailSection.hidden).toBe(false);
+    expect(deps.queueSection.hidden).toBe(false);
+  });
+
+  it("wraps the schedule and alert-prefs tables in a horizontally scrollable container without changing table semantics", () => {
+    expect(STAFF_HTML).toContain('<div class="table-wrap">\n  <table>\n    <caption>Haftalık çalışma saatleri</caption>');
+    expect(STAFF_HTML).toContain('<div class="table-wrap">\n  <table>\n    <caption>Klinik uyarıları</caption>');
+  });
+
+  it("gives the shared shell a semantic main landmark wrapping the section content", () => {
+    expect(STAFF_HTML).toContain("<main>");
+    expect(STAFF_HTML).toContain("</main>");
+    expect(STAFF_HTML.indexOf("<main>")).toBeGreaterThan(STAFF_HTML.indexOf("</header>"));
+    expect(STAFF_HTML.indexOf("</main>")).toBeLessThan(STAFF_HTML.indexOf('<script src="/staff/app.js">'));
   });
 });

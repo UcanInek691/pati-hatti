@@ -511,3 +511,39 @@ Passing Task 024's own review gate (Codex validation on disposable
 `vetai-test`, then one narrow Opus review of the new database finalizer,
 tenant isolation, staff visibility, and fail-closed Queue behavior) completes
 the code-level MVP. It does **not** check any box in this document.
+
+## 8. Custom-domain activation checklist (Task 058 — documented only, NOT RUN)
+
+This is the single source for moving the production Worker off `workers.dev`
+onto the owner's own hostname; it is referenced, not repeated, from
+[`docs/staging-runbook.md`](staging-runbook.md). Every item below is
+`NOT RUN` — writing this checklist and reorganizing `/staff` and `/admin`
+into a shared native shell proves neither domain ownership nor production
+activation.
+
+1. **Hostname.** Owner supplies and confirms the exact production
+   application hostname. Recommended topology: one application origin, e.g.
+   `app.<owner-domain>/staff` and `app.<owner-domain>/admin`. Marketing
+   content, if any, stays outside this Worker and outside Task 058.
+2. **Cloudflare binding.** Bind that hostname to the production Worker via a
+   Cloudflare Workers custom domain/route only after confirming the zone and
+   Worker target. Keep the `workers.dev` staging hostname separate from
+   production.
+3. **Supabase Auth.** Update the Auth Site URL and exact redirect
+   allow-list entries for the chosen production staff/admin and recovery
+   flows. No unrestricted production wildcard. Verify password recovery and
+   MFA sign-in from the new custom origin before relying on it.
+4. **Edge checks.** Re-check CSP, CORS/origin assumptions, `/health`,
+   `/ready`, `/staff/config.json` and `/admin/config.json` on the new
+   origin. Update the Better Stack production monitor only after the new
+   endpoint is confirmed healthy.
+5. **E-mail subdomain.** Configure a separately authenticated e-mail sending
+   subdomain in Resend before enabling real clinic e-mail. It need not equal
+   the application hostname.
+6. **Smoke + evidence.** Run desktop/mobile staff/admin smoke, one
+   allowlisted WhatsApp canary, and the bounded alert proof (§5/§6 above) on
+   the new origin. Record evidence before removing any legacy hostname.
+
+None of this was executed in Task 058: no domain was purchased or bound, no
+Supabase Auth setting changed, no monitor updated, and no smoke run against a
+custom origin took place.

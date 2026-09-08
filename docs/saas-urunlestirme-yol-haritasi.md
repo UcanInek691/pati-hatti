@@ -514,6 +514,28 @@ production değişmedi. Satış/pilot öncesi doğrulanmış gönderici alan ad�
 gerçek klinik alıcısı kanıtı, operasyon sahipliği ve veteriner/KVKK kapıları
 hâlâ gereklidir (bkz. [`docs/staging-runbook.md`](staging-runbook.md) §29).
 
+## 10g. Task 058 (native panel kabuğu + erişilebilirlik, staging/production'a uygulanmadı)
+
+`/staff` ve `/admin`, paylaşılan native bir CSS modülü (`src/panelStyles.ts`)
+ve tutarlı bir operasyonel hiyerarşi altında birleştirildi: personel
+tarafında 4 sekmeli klavye-erişilebilir bölüm navigasyonu (İşler / WhatsApp
+otomasyonu / Takvim / E-posta uyarıları), admin tarafında ay filtresi →
+klinik özeti → provizyon/askıya-alma/devam-ettirme → alert-rollout sıralaması
+ve "Askıya al" için görsel olarak baskın olmayan açık bir tehlike rengi.
+Hiçbir yeni framework, paket, dış font veya CDN eklenmedi; auth/MFA/session/
+RPC/tenant/RLS davranışı değişmedi. Özel alan adına geçiş, bu bölümdeki
+panel stratejisinin bir sonraki adımı olarak
+[`docs/production-readiness.md`](production-readiness.md) §8'de tek kaynak
+halinde belgelendi ve tamamen `NOT RUN` kaldı. Yerel typecheck, tüm test
+suite'i (`test/staffPage.test.ts`, `test/adminPage.test.ts`,
+`test/panelStyles.test.ts` dahil) ve hem production hem staging
+(`wrangler.staging.toml`) `wrangler deploy --dry-run` geçti. Codex daha sonra
+iki giriş yüzeyini yerel Worker + headless Chrome ile 1440/768/375 pikselde
+doğruladı ve ilk görsel kontrolde bulunan gizli navigasyon/mobil taşma
+sorunlarını kapattı. Kimlik doğrulamalı staging görünümü ile özel alan adı
+aktivasyonu hâlâ `NOT RUN` durumundadır. Deploy veya gerçek servis/veritabanı/
+domain değişikliği yapılmadı.
+
 ## 11. Kaynak ve yeniden doğrulama notu
 
 - Cloudflare Worker secret'ları: https://developers.cloudflare.com/workers/configuration/secrets/

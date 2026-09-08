@@ -182,7 +182,7 @@ describe("handleAdminShell", () => {
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expectSecurityHeaders(res);
     const csp = res.headers.get("Content-Security-Policy");
-    expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'sha256-YPvTUDSxjpMTosU17ou+TQQ+PibSHCUhQCJMsxMJLoY='; img-src data:; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(await res.text()).toBe(ADMIN_HTML);
   });
 
@@ -873,5 +873,46 @@ describe("handleAdminConfig", () => {
     const res = handleAdminConfig({ ...baseEnv, SUPABASE_URL: "http://example.supabase.co" });
     expect(res.status).toBe(503);
     expectSecurityHeaders(res);
+  });
+});
+
+describe("handleAdminScript: application shell and danger/warning treatment (Task 058)", () => {
+  it("renders exactly one inline style block sourced from the shared panel styles, no external stylesheet, font or CDN asset", () => {
+    expect((ADMIN_HTML.match(/<style>/g) || []).length).toBe(1);
+    expect(ADMIN_HTML).not.toMatch(/<link[^>]*stylesheet/i);
+    expect(ADMIN_HTML).not.toMatch(/https?:\/\//);
+    expect(ADMIN_HTML).not.toMatch(/\/\/[a-z0-9.-]+\.(?:googleapis|gstatic|jsdelivr|cloudflare)\.com/i);
+    expect(ADMIN_HTML).not.toContain("@import");
+  });
+
+  it("respects prefers-reduced-motion and preserves the existing responsive table/breakpoint guardrails", () => {
+    expect(ADMIN_HTML).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(ADMIN_HTML).toContain("#overview-content { overflow-x: auto; }");
+    expect(ADMIN_HTML).toContain("@media (max-width: 42rem)");
+  });
+
+  it("gives the shared shell a semantic main landmark wrapping the section content", () => {
+    expect(ADMIN_HTML).toContain("<main>");
+    expect(ADMIN_HTML).toContain("</main>");
+    expect(ADMIN_HTML.indexOf("<main>")).toBeGreaterThan(ADMIN_HTML.indexOf("</header>"));
+    expect(ADMIN_HTML.indexOf("</main>")).toBeLessThan(ADMIN_HTML.indexOf('<script src="/admin/app.js">'));
+  });
+
+  it("gives the suspend control an explicit danger treatment, and never applies it to resume", () => {
+    const renderOverviewBody = ADMIN_APP_JS.match(/function renderOverview\(rows, alertGates\) \{[\s\S]*?\n}\n/);
+    expect(renderOverviewBody).not.toBeNull();
+    const body = renderOverviewBody![0];
+    const suspendIndex = body.indexOf('suspendButton.textContent = "Ask\\u0131ya al";');
+    const suspendClassIndex = body.indexOf('suspendButton.className = "btn-danger";');
+    const suspendListenerIndex = body.indexOf("handleSuspend(row.clinic_id, suspendButton)");
+    expect(suspendIndex).toBeGreaterThan(-1);
+    expect(suspendClassIndex).toBeGreaterThan(suspendIndex);
+    expect(suspendListenerIndex).toBeGreaterThan(suspendClassIndex);
+    expect(body).not.toContain('resumeButton.className = "btn-danger";');
+  });
+
+  it("does not make the danger control the visually dominant default (no solid danger fill in the shared styles)", () => {
+    expect(ADMIN_HTML).toContain(".btn-danger { background: white;");
+    expect(ADMIN_HTML).not.toMatch(/\.btn-danger\s*\{\s*background:\s*var\(--panel-danger\)/);
   });
 });

@@ -286,3 +286,20 @@ Klinik anahtarının açık olması, personelin kendi kapalı tercihini geçersi
 kılmaz; etkin teslimat iki anahtarın da açık olmasını gerektirir. Kapatmadan
 önce sağlayıcı gönderimi başlamış bir e-posta geri çağrılamaz ve yine de
 ulaşabilir; panel bu sınırı açıkça belirtir.
+
+## Panel kabuğu ve tehlike/uyarı ayrımı (Görev 058)
+
+`/admin` artık `/staff` ile aynı native CSS modülünü (`src/panelStyles.ts`)
+paylaşıyor. Her iki panel CSP'de yalnız bu sabit CSS'in tam SHA-256 hash'ine
+izin verir; `unsafe-inline` kullanılmaz. Admin, TOTP QR için mevcut
+`img-src data:` iznini korur. Genel bakış tablosu açık bir operasyonel hiyerarşiye ayrıldı: ay
+filtresi → klinik özeti → provizyon/askıya-alma/devam-ettirme → alert-rollout.
+"Askıya al" butonu artık `.btn-danger` sınıfıyla açıkça tehlike rengiyle
+işaretli (kırmızı kenarlık/metin, dolu kırmızı zemin değil — görsel olarak
+baskın varsayılan değil); "Devam ettir" bu sınıfı hiçbir zaman almaz. `<main>`
+landmark, uzun yetki metni için native ve kapalı bir `details` özeti,
+`:focus-visible`, `prefers-reduced-motion` ve mevcut
+`#overview-content`/`42rem` responsive korumaları aynen korundu. Kapsam
+`test/adminPage.test.ts` ve `test/panelStyles.test.ts` içinde. Codex, giriş
+yüzeyini gerçek tarayıcı motoruyla yerelde 1440/768/375 pikselde doğruladı;
+kimlik doğrulamalı staging görünümü sonraki aktivasyon görevine bırakıldı.

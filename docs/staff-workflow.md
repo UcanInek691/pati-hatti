@@ -497,6 +497,31 @@ of, the database's current-assignee authorization. A coherent
 confirmation; every other kind/reason pairing shows no prompt and makes no
 RPC call.
 
+## Application shell and section navigation (Task 058)
+
+`/staff` now shares one native CSS module (`src/panelStyles.ts`, plain
+`:root` custom properties — no new package, font, or CDN) with `/admin`, and
+exposes a single keyboard-accessible `<nav aria-label="Panel bölümleri">`
+with four destinations: **İşler**, **WhatsApp otomasyonu**, **Takvim**, and
+**E-posta uyarıları**. Each destination is a plain `<button aria-current>`
+(native Tab/Enter/Space operation — no custom ARIA tablist needed);
+switching destinations shows exactly one section at a time via `hidden`,
+never issues a new network call, and never touches the reply composer's
+draft state — the draft lives in the DOM `<textarea>` and simply persists
+under `hidden`. Selecting an unknown or tampered destination is ignored
+(fails closed to the current view) instead of blanking the shell. The
+weekly-hours and alert-preference tables are each wrapped in a scrollable
+`.table-wrap` div (not `display:block` on `<table>`, which would break
+table semantics) for narrow screens. The shell also adds a `<main>`
+landmark, `:focus-visible` outlines, `@media (prefers-reduced-motion:
+reduce)`, and ~44px (`2.75rem`) touch targets. Covered by
+`test/staffPage.test.ts` and `test/panelStyles.test.ts`, including a runtime
+harness that drives the actual destination-switching functions against fake
+DOM nodes. An open detail/composer is restored when the user returns to
+**İşler**, so switching sections neither clears nor strands a reply draft.
+The shared inline style is authorized by its exact SHA-256 CSP hash;
+`unsafe-inline` is not enabled.
+
 ## Known limitations
 
 - Session storage only: closing the tab, or letting the access token expire,
@@ -559,3 +584,15 @@ alert-preferences section above and the underlying client code passed local
 typecheck and the full test suite. No
 claim is made that any e-mail was sent, that the mandatory Claude Opus review
 ran, or that staging/production were touched.
+
+**Task 058 — shell/navigation refactor, no database change.** No migration
+was written or applied. Local typecheck, the targeted
+`staffPage.test.ts`/`adminPage.test.ts`/`index.test.ts`/`panelStyles.test.ts`
+run, and the full test suite all passed, as did `wrangler deploy --dry-run`
+for both the production and staging (`wrangler.staging.toml`) configs and
+`git diff --check`. The implementing session could not perform visual
+inspection, but Codex closed that gap by rendering both login surfaces
+locally in headless Chrome at 1440px, 768px, and 375px. The initial render
+found and the final render confirmed fixes for pre-login nav visibility,
+mobile overflow and admin first-viewport density. No deploy or change to any
+real service, database, or domain was made.
