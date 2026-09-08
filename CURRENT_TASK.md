@@ -1,3 +1,260 @@
+# Current task — 058 Staff/admin panel productization and custom-domain readiness
+
+Status: `READY`
+
+Created by Codex on 2026-09-08 after Task 057 closure (`1045dea`). The existing
+staff and platform-admin panels are functionally verified on staging, but their
+presentation is still implementation-oriented: the staff page has no cohesive
+visual system, both pages expose many controls in a long document flow, and no
+owner-supplied production hostname has been bound. This task productizes the two
+existing panels without changing their authentication, authorization, tenant,
+clinical-safety or database contracts.
+
+## Goal
+
+Give `/staff` and `/admin` a coherent, professional, responsive and accessible
+VetAI application shell using the repository's existing native HTML/CSS/JS
+architecture. Preserve every current security and behavioral boundary. At the
+same time, document an exact custom-domain activation checklist so a later,
+separately authorized task can bind the owner's real hostname without guessing
+or mixing staging and production.
+
+## Fixed decisions and boundaries
+
+- Keep the current single-Worker architecture and the existing canonical paths:
+  `/staff`, `/staff/app.js`, `/staff/config.json`, `/admin`, `/admin/app.js` and
+  `/admin/config.json`. Staff and admin remain on the same origin; no new public
+  API or alternate login flow is introduced.
+- Use native HTML, CSS and TypeScript already present in the repository. Do not
+  add React, Vue, Svelte, a component library, an icon package, a CSS framework,
+  an external font, a CDN asset, a bundler or any new dependency/build step.
+- A small shared panel-style module is allowed when it removes real duplication;
+  otherwise keep the smallest clear implementation. Do not create a speculative
+  design-system abstraction.
+- This is a presentation and navigation task. Do not change Supabase RPC names,
+  request/response shapes, session storage keys, authentication/MFA behavior,
+  RLS, grants, tenant predicates, clinical triage rules, alert-delivery rules,
+  queue behavior or database schema.
+- Do not make an existing control easier to invoke accidentally. Suspend/resume,
+  work-item resolution, alert preference and rollout actions retain their current
+  confirmation, authorization and fail-closed behavior.
+- Do not add analytics, tracking, cookies, chat widgets, third-party scripts or
+  new browser storage. Do not expose clinic identifiers, email addresses, tokens,
+  error payloads or other sensitive values in URLs or logs.
+- No actual domain, DNS, Cloudflare route/custom-domain, Supabase Auth URL,
+  Resend domain, Better Stack monitor or production configuration is changed in
+  this task. The owner has not supplied the final hostname. Use descriptive
+  placeholders such as `app.<owner-domain>` only in documentation, never as a
+  deployed value.
+- Production remains untouched. No commit, push or deployment is authorized for
+  the implementer. Codex reviews and commits only after the complete gate passes.
+- The pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` are outside this task and must remain untouched.
+
+## Required UX and visual contract
+
+### 1. Shared application shell
+
+- Both pages use one recognizable VetAI visual language: a compact branded
+  header, clear page title/context, restrained clinical color palette, consistent
+  spacing, typography, form controls, buttons, cards, tables, notices and status
+  chips. Use a system font stack and CSS custom properties; no image/logo work is
+  required.
+- The shell must distinguish environment and role without exposing internal
+  secrets. Staff and platform-admin pages must be immediately distinguishable,
+  and the platform-admin security warning must remain prominent without consuming
+  most of the first viewport.
+- Information hierarchy must prioritize the operator's next action. Long policy
+  prose belongs in compact explanatory notices or disclosure blocks; it must not
+  obscure queue, lifecycle or alert controls.
+- All user-visible Turkish copy must be concise and grammatically clear. Do not
+  change clinical meaning or make unverified claims such as “production ready”,
+  “delivered” or “secure” merely for presentation.
+
+### 2. Staff panel organization
+
+- After authentication, organize the existing surfaces into an accessible,
+  keyboard-operable section navigation with these user-facing destinations:
+  `İşler`, `WhatsApp otomasyonu`, `Takvim` and `E-posta uyarıları`.
+- Only the active top-level destination should dominate the page. Existing
+  polling and state refresh may continue updating hidden destinations, but
+  switching destinations must not trigger duplicate network calls or discard an
+  in-progress reply draft unexpectedly.
+- Preserve the existing work-item list/detail/composer flow, safety confirmation
+  wording, automation mode controls, schedule controls and two-key e-mail alert
+  preference behavior. Empty, loading, success, warning and error states must be
+  visually distinct and remain truthful.
+- On narrow screens, the work list, detail and composer must be usable without
+  horizontal page overflow; long identifiers/text wrap safely and primary actions
+  remain reachable.
+
+### 3. Platform-admin panel organization
+
+- Present sign-in/MFA setup and the authenticated operational overview as clearly
+  separate states. Do not weaken or visually bypass the existing AAL2 gate.
+- Group the existing month filter, clinic overview, provision/suspend/resume
+  controls and clinic alert-rollout controls into a clear operational hierarchy.
+  Preserve all existing confirmation and request-id/idempotency behavior.
+- Destructive or availability-affecting controls must use an explicit danger or
+  warning treatment and must not become the visually dominant default action.
+- Wide clinic tables may use a contained horizontal scroller on small screens;
+  the whole document must not overflow horizontally.
+
+### 4. Responsive and accessible behavior
+
+- The layout must remain usable at approximately 1440 px, 768 px and 375 px
+  viewport widths. No clipped buttons, overlapping text, inaccessible dialogs or
+  body-level horizontal scrolling is acceptable.
+- Use semantic landmarks/headings, real buttons, associated labels and visible
+  `:focus-visible` treatment. Keyboard users must be able to reach and operate
+  the section navigation and every existing action in a logical order.
+- Do not encode status only by color. Keep or improve the existing live-region
+  semantics for async status/error messages. Interactive targets should be about
+  44 CSS pixels high on touch layouts where practical.
+- Respect `prefers-reduced-motion`; any transition must be subtle, optional and
+  nonessential. Maintain readable contrast in normal, hover, focus, disabled,
+  success, warning and danger states.
+- Do not introduce inline event-handler attributes, `innerHTML`/HTML injection,
+  external resources or CSP relaxations. Existing security headers and
+  `default-src 'none'`-style restrictions remain at least as strict as today.
+
+### 5. Honest loading and failure handling
+
+- Existing requests must expose an obvious busy/disabled state where repeated
+  clicks could otherwise duplicate an operation. UI-only state must never be
+  treated as authorization or delivery proof.
+- Network/RPC failures continue to fail closed and show a short operator-facing
+  message without raw provider/Supabase payloads. Styling must not hide warnings,
+  unsupported-MFA states or disabled rollout/effective-state explanations.
+- Do not invent skeleton data, fake counts, sample clinics or optimistic success.
+  A success state is shown only after the current authoritative code path reports
+  success.
+
+## Custom-domain readiness contract
+
+Add a short, single-source activation checklist to the existing production and
+staging documentation. It must clearly separate repository readiness from the
+later live changes and cover, in this order:
+
+1. Owner supplies and confirms the exact production application hostname. The
+   recommended topology is one application origin, for example
+   `app.<owner-domain>/staff` and `app.<owner-domain>/admin`; marketing content,
+   if any, remains outside this Worker and outside Task 058.
+2. Bind that hostname to the production Worker using a Cloudflare Workers custom
+   domain/route only after confirming the zone and Worker target. Keep the
+   `workers.dev` staging hostname separate.
+3. Update Supabase Auth Site URL and exact redirect allow-list entries for the
+   chosen production staff/admin and recovery flows. Do not use an unrestricted
+   production wildcard. Verify password recovery and MFA sign-in from the custom
+   origin.
+4. Re-check CSP, CORS/origin assumptions, `/health`, `/ready`, `/staff/config.json`
+   and `/admin/config.json` on the new origin; update the Better Stack production
+   monitor only after the new endpoint is healthy.
+5. Configure a separately authenticated e-mail sending subdomain in Resend before
+   enabling real clinic e-mail. It need not equal the application hostname.
+6. Run desktop/mobile staff/admin smoke, one allowlisted WhatsApp canary and the
+   bounded alert proof. Record evidence before removing any legacy hostname.
+
+Every checklist item remains explicitly `NOT RUN` in Task 058. Do not claim that
+owning a domain, writing this checklist or rendering the panels locally proves
+production activation.
+
+## Allowed changes
+
+Only these paths may change:
+
+- `src/staffPage.ts`
+- `src/adminPage.ts`
+- `src/panelStyles.ts` (optional new shared style module)
+- `test/staffPage.test.ts`
+- `test/adminPage.test.ts`
+- `test/index.test.ts` (only if an existing route/header assertion must be kept
+  aligned; no route behavior change is expected)
+- `test/panelStyles.test.ts` (optional, only with the shared module)
+- `docs/staff-workflow.md`
+- `docs/platform-admin-overview.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md` — the implementer may fill only the two designated sections
+  below
+
+No migration, fixture, Worker route, Wrangler configuration, package manifest,
+lockfile, authentication module or unrelated documentation may change.
+
+## Required tests and proof
+
+- Preserve all current staff/admin behavior tests. Add focused assertions for the
+  new application shell, section navigation, active/hidden state, keyboard and
+  ARIA semantics, fail-closed unknown section handling, responsive CSS guardrails,
+  reduced-motion rule and the absence of external resources/inline handlers.
+- Tests must prove that section switching does not submit forms, invoke RPCs,
+  erase an in-progress staff reply draft or create duplicate polling. Static
+  source assertions alone are insufficient for these stateful behaviors; use the
+  smallest existing runtime harness pattern where behavior is involved.
+- Pin the exact staff navigation labels and the admin danger/warning semantics so
+  a later cosmetic edit cannot silently erase an operational distinction.
+- Verify that existing CSP/security header tests remain green and that neither
+  rendered HTML document references `http:`, `https:`, protocol-relative assets,
+  inline event handlers or a new storage mechanism.
+- The implementer must visually inspect locally rendered login surfaces at about
+  1440 px, 768 px and 375 px and record the widths and observations in the
+  Delivery record. Authenticated staging visual proof is deliberately deferred
+  to the later domain/activation task; do not manufacture it with fake live data.
+- If local visual inspection is unavailable, report it `NOT RUN` rather than
+  replacing it with a unit-test claim. Codex will perform the final visual review
+  before closure.
+
+## Acceptance criteria
+
+1. Both panels share a coherent, professional application shell without a new
+   dependency, framework, external asset or build step.
+2. Staff users can navigate the four existing operational areas by keyboard and
+   touch without losing drafts or causing new network activity.
+3. Admin users can understand environment, security state and lifecycle/rollout
+   risk at a glance; dangerous actions remain deliberate and confirmed.
+4. Both login and authenticated layouts are structurally responsive and
+   accessible at desktop, tablet and mobile widths.
+5. Authentication, AAL2, session, RPC, tenant, idempotency, clinical-safety,
+   alerting and database behavior are unchanged; the full existing suite passes.
+6. CSP and browser trust boundaries are not relaxed, and no new sensitive data
+   surface is introduced.
+7. Documentation contains one truthful custom-domain activation sequence and
+   marks every live step `NOT RUN`; production and staging remain separate.
+8. The diff contains only allowed files, and `.gitignore` plus
+   `docs/043-opus-inceleme.md` remain untouched.
+
+## Required verification
+
+Run, in this order:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/staffPage.test.ts test/adminPage.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+No real Supabase, Cloudflare, Meta, OpenAI, Resend or WhatsApp call is authorized.
+No deployment, database mutation, commit or push is authorized for the
+implementer.
+
+## Task 058 observed context
+
+To be filled by the implementing agent from repository evidence only.
+
+## Task 058 delivery record
+
+To be filled by the implementing agent. Include changed files, behavior retained,
+new UX behavior, exact checks/results, visual inspection evidence or `NOT RUN`,
+known limitations and anything Codex should inspect. Do not edit the task status,
+scope, acceptance criteria or any completed-task record.
+
+---
+
 # Completed task — 057 Staging alert controls activation and proof
 
 Status: `COMPLETE` (closed 2026-09-08 after managed staging migration,
