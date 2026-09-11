@@ -1,4 +1,131 @@
-# Current task — 059 Pati Hattı brand and custom-domain foundation
+# Current task — 060 Project-scoped Graphify workspace integration
+
+Status: `COMPLETE` (closed 2026-09-11 after Codex verified the isolated CLI,
+project-only integration, tracked-source graph and bounded query)
+
+Created by Codex on 2026-09-11 after Task 059 closure. The owner explicitly
+requested Graphify to reduce repeated repository orientation and token use
+before the marketing-site task. This is tooling only; it must not change
+runtime code, dependencies, production, staging or external services.
+
+## Goal
+
+Install the official local Graphify CLI in an isolated user tool environment,
+register only its project-scoped Codex integration, build a local graph of the
+committed repository, and prove one bounded query works without weakening the
+existing VetAI agent protocol or exposing secrets.
+
+## Boundaries
+
+- Use the official `graphifyy` Python package and `graphify` CLI.
+- Project-scoped Codex integration only; no Claude/Cursor/global integration.
+- The existing `AGENTS.md` content must remain byte-for-byte intact outside
+  Graphify's own marked section.
+- Do not enable strict hooks, MCP, multi-agent configuration or external model
+  backends in this task.
+- Build from committed/tracked repository content only. Never ingest `.env`,
+  `.dev.vars`, Wrangler output, Git internals, untracked files, credentials,
+  recovery fragments, logs or local attachments.
+- Generated graph artifacts are local cache, not source of truth, and must not
+  be committed. Keep the user's pre-existing `.gitignore` change untouched.
+- No source/test/migration/package/lockfile/Worker/DB/service mutation.
+- The pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` remain outside scope.
+
+## Allowed repository changes
+
+- `AGENTS.md`, limited to Graphify's own marked integration section
+- `.codex/skills/graphify/**` (the installed skill, version marker and its
+  bundled reference files)
+- `.codex/hooks.json`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md` only by Codex at closure
+
+Local generated output and the isolated CLI environment may exist only as
+ignored/untracked machine state and must not enter the commit.
+
+## Acceptance criteria
+
+1. `graphify --version` succeeds from this machine.
+2. Project integration writes only the documented Graphify section, skill and
+   no-op Codex hook; the prior `AGENTS.md` protocol remains intact.
+3. A committed-files-only graph builds locally with no external account/API.
+4. A bounded architecture query returns repository file/line evidence.
+5. Git staging contains only the allowed project integration and task/context
+   paths; generated graph output, `.gitignore` and the pre-existing untracked
+   review file remain excluded.
+
+## Required verification
+
+```text
+graphify --version
+graphify extract . --code-only
+graphify diagnose multigraph --graph graphify-out/graph.json
+graphify query "what connects authentication to tenant isolation?" --budget 1000
+git diff --check
+git status --short
+```
+
+No application test suite is required because runtime/package source does not
+change. If the installer writes anything outside the allowed integration
+section and two project integration files, stop and remove only that Graphify
+output before proceeding.
+
+## Task 060 observed context
+
+- Task 059 is committed as `5c10deb`; the only remaining working-tree items at
+  task start are the owner's pre-existing `.gitignore` modification and
+  untracked `docs/043-opus-inceleme.md`.
+- RTK is unavailable in this shell, so native commands are used.
+- Official Graphify documentation says `graphifyy` is local/on-device, Codex
+  project install owns only its marked `AGENTS.md` section plus the bundled
+  `.codex/skills/graphify/` skill directory and `.codex/hooks.json`.
+- The installed official CLI is `graphify 0.9.35`. Its current command surface
+  has no `scope` command or `--scope` option, so the verification sequence was
+  corrected before graph creation to use `extract . --code-only`. This is the
+  smallest supported local path: AST-only code indexing, no document/image
+  extraction, no model/API call and no MCP or multi-agent setup.
+
+## Task 060 delivery record
+
+Completed by Codex on 2026-09-11.
+
+- Installed `graphifyy[sql] 0.9.35` with `uv tool` in the user's isolated tool
+  environment. No project package or lockfile changed. The optional official
+  SQL parser was included after the first AST pass showed that 71 migration
+  files would otherwise contribute no graph nodes.
+- Ran the official project-scoped Codex installer. It appended only Graphify's
+  own section to `AGENTS.md`, installed the versioned skill and bundled
+  references under `.codex/skills/graphify/`, and registered the documented
+  no-op Codex hook in `.codex/hooks.json`. No global Claude/Cursor integration,
+  MCP, strict hook, multi-agent mode or external model backend was enabled.
+- Added `graphify-out/` only to this checkout's `.git/info/exclude`; the
+  owner's already-modified tracked `.gitignore` was not touched. Generated
+  graph files remain local machine cache and are not staged.
+- Built the graph with `graphify extract . --code-only --force` and confirmed
+  the incremental command is a no-change rebuild. The final local graph has
+  1,201 nodes, 2,231 edges and 126 communities. It requested no
+  account, API key or model call. A source-file audit found 153 unique graph
+  sources and zero sources outside `git ls-files`; untracked review/tooling
+  files and secrets are absent from the graph.
+- `graphify query "what connects authentication to tenant isolation?"
+  --budget 1000` returned a bounded 15-node result with file/line evidence for
+  the core tenant schema, `clinic_staff`, `auth.users`,
+  `vetai_private.is_clinic_staff()` and tenant-linked tables. The result was
+  intentionally bounded rather than loading a repository-wide report.
+- Verification passed: `graphify --version` (`0.9.35`), code-only forced
+  extraction, `graphify diagnose multigraph` (1,201 nodes, 2,231 valid edges,
+  zero missing/dangling/self-loop/duplicate edges), the bounded query,
+  `git diff --check`, and scoped Git status/staging checks. Application tests
+  were not run because no runtime, package, test, migration or service code
+  changed.
+- No database, Worker, staging/production service, external API, commit push or
+  deployment was touched. The pre-existing `.gitignore` modification and
+  untracked `docs/043-opus-inceleme.md` remain outside this task and commit.
+
+---
+
+# Completed task — 059 Pati Hattı brand and custom-domain foundation
 
 Status: `COMPLETE` (closed 2026-09-11 after Codex diff review, full local gate,
 live custom-origin/auth/CSP checks and verified external-service evidence)

@@ -1300,6 +1300,14 @@ occurred.
   tests with two unchanged opt-in skips, focused tests, typecheck, both Worker
   dry-runs and whitespace validation. Production deployment, a marketing site,
   real sender-domain delivery, and veterinary/legal/KVKK approvals remain open.
+- Task 060 is complete as of 2026-09-11. Graphify `0.9.35` is installed in an
+  isolated user tool environment with the official SQL parser and only the
+  project-scoped Codex integration. Its local code-only graph contains 1,201
+  nodes and 2,231 edges from 153 tracked source files; generated
+  `graphify-out/` artifacts are excluded through checkout-local Git metadata
+  and are not committed. A bounded authentication-to-tenant-isolation query
+  returned repository file/line evidence. No runtime dependency, application
+  source, database, Worker or external service changed.
 
 ## Context maintenance
 
