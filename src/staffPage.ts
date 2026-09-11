@@ -54,13 +54,13 @@ export const STAFF_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VetAI Personel Paneli</title>
+<title>Pati Hattı Personel Paneli</title>
 <style>${PANEL_STYLES}</style>
 </head>
 <body>
 <header class="app-header">
-  <p class="app-eyebrow">VetAI Operasyon</p>
-  <h1>VetAI Personel Paneli</h1>
+  <p class="app-eyebrow">Pati Hattı</p>
+  <h1>Pati Hattı Personel Paneli</h1>
   <p class="app-subtitle">Klinik işleri, otomasyon ve çalışma takvimi</p>
   <p id="status-region" role="status" aria-live="polite"></p>
   <p id="error-region" role="alert" aria-live="assertive"></p>
@@ -96,7 +96,7 @@ export const STAFF_HTML = `<!doctype html>
 
 <section id="automation-section" aria-labelledby="automation-heading" hidden>
   <h2 id="automation-heading">WhatsApp otomasyonu</h2>
-  <p id="automation-policy-region" hidden>Strict whitelist doğrulandı: yalnızca listede <strong>AI açık</strong> olarak işaretlenen numaralar otomatik işlenir. Meta imzalı webhook'u VetAI'ye iletir; listede olmayan numaraların yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, kaydedilmez ve bot yanıt vermez.</p>
+  <p id="automation-policy-region" hidden>Strict whitelist doğrulandı: yalnızca listede <strong>AI açık</strong> olarak işaretlenen numaralar otomatik işlenir. Meta imzalı webhook'u Pati Hattı'na iletir; listede olmayan numaraların yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, kaydedilmez ve bot yanıt vermez.</p>
   <p id="automation-status-region" role="status" aria-live="polite"></p>
   <p id="automation-error-region" role="alert" aria-live="assertive"></p>
   <label for="account-select">Hat</label>
@@ -112,11 +112,11 @@ export const STAFF_HTML = `<!doctype html>
   </form>
   <dl>
     <dt>AI açık</dt>
-    <dd>Bu numaradan gelen mesajlara VetAI otomatik yanıt verir.</dd>
+    <dd>Bu numaradan gelen mesajlara Pati Hattı otomatik yanıt verir.</dd>
     <dt>Sadece insan</dt>
-    <dd>Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz. Numarayı yalnızca personel telefonla veya başka bir kanaldan yanıtlayabilir.</dd>
+    <dd>Bu numaradan gelen mesajlar klinik için Pati Hattı'nda kaydedilir; Pati Hattı otomatik yanıt vermez ve OpenAI çağırmaz. Numarayı yalnızca personel telefonla veya başka bir kanaldan yanıtlayabilir.</dd>
     <dt>Kişisel / yok say</dt>
-    <dd>Meta imzalı webhook'u VetAI'ye iletir. Yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, hashlenmez, loglanmaz, Supabase veya OpenAI'a gönderilmez ve kaydedilmez. Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası VetAI'de saklanır; listede olmayan numara için rota kaydı tutulmaz. Bot otomatik yanıt vermez.</dd>
+    <dd>Meta imzalı webhook'u Pati Hattı'na iletir. Yönlendirme zarfı kontrol edildikten sonra mesaj içeriği incelenmez, hashlenmez, loglanmaz, Supabase veya OpenAI'a gönderilmez ve kaydedilmez. Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası Pati Hattı'nda saklanır; listede olmayan numara için rota kaydı tutulmaz. Bot otomatik yanıt vermez.</dd>
     <dt>Numara varsayılanı</dt>
     <dd>Bu numara için özel ayar silinir; gelecekteki mesajlar kişisel varsayılana döner.</dd>
   </dl>
@@ -480,7 +480,7 @@ function requestNotificationIfNeeded(newItems) {
   }
   const hasUrgent = newItems.some((item) => item.priority === "urgent");
   try {
-    new Notification("VetAI personel kuyru\\u011fu", {
+    new Notification("Pati Hatt\\u0131 personel kuyru\\u011fu", {
       body: hasUrgent ? "Yeni acil personel i\\u015fi var." : "Yeni personel i\\u015fi var.",
     });
   } catch {

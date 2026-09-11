@@ -512,7 +512,12 @@ Passing Task 024's own review gate (Codex validation on disposable
 tenant isolation, staff visibility, and fail-closed Queue behavior) completes
 the code-level MVP. It does **not** check any box in this document.
 
-## 8. Custom-domain activation checklist (Task 058 — documented only, NOT RUN)
+## 8. Custom-domain activation checklist
+
+Written in Task 058 as documentation only. Task 059 then executed the
+**staging** half of it on the owner's own domain `patihatti.com`; the
+**production** half below remains `NOT RUN`. The per-step split is in §8.1 —
+read it before treating any item here as done.
 
 This is the single source for moving the production Worker off `workers.dev`
 onto the owner's own hostname; it is referenced, not repeated, from
@@ -547,3 +552,55 @@ activation.
 None of this was executed in Task 058: no domain was purchased or bound, no
 Supabase Auth setting changed, no monitor updated, and no smoke run against a
 custom origin took place.
+
+### 8.1 Task 059 — staging evidence vs production readiness (2026-09-10)
+
+Task 059 acquired `patihatti.com`, applied the `Pati Hattı` public brand and
+bound **staging only**. Nothing below authorizes production activation. The
+production application origin `app.patihatti.com` is **reserved and
+deliberately not routed**: it must never resolve to the staging Worker or the
+staging Supabase project.
+
+| §8 step | Staging (`staging.patihatti.com`) | Production (`app.patihatti.com`) |
+| --- | --- | --- |
+| 1. Hostname | `PASS` — owner acquired `patihatti.com`; staging host chosen | `NOT RUN` — hostname reserved only |
+| 2. Cloudflare binding | `PASS` — `custom_domain` route in `wrangler.staging.toml`; `workers.dev` retained | `NOT RUN` — no route, no deploy |
+| 3. Supabase Auth | `PASS` — exact entries, no wildcard; staff sign-in, admin AAL2 and the password-recovery redirect were exercised from the custom origin | `NOT RUN` |
+| 4. Edge checks | `PASS` — four endpoints and both panel CSP headers verified below | `NOT RUN` |
+| 5. E-mail subdomain | `PASS` — `mail.patihatti.com` shows `Verified` in Resend; no e-mail was sent from it | `NOT RUN` |
+| 6. Smoke + evidence | `NOT RUN` — no WhatsApp canary or bounded alert proof was run **from the custom origin** | `NOT RUN` |
+
+Endpoints independently re-verified on the custom origin on 2026-09-10 by the
+reviewing session rather than taken from a report:
+
+- `GET /health` -> `200 {"status":"ok","version":"0.1.0", ...}`
+- `GET /ready` -> `200 {"status":"ready"}`
+- `GET /staff/config.json` -> `200`, returns the **staging** Supabase project
+- `GET /admin/config.json` -> `200`, returns the **staging** Supabase project
+- `GET /staff` -> renders the Task 058 panel shell; document title
+  `Pati Hattı Personel Paneli`; staff tabs correctly absent before sign-in
+
+Authenticated flows subsequently exercised on the custom origin:
+
+- `/admin` — password sign-in plus TOTP AAL2 challenge, then the clinic
+  overview rendered. This is meaningful evidence rather than a page load: the
+  overview RPC rejects any caller whose JWT `aal` claim is not exactly `aal2`,
+  so a rendered table proves the second factor and the redirect allow-list both
+  worked through this origin.
+- `/staff` — password sign-in, then the work-item queue rendered.
+- Password recovery — Supabase sent one bounded recovery e-mail on 2026-09-11;
+  the owner opened it without sharing the fragment/token, and it landed on
+  `https://staging.patihatti.com/admin` with the `Yeni parola belirle` view.
+
+The reviewing Codex session also read both live panel response headers on
+2026-09-11. `/staff` and `/admin` returned the exact CSP values pinned by the
+green route tests; neither origin relaxed the reviewed browser trust boundary.
+
+Deliberately **not** claimed as verified: no WhatsApp canary or bounded alert
+proof was run specifically from the custom browser origin, no e-mail was sent
+from the newly verified Resend domain, and production remains untouched. The
+`workers.dev` hostname remains available as a staging fallback.
+
+Operational alerting stayed disabled throughout
+(`OPERATIONAL_ALERTS_ENABLED = "false"` in both Wrangler configs); Task 059
+sent no clinic or platform alert e-mail.

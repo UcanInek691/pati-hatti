@@ -184,6 +184,9 @@ describe("handleAdminShell", () => {
     const csp = res.headers.get("Content-Security-Policy");
     expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'sha256-YPvTUDSxjpMTosU17ou+TQQ+PibSHCUhQCJMsxMJLoY='; img-src data:; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(await res.text()).toBe(ADMIN_HTML);
+    expect(ADMIN_HTML).toContain("<title>Pati Hattı Platform Yönetici Paneli</title>");
+    expect(ADMIN_HTML).not.toContain("VetAI");
+    expect(ADMIN_APP_JS).toContain('const FACTOR_FRIENDLY_NAME = "Pati Hattı Admin Paneli";');
   });
 
   it("returns 503 with security headers and no config leakage when config is missing", async () => {

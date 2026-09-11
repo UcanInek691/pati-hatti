@@ -709,7 +709,10 @@ bağımsız periyodik bir kontrolle doğrulamadan tamamlanamaz.
 ### Bağımsız staging `/ready` monitörü — 2026-09-07
 
 Cloudflare Free planda Standalone Health Checks bulunmadığı için bağımsız yol
-olarak Better Stack Free kullanıldı. `VetAI staging readiness` adlı monitör,
+olarak Better Stack Free kullanıldı. Monitör Task 059'da
+`Pati Hattı staging readiness` olarak yeniden adlandırıldı ve hedefi
+`https://staging.patihatti.com/ready` yapıldı (bkz. staging-runbook §31).
+Aşağıdaki kayıt oluşturulduğu andaki `VetAI staging readiness` adını,
 staging `/ready` adresini gövde veya kimlik bilgisi göndermeden dışarıdan
 `GET` ile üç dakikada bir ve TLS doğrulaması açık biçimde kontrol eder.
 İlk kontrol `Up`, olay sayısı `0` ve kullanılabilirlik `%100` olarak görüldü.

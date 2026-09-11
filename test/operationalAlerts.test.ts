@@ -1137,7 +1137,8 @@ describe("runOperationalAlertMonitor", () => {
 
       const resendCall = fetchMock.mock.calls.find((c) => urlOf(c[0] as RequestInfo | URL).includes("api.resend.com/emails")) as FetchCall;
       expect(resendCall).toBeDefined();
-      const body = bodyOf(resendCall) as { to: string[]; text: string };
+      const body = bodyOf(resendCall) as { subject: string; to: string[]; text: string };
+      expect(body.subject).toBe("Pati Hattı: teslim edilemeyen bir mesaj var");
       expect(body.to).toEqual([CLINIC_CLAIM_ROW.recipient_email]);
       expect(body.text).toContain("/staff");
       expect(body.text).not.toContain("/admin");
@@ -1156,7 +1157,8 @@ describe("runOperationalAlertMonitor", () => {
       await runOperationalAlertMonitor(fullEnv);
 
       const resendCall = fetchMock.mock.calls.find((c) => urlOf(c[0] as RequestInfo | URL).includes("api.resend.com/emails")) as FetchCall;
-      const body = bodyOf(resendCall) as { text: string };
+      const body = bodyOf(resendCall) as { subject: string; text: string };
+      expect(body.subject).toBe(`Pati Hattı platform sinyali (${fullEnv.DEPLOYMENT_NAME}): ${PLATFORM_CLAIM_ROW.signal_kind}`);
       expect(body.text).toContain(fullEnv.DEPLOYMENT_NAME as string);
       expect(body.text).toContain(String(PLATFORM_CLAIM_ROW.occurrence_count));
       expect(body.text).toContain(PLATFORM_CLAIM_ROW.created_at);

@@ -1,10 +1,14 @@
 # VetAI project context
 
-Last verified: 2026-09-07 by Codex.
+Last verified: 2026-09-11 by Codex.
 
 ## Product
 
-VetAI is a WhatsApp-based digital reception and appointment system for veterinary clinics. It identifies owners and pets, gathers complaints naturally, remembers verified history, prioritizes conversations safely, manages appointments, and hands conversations to clinic staff.
+`Pati Hattı` is the customer-facing brand of the internally named VetAI
+WhatsApp-based digital reception and appointment system for veterinary
+clinics. It identifies owners and pets, gathers complaints naturally,
+remembers verified history, prioritizes conversations safely, manages
+appointments, and hands conversations to clinic staff.
 
 It is not a veterinarian. It must not diagnose, produce disease possibilities, recommend medication or dosage, create treatment plans, or delay urgent human care.
 
@@ -1278,6 +1282,24 @@ occurred.
   domain, Better Stack production monitor, staging Worker or production system
   changed in Task 058. Exact owner hostname selection and authenticated staging/
   custom-origin smoke belong to the next activation task.
+- Task 059 is complete at repository and staging custom-origin gates as of
+  2026-09-11. The owner acquired `patihatti.com`; public panel, privacy,
+  browser-notification and alert-subject copy now uses `Pati Hattı`, while
+  internal `vetai` resource names and historical evidence remain unchanged.
+  `staging.patihatti.com` is bound only to `vetai-staging`, and the workers.dev
+  staging hostname remains available. `app.patihatti.com` is reserved and is
+  not routed to staging or production.
+- Exact Supabase Auth redirect entries have no wildcard. Staff password sign-in,
+  admin password plus TOTP AAL2, and a password-recovery link landing on the
+  custom `/admin` recovery view all passed without recording credentials or
+  recovery fragments. `/health`, `/ready`, both panel config endpoints and the
+  exact live CSP headers passed on the custom origin.
+- `mail.patihatti.com` is verified in Resend without sending a clinic alert;
+  Better Stack independently reports `https://staging.patihatti.com/ready` as
+  Up. Operational alerting remains disabled. The full local gate passed 2,132
+  tests with two unchanged opt-in skips, focused tests, typecheck, both Worker
+  dry-runs and whitespace validation. Production deployment, a marketing site,
+  real sender-domain delivery, and veterinary/legal/KVKK approvals remain open.
 
 ## Context maintenance
 

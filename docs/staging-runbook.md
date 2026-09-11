@@ -1416,3 +1416,90 @@ güncellenmedi. Görev yalnızca `/staff` ve `/admin`'i ortak native bir kabukla
 (paylaşılan `src/panelStyles.ts`, 4 sekmeli personel navigasyonu, admin'de
 açık tehlike/uyarı ayrımı) yeniden düzenledi; staging'in `workers.dev` hedefi
 ve bu runbook'taki mevcut kanıtlar değişmeden kaldı.
+
+
+## 31. Task 059 — Pati Hattı markası ve staging özel alan adı (2026-09-10)
+
+Task 059, sahibin satın aldığı `patihatti.com` alan adı üzerinde **yalnız
+staging** tarafını devreye aldı. Production uygulama origin'i
+`app.patihatti.com` bilinçli olarak **rezerve** edildi ve hiçbir yere
+yönlendirilmedi. Adım bazlı PASS / PENDING / NOT RUN ayrımının tek kaynağı
+[`production-readiness.md`](production-readiness.md) §8.1'dir; burada
+tekrarlanmaz.
+
+Dış servis tarafında yapılanlar (sahip oturumda, sırasıyla):
+
+1. `patihatti.com` Cloudflare Registrar üzerinden satın alındı. Yenileme
+   maliyeti ve kayıt verileri depoya yazılmadı.
+2. `staging.patihatti.com`, `vetai-staging` Worker'ına Cloudflare custom
+   domain olarak bağlandı (`wrangler.staging.toml` içindeki `routes` girdisi).
+   Eski `workers.dev` adresi **kaldırılmadı**; doğrulama boyunca yedek kalıyor.
+3. Supabase Auth: Site URL ve tam izinli dönüş adresleri staging staff/admin
+   yolları için eklendi. Wildcard eklenmedi; eski staging girdileri korundu.
+4. Resend'de `mail.patihatti.com` gönderici alt alan adı oluşturuldu, üç DNS
+   kaydı Cloudflare'e girildi ve internetten doğru cevap verdiği görüldü.
+   İlk DNS yayılımında `Pending` görüldü; 2026-09-11 kapanış kontrolünde
+   Resend'in kendi durumu `Verified` olarak doğrulandı.
+5. Better Stack readiness monitörü yeni origin'e taşındı, adı
+   `Pati Hattı staging readiness` oldu ve `Up` durumu görüldü.
+
+Depo tarafında yapılanlar: müşteriye görünen `VetAI` metinleri `/staff`,
+`/admin`, gizlilik sayfası, tarayıcı bildirimi ve operasyonel uyarı e-posta
+konularında `Pati Hattı` olarak değiştirildi. **Dahili adlar değişmedi** —
+`vetai` Worker/Queue adları, veritabanı nesneleri, migration dosyaları ve
+ortam anahtarları aynı kaldı. Tarihsel kanıtların (olay raporları, geçmiş
+görev kayıtları) içindeki eski adlar bilinçle korundu; onları yeniden
+adlandırmak kanıtı tahrif etmek olurdu.
+
+### 31.1 Bağımsız doğrulama (inceleme oturumu, 2026-09-10)
+
+Aşağıdakiler rapordan alınmadı; yeni origin'e doğrudan istek atılarak
+görüldü:
+
+- `GET /health` -> `200`, `status: ok`
+- `GET /ready` -> `200`, `status: ready`
+- `GET /staff/config.json` -> `200`, **staging** Supabase projesi
+- `GET /admin/config.json` -> `200`, **staging** Supabase projesi
+- `GET /staff` -> Task 058 panel kabuğu render ediliyor, sekme başlığı
+  `Pati Hattı Personel Paneli`, personel sekmeleri girişten önce görünmüyor
+
+Yerel kapı, çalışma ağacının birebir kopyası üzerinde ayrıca yeniden
+üretildi: `pnpm install --frozen-lockfile`, `pnpm typecheck` (0 hata),
+hedefli dört test dosyası (**447 geçti**), tam paket (**2.132 geçti /
+2 atlandı / 0 başarısız**), production ve staging `wrangler deploy --dry-run`
+(ikisi de **312.61 KiB / gzip 65.94 KiB**) ve whitespace kontrolü. 2.132/2
+sayısı Task 058 taban çizgisiyle birebir aynı; markalama değişikliği hiçbir
+regresyon getirmedi.
+
+### 31.1a Kimlik doğrulama akışlarının kanıtı (aynı gün, yeni origin)
+
+- `/admin`: parola girişi + TOTP AAL2 doğrulaması geçildi ve klinik genel
+  bakış tablosu render edildi. Bu yalnız sayfa açılması değildir: genel bakış
+  RPC'si JWT `aal` iddiası tam olarak `aal2` olmayan her çağıranı reddediyor,
+  dolayısıyla tablonun dolu gelmesi ikinci faktörün ve Supabase dönüş
+  adreslerinin bu origin üzerinden çalıştığını kanıtlar.
+- `/staff`: parola girişi geçildi ve personel iş kuyruğu render edildi.
+  Kuyrukta o an dört açık iş görüldü (biri `[ACIL]`, Task 057'nin bilinçli
+  açık bırakılmış sentetik acil kaydı; en eskisi 23.08 tarihli teslimat
+  hatası). Hepsi sentetik ve sahipsiz.
+- 2026-09-11'de Supabase'den tek parola-kurtarma e-postası gönderildi. Sahip,
+  bağlantıyı veya fragment/token değerini paylaşmadan bağlantının
+  `https://staging.patihatti.com/admin` üzerindeki `Yeni parola belirle`
+  görünümünü açtığını doğruladı.
+- Aynı Codex incelemesinde `/staff` ve `/admin` canlı yanıtlarının CSP
+  başlıkları okundu; ikisi de yeşil route testlerinin sabitlediği tam değerle
+  eşleşti ve browser güven sınırı gevşemedi.
+
+### 31.2 Bu bölümün kapatmadığı şeyler
+
+- Yeni origin'den WhatsApp kanaryası ve sınırlı alarm kanıtı **çalıştırılmadı**.
+- Resend alan doğrulaması **tamamlandı** (`Verified`), fakat bu alandan
+  **hiç e-posta gönderilmedi**. Gerçek klinik e-posta teslimi hâlâ
+  kanıtlanmamış ve alarmlar kapalı.
+- Apex `patihatti.com` üzerinde tanıtım sitesi **yok** ve bu görevin kapsamı
+  dışında.
+- `workers.dev` staging adresi güvenli geri dönüş yolu olarak korunuyor.
+
+Operasyonel alarmlar boyunca kapalı kaldı
+(`OPERATIONAL_ALERTS_ENABLED = "false"`); Task 059 hiçbir uyarı e-postası
+göndermedi ve production'a dokunulmadı.

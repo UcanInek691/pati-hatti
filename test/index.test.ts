@@ -640,7 +640,7 @@ describe("worker whatsapp persistence", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expect(res.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
-    expect(body).toContain("VetAI Staging Gizlilik Bildirimi");
+    expect(body).toContain("Pati Hattı Staging Gizlilik Bildirimi");
     expect(body).toContain("Liste dışındaki numaraların mesaj içeriği incelenmez");
     expect(body).toContain("hukukçu onaylı KVKK aydınlatma metni");
     expect(body).not.toContain("WHATSAPP_");

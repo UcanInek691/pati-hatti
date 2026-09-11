@@ -57,13 +57,13 @@ export const ADMIN_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VetAI Platform Yönetici Paneli</title>
+<title>Pati Hattı Platform Yönetici Paneli</title>
 <style>${PANEL_STYLES}</style>
 </head>
 <body>
 <header class="app-header">
-  <p class="app-eyebrow">VetAI Operasyon</p>
-  <h1>VetAI Platform Yönetici Paneli</h1>
+  <p class="app-eyebrow">Pati Hattı</p>
+  <h1>Pati Hattı Platform Yönetici Paneli</h1>
   <p class="app-subtitle">Klinik yaşam döngüsü ve platform görünürlüğü</p>
   <details class="security-notice">
     <summary>Yetki ve güvenlik sınırları</summary>
@@ -428,7 +428,7 @@ const provisionWhatsappAccountIdInput = document.getElementById("provision-whats
 const provisionPhoneNumberIdInput = document.getElementById("provision-phone-number-id-input");
 const provisionDisplayNameInput = document.getElementById("provision-display-name-input");
 
-const FACTOR_FRIENDLY_NAME = "VetAI Admin Paneli";
+const FACTOR_FRIENDLY_NAME = "Pati Hattı Admin Paneli";
 const PHONE_NUMBER_ID_PATTERN = /^[0-9]{1,64}$/;
 const PROVISION_RESULTS = ["forbidden", "provisioned", "already_provisioned"];
 const SUSPEND_RESULTS = ["forbidden", "suspended", "already_suspended", "not_found"];

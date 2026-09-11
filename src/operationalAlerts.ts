@@ -839,10 +839,10 @@ function readAlertClaim(rows: unknown[] | null): ClaimReadResult {
 // body only. Never the work item id, conversation id, pet/owner name,
 // phone number, message text, or clinical reason.
 const CLINIC_SIGNAL_COPY: Partial<Record<string, { subject: string; urgency: "acil" | "normal" }>> = {
-  delivery_failure: { subject: "VetAI: teslim edilemeyen bir mesaj var", urgency: "normal" },
-  human_handoff_urgent: { subject: "VetAI: acil bir personel devri var", urgency: "acil" },
-  human_handoff_normal: { subject: "VetAI: bekleyen bir personel devri var", urgency: "normal" },
-  intake_dead_letter: { subject: "VetAI: degerlendirilmemis bir personel devri var", urgency: "normal" },
+  delivery_failure: { subject: "Pati Hattı: teslim edilemeyen bir mesaj var", urgency: "normal" },
+  human_handoff_urgent: { subject: "Pati Hattı: acil bir personel devri var", urgency: "acil" },
+  human_handoff_normal: { subject: "Pati Hattı: bekleyen bir personel devri var", urgency: "normal" },
+  intake_dead_letter: { subject: "Pati Hattı: değerlendirilmemiş bir personel devri var", urgency: "normal" },
 };
 
 function clinicAlertCopy(signalKind: string, loginUrl: string): { subject: string; text: string } | null {
@@ -869,7 +869,7 @@ function platformAlertCopy(
   adminUrl: string,
 ): { subject: string; text: string } {
   return {
-    subject: `VetAI platform sinyali (${deploymentName}): ${signalKind}`,
+    subject: `Pati Hattı platform sinyali (${deploymentName}): ${signalKind}`,
     text: `Sinyal: ${signalKind}. Ortam: ${deploymentName}. Tekrar sayisi: ${occurrenceCount}. Ilk kayit: ${createdAt}. Detaylar icin: ${adminUrl}`,
   };
 }

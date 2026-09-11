@@ -191,7 +191,8 @@ example another user claiming it) never triggers an alert. When one or more
 genuinely new items appear, the page raises at most one native notification
 for that tick:
 
-- title: `VetAI personel kuyruğu`
+- title: `Pati Hattı personel kuyruğu` (Task 059 markalama; kod
+  `src/staffPage.ts` içinde bu dizeyi üretir)
 - body: `Yeni acil personel işi var.` if any new item is urgent, otherwise
   `Yeni personel işi var.`
 

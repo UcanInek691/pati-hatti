@@ -11,19 +11,19 @@ const PRIVACY_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>VetAI Staging Gizlilik Bildirimi</title>
+  <title>Pati Hattı Staging Gizlilik Bildirimi</title>
 </head>
 <body>
   <main>
-    <h1>VetAI Staging Gizlilik Bildirimi</h1>
+    <h1>Pati Hattı Staging Gizlilik Bildirimi</h1>
     <p><strong>Son güncelleme:</strong> 23 Ağustos 2026</p>
-    <p>Bu sayfa, yalnız sınırlı ve kontrollü bir teknik pilot için kullanılan VetAI staging ortamını açıklar. Bu ortam halka açık bir veterinerlik hizmeti değildir; tanı, tedavi veya ilaç önerisi vermez ve acil durumda veteriner hekime başvurmanın yerine geçmez.</p>
+    <p>Bu sayfa, yalnız sınırlı ve kontrollü bir teknik pilot için kullanılan Pati Hattı staging ortamını açıklar. Bu ortam halka açık bir veterinerlik hizmeti değildir; tanı, tedavi veya ilaç önerisi vermez ve acil durumda veteriner hekime başvurmanın yerine geçmez.</p>
 
     <h2>Kim işletiyor?</h2>
     <p>Staging pilotu WEOSA tarafından yürütülür. Gizlilik, erişim, düzeltme veya silme talepleri, test davetini aldığınız iletişim kanalı üzerinden test yöneticisine iletilmelidir.</p>
 
     <h2>Hangi veriler işlenebilir?</h2>
-    <p>Meta imzalı WhatsApp webhook'unu teknik olarak VetAI'ye iletir. Yalnız test yöneticisinin açıkça AI listesine eklediği numaralarda telefon numarası, WhatsApp profil adı, mesaj metni, evcil hayvan ve randevu bilgileri ile sınırlı teknik olay ve teslimat kayıtları işlenebilir. Liste dışındaki numaraların mesaj içeriği incelenmez, kaydedilmez veya OpenAI'a gönderilmez.</p>
+    <p>Meta imzalı WhatsApp webhook'unu teknik olarak Pati Hattı'na iletir. Yalnız test yöneticisinin açıkça AI listesine eklediği numaralarda telefon numarası, WhatsApp profil adı, mesaj metni, evcil hayvan ve randevu bilgileri ile sınırlı teknik olay ve teslimat kayıtları işlenebilir. Liste dışındaki numaraların mesaj içeriği incelenmez, kaydedilmez veya OpenAI'a gönderilmez.</p>
 
     <h2>Amaç ve otomasyon</h2>
     <p>Veriler; mesajı doğru test hesabına yönlendirmek, dijital resepsiyon akışını sınamak, güvenlik sorularını sabit kurallarla değerlendirmek, randevu akışını denemek, yanıt teslimatını takip etmek ve teknik hataları gidermek için kullanılır. Yapay zekâ yalnız yapılandırılmış bilgi çıkarımına yardımcı olur; kesin güvenlik ve işlem kararlarını sabit uygulama kuralları verir.</p>

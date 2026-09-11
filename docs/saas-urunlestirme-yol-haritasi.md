@@ -548,3 +548,37 @@ domain değişikliği yapılmadı.
 Dış servis özellikleri ve fiyatları değişebilir. Satış sözleşmesine veya
 production runbook'una sayı/özellik yazılmadan hemen önce resmî kaynaklar yeniden
 kontrol edilmelidir.
+
+
+## 10n. Task 059 (uygulandı: staging; production NOT RUN)
+
+Task 059, ürünün müşteriye görünen adını `Pati Hattı` yaptı ve sahibin satın
+aldığı `patihatti.com` alan adının **yalnız staging** tarafını devreye aldı:
+
+- `staging.patihatti.com` -> `vetai-staging` Worker'ına Cloudflare custom
+  domain olarak bağlandı; `workers.dev` adresi yedek olarak korundu.
+- Supabase Auth Site URL ve tam dönüş adresleri staging staff/admin için
+  eklendi; wildcard eklenmedi.
+- `mail.patihatti.com` Resend gönderici alt alan adı oluşturuldu; üç DNS
+  kaydı yayında ve sağlayıcı durumu **Verified**.
+- Better Stack readiness monitörü yeni origin'e taşındı
+  (`Pati Hattı staging readiness`, `Up`).
+- Panel/gizlilik/bildirim/uyarı metinlerinde müşteriye görünen ad değişti;
+  **dahili `vetai` adları, veritabanı nesneleri ve tarihsel kanıtlar
+  değişmedi.**
+- Özel origin üzerinde staff girişi, admin AAL2, parola-kurtarma dönüşü,
+  yapılandırma uçları ve canlı CSP başlıkları doğrulandı; hiçbir parola,
+  recovery fragment'i veya token kanıta alınmadı.
+
+Production uygulama origin'i `app.patihatti.com` **rezerve** edildi ve
+yönlendirilmedi. Bu, ticari çıkış için Faz 6'nın kapandığı anlamına
+**gelmez**: production Worker deploy'u, gerçek klinik e-posta teslimi,
+veteriner ve hukuk/KVKK onayları ile operasyon sorumluları hâlâ açık.
+Adım bazlı kanıt ayrımı
+[`production-readiness.md`](production-readiness.md) §8.1 ve
+[`staging-runbook.md`](staging-runbook.md) §31'de.
+
+Marka notu: `Pati Hattı` adı pilot satış için seçildi; TÜRKPATENT'te 9, 35,
+42 ve 44. sınıflarda profesyonel benzerlik araştırması yapılmadan resmî marka
+tescili kesinleştirilmemelidir. Ürün veterinerlik hizmeti veya teşhis
+vermediği için iletişimde "acil veteriner hattı" izlenimi oluşturulmamalıdır.

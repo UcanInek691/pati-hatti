@@ -1,3 +1,292 @@
+# Current task — 059 Pati Hattı brand and custom-domain foundation
+
+Status: `COMPLETE` (closed 2026-09-11 after Codex diff review, full local gate,
+live custom-origin/auth/CSP checks and verified external-service evidence)
+
+Created by Codex on 2026-09-10 after Task 058 closure. The owner selected
+`Pati Hattı` as the customer-facing brand and intends to acquire
+`patihatti.com`. This task secures the domain, applies the smallest truthful
+brand change to the existing panels, and proves a separate staging custom
+hostname without presenting staging as production.
+
+## Goal
+
+Establish `Pati Hattı` as the public product name and make the reviewed staff
+and admin panels reachable on `staging.patihatti.com`. Reserve
+`app.patihatti.com` for the later production cutover, which remains blocked by
+the unchecked production, veterinary and legal/KVKK gates.
+
+## Fixed decisions and boundaries
+
+- Registrable domain: `patihatti.com`.
+- Customer-facing brand: `Pati Hattı`.
+- Staging application origin: `https://staging.patihatti.com` with the existing
+  canonical `/staff` and `/admin` paths.
+- Reserved production application origin: `https://app.patihatti.com`; it must
+  not point at the staging Worker or staging Supabase project.
+- The apex domain remains reserved. No marketing site, speculative landing-page
+  framework or root redirect is built in this task.
+- Internal identifiers (`vetai`, Worker/Queue names, database objects, migration
+  names and environment keys) remain unchanged. This is a public branding and
+  hostname change, not a risky infrastructure rename.
+- Existing auth, AAL2, RLS/tenant, clinical-safety, alerting and database
+  behavior must not change.
+- Domain purchase is a real financial action. Codex may prepare the registrar
+  checkout, but the owner performs or explicitly confirms the final purchase.
+- Staging Cloudflare custom-domain/DNS, Supabase Auth redirect allow-list,
+  Resend domain verification and Better Stack monitor changes may be made only
+  with the owner present and must be recorded without secrets.
+- Production Worker deployment, production Supabase mutation, Meta changes,
+  alert enablement and removal of the existing workers.dev staging hostname are
+  outside this task.
+- No real secret, payment detail, account identifier, phone number or patient
+  data may be written to the repository or copied into chat.
+- The pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` remain outside scope and untouched.
+
+## Required work
+
+1. Confirm live registrar availability and acquire `patihatti.com` at a normal
+   non-premium price; record only the result, registrar and renewal date/cost,
+   never payment data.
+2. Replace customer-visible `VetAI` branding on `/staff`, `/admin`, browser
+   notifications and operational-alert e-mail subjects with `Pati Hattı`.
+   Preserve technical/legal references where renaming would falsify historical
+   evidence. Do not mass-rewrite migration history or incident reports.
+3. Update focused tests to pin the public name while preserving CSP,
+   accessibility, authentication and fail-closed behavior.
+4. Bind `staging.patihatti.com` to `vetai-staging`; keep the workers.dev address
+   available during verification.
+5. Add exact staging Supabase Auth redirect allow-list entries for staff,
+   admin and recovery flows. Do not add a wildcard and do not remove the legacy
+   staging entries until the custom origin passes.
+6. Verify the new origin's `/health`, `/ready`, `/staff/config.json`,
+   `/admin/config.json`, staff sign-in and admin AAL2 sign-in. Confirm CSP and
+   redirect behavior from the actual custom origin.
+7. Create and verify a dedicated Resend sending subdomain such as
+   `mail.patihatti.com`, without enabling operational alerts or sending a real
+   clinic alert unless separately approved at action time.
+8. Point the staging Better Stack readiness monitor to the verified custom
+   origin while retaining evidence of a successful check.
+9. Update the custom-domain checklist and project context with an honest split:
+   domain owned, staging proven, production `app.patihatti.com` still NOT RUN.
+
+## Allowed repository changes
+
+- `src/staffPage.ts`
+- `src/adminPage.ts`
+- `src/operationalAlerts.ts`
+- `src/privacyPage.ts`
+- `test/staffPage.test.ts`
+- `test/adminPage.test.ts`
+- `test/operationalAlerts.test.ts`
+- `test/index.test.ts`
+- `wrangler.staging.toml`
+- `wrangler.toml` only for a non-deployed production hostname placeholder
+- `docs/staff-workflow.md`
+- `docs/platform-admin-overview.md`
+- `docs/operational-alerting.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `PROJECT_CONTEXT.md` only by Codex at closure
+- `CURRENT_TASK.md`
+
+No migration, SQL fixture, RLS/grant, package manifest, lockfile, queue binding,
+prompt or model change is allowed.
+
+## Acceptance criteria
+
+1. Public panel and alert copy consistently says `Pati Hattı`; internal resource
+   names and historical evidence remain intact.
+2. `staging.patihatti.com/staff` and `/admin` serve the existing reviewed panels
+   with no auth, CSP, tenant or clinical-safety regression.
+3. Exact Supabase redirect entries work for sign-in, recovery and admin MFA;
+   no production wildcard is introduced.
+4. Domain/DNS changes do not route `app.patihatti.com` to staging and do not
+   remove the workers.dev fallback before smoke proof.
+5. Resend domain authentication is verified without storing DNS secrets or API
+   keys in the repo.
+6. Better Stack observes the new staging `/ready` endpoint successfully.
+7. All repository checks pass and documentation distinguishes staging evidence
+   from production readiness.
+8. Only allowed files change; unrelated working-tree items remain untouched.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/staffPage.test.ts test/adminPage.test.ts test/operationalAlerts.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+```
+
+For every external step, record `PASS`, `NOT RUN`, or the exact sanitized
+blocker. Domain ownership or a local build alone must never be reported as
+production activation.
+
+## Task 059 observed context
+
+Read before writing anything: `AGENTS.md`, this contract, `PROJECT_CONTEXT.md`,
+the Task 058 record, `git status --porcelain`, the four modified source files,
+the four modified test files, both Wrangler configs, and
+`docs/production-readiness.md` §8.
+
+State found in the repository:
+
+- Working tree modified but uncommitted, last commit `4e69e9b` (Task 058
+  closure): `CURRENT_TASK.md`, `src/adminPage.ts`, `src/operationalAlerts.ts`,
+  `src/privacyPage.ts`, `src/staffPage.ts`, `test/adminPage.test.ts`,
+  `test/index.test.ts`, `test/operationalAlerts.test.ts`,
+  `test/staffPage.test.ts`, `wrangler.staging.toml`, `wrangler.toml`.
+- The pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` were present before this task and were left
+  untouched, as the contract requires.
+- **No file under `docs/` had been modified.** All six documentation files in
+  the Allowed-changes list were still at their committed state, so required
+  work item 9 (checklist and context evidence) had not been started.
+- `wrangler.staging.toml` already carried
+  `routes = [{ pattern = "staging.patihatti.com", custom_domain = true }]`.
+- `wrangler.toml` carried the reserved production strings
+  (`STAFF_LOGIN_URL = "https://app.patihatti.com/staff"`,
+  `RESEND_FROM_ADDRESS = "Pati Hattı <alerts@mail.patihatti.com>"`) with **no**
+  `routes` entry, so production remains unrouted.
+- `OPERATIONAL_ALERTS_ENABLED = "false"` in both configs.
+- Public brand strings already present in code: `Pati Hattı Personel Paneli`,
+  `Pati Hattı Admin Paneli`, `Pati Hattı Platform Yönetici Paneli`,
+  `Pati Hattı Staging Gizlilik Bildirimi`, `Pati Hattı personel kuyruğu`
+  (browser notification) and the `Pati Hattı:` / `Pati Hattı platform sinyali`
+  alert subjects.
+- Two stale documentation strings contradicted the shipped code:
+  `docs/staff-workflow.md` still documented the notification title as
+  `VetAI personel kuyruğu`, and `docs/operational-alerting.md` still recorded
+  the Better Stack monitor as `VetAI staging readiness` after it had been
+  renamed. A third `VetAI` mention in `docs/operational-alerting.md`
+  ("VetAI/Resend teslimi") is a technical reference and was preserved.
+
+Division of work, recorded because it affects how this evidence should be
+weighed: the domain purchase, brand code/test edits, Cloudflare custom-domain
+binding, Supabase Auth redirect entries, Resend sender domain and Better Stack
+monitor move were performed by Codex in the owner's session. That session
+reached a usage limit **while writing the repository-side evidence records**.
+The coordinating review session then completed items 9 and the stale-doc
+corrections, and independently re-verified the live origin and the full local
+gate rather than restating Codex's report.
+
+## Task 059 delivery record
+
+**Repository changes made by this session** (all inside Allowed changes):
+
+- `docs/production-readiness.md` — §8 heading no longer claims the whole
+  checklist is `NOT RUN`; new **§8.1** carries a per-step staging/production
+  table (`PASS` / `PENDING` / `NOT RUN`), the four independently verified
+  endpoints, and an explicit list of what is *not* claimed.
+- `docs/staging-runbook.md` — new **§31** with the external-service sequence,
+  §31.1 independent verification, and §31.2 the gaps this section does not
+  close. Per-step status is single-sourced to §8.1, not duplicated.
+- `docs/saas-urunlestirme-yol-haritasi.md` — new **§10n** Task 059 status,
+  including the explicit statement that this does not close Faz 6, plus the
+  trademark/positioning caution (TÜRKPATENT classes 9/35/42/44; no
+  "emergency vet line" impression).
+- `docs/staff-workflow.md` — notification title corrected to
+  `Pati Hattı personel kuyruğu`.
+- `docs/operational-alerting.md` — Better Stack monitor rename recorded
+  without falsifying the original evidence line.
+- `CURRENT_TASK.md` — only these two sections. `Status` left as `READY`;
+  flipping it, updating `PROJECT_CONTEXT.md` and committing belong to the
+  coordinator/owner, not to this record.
+
+**Verification — all green, run on an exact copy of the working tree:**
+
+1. `pnpm install --frozen-lockfile` → clean.
+2. `pnpm typecheck` → 0 errors.
+3. `pnpm exec vitest run test/staffPage.test.ts test/adminPage.test.ts
+   test/operationalAlerts.test.ts test/index.test.ts` → 4 files, **447
+   passed**.
+4. `pnpm test` → 39 files, **2132 passed / 2 skipped / 0 failed**. Identical to
+   the Task 058 baseline, so the brand change introduced no regression.
+5. `pnpm exec wrangler deploy --dry-run` → **312.61 KiB / gzip 65.94 KiB**.
+6. `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run` → same
+   size, no unexpected binding.
+7. Whitespace/trailing-space check → clean.
+
+One transient failure was self-caught and is recorded so it is not mistaken
+for a code defect: an early full-suite run reported 2 failures
+(`test/liveAiDemo.test.ts`, `test/localDemo.test.ts`) with `ENOENT` for
+`wrangler.live-ai.toml` and `wrangler.demo.toml`. Those two config files had
+not been copied into the verification environment; the tests read them from
+disk. After copying them the suite returned 2132/2. No product code was
+involved.
+
+**Live verification on the custom origin** (2026-09-10, direct requests, not
+a relayed report): `/health` `200 status:ok`; `/ready` `200 status:ready`;
+`/staff/config.json` and `/admin/config.json` `200` and both returning the
+**staging** Supabase project; `/staff` rendering the Task 058 shell with
+document title `Pati Hattı Personel Paneli` and staff tabs absent before
+sign-in.
+
+**Final external state and still-open boundaries:**
+
+- Password recovery **from the custom origin** was subsequently exercised on
+  2026-09-11: Supabase sent one bounded recovery e-mail and the owner confirmed,
+  without sharing its fragment/token, that the link opened
+  `https://staging.patihatti.com/admin` in the `Yeni parola belirle` view.
+- CSP response headers were subsequently read from the live custom origin on
+  2026-09-11 and matched the exact values pinned by the green route tests.
+- Contract item 7 is now `PASS`: `mail.patihatti.com` reports `Verified` in
+  Resend. **No e-mail has been sent from it**, so real clinic e-mail delivery
+  remains unproven and alerting stays disabled.
+- No WhatsApp canary or bounded alert proof from the custom origin.
+- Production `app.patihatti.com`: reserved, unrouted, untouched. No production
+  Worker deploy, Supabase mutation, Meta change or alert enablement occurred.
+- No migration, SQL fixture, RLS/grant, lockfile, queue binding, prompt or
+  model change was made.
+
+**For the review gate to inspect:**
+
+- `Status: COMPLETE` is now justified: the repository gate, live custom-origin
+  endpoints/CSP, staff sign-in, admin AAL2, password-recovery redirect, Resend
+  verification and Better Stack target all passed. Production-only gates stay
+  outside this task.
+- The staff queue currently holds four open, unassigned synthetic work items,
+  the oldest from 2026-08-23. They are test residue rather than a defect, but
+  they are also a reminder that nothing notifies anyone that this queue is
+  filling up; §6's "a work item being created is not the same as anyone being
+  notified" gap is still open.
+- Whether the reserved-but-unrouted `app.patihatti.com` strings in
+  `wrangler.toml` are acceptable in a committed production config, given that a
+  future careless `wrangler deploy` with that file would publish a Worker whose
+  `STAFF_LOGIN_URL` points at a hostname that does not resolve.
+- Whether the brand rename should also reach the four approval/KVKK packages in
+  `docs/onay-paketleri/`, which still carry the old public name and are the
+  documents an external veterinarian and lawyer will actually read.
+
+**Codex closure — 2026-09-11:**
+
+- Independently reviewed the complete source/config/test diff and found no
+  authentication, CSP, tenant, clinical-safety or runtime regression.
+- Re-ran the required gate on the actual working tree: frozen install,
+  typecheck, focused 447/447 tests, full 2,132 passed / 2 unchanged skips,
+  both Wrangler dry-runs and `git diff --check`; all passed.
+- Directly re-verified `/health`, `/ready`, both config endpoints, both branded
+  panel shells and exact CSP headers on `staging.patihatti.com`; the legacy
+  workers.dev health endpoint remained 200.
+- Read-only account checks confirmed `mail.patihatti.com` as `Verified` in
+  Resend and the Better Stack `Pati Hattı staging readiness` monitor as `Up`
+  against `https://staging.patihatti.com/ready`.
+- Sent one scoped staging recovery e-mail from the authenticated Supabase
+  dashboard. The owner confirmed the custom-origin recovery view opened;
+  neither its URL fragment/token nor any password was retained.
+- Updated `PROJECT_CONTEXT.md` with durable Task 059 evidence. Production,
+  alert enablement, real sender-domain mail, marketing-site work and the
+  external veterinarian/legal/KVKK approvals remain separate future gates.
+
+
+---
+
 # Completed task — 058 Staff/admin panel productization and custom-domain readiness
 
 Status: `COMPLETE` (closed 2026-09-08 after Codex diff/security review,

@@ -84,6 +84,8 @@ describe("handleStaffShell", () => {
     const csp = res.headers.get("Content-Security-Policy");
     expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'sha256-YPvTUDSxjpMTosU17ou+TQQ+PibSHCUhQCJMsxMJLoY='; connect-src 'self' https://example.supabase.co; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
     expect(await res.text()).toBe(STAFF_HTML);
+    expect(STAFF_HTML).toContain("<title>Pati Hattı Personel Paneli</title>");
+    expect(STAFF_HTML).not.toContain("VetAI");
   });
 
   it("returns 503 with security headers and no config leakage when config is missing", async () => {
@@ -341,7 +343,7 @@ describe("handleStaffScript", () => {
 
   it("emits a PII-free notification with only the fixed title and urgent/normal body", () => {
     expect(STAFF_APP_JS).toContain("function requestNotificationIfNeeded(newItems) {");
-    expect(STAFF_APP_JS).toContain('new Notification("VetAI personel kuyru\\u011fu", {');
+    expect(STAFF_APP_JS).toContain('new Notification("Pati Hatt\\u0131 personel kuyru\\u011fu", {');
     expect(STAFF_APP_JS).toContain('body: hasUrgent ? "Yeni acil personel i\\u015fi var." : "Yeni personel i\\u015fi var.",');
     expect(STAFF_APP_JS).not.toMatch(/silent\s*:/);
     const notifyBody = STAFF_APP_JS.slice(
@@ -371,7 +373,7 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
   it("keeps the strict-allowlist claim hidden until the account response validates", () => {
     expect(STAFF_HTML).toContain('id="automation-policy-region" hidden');
     expect(STAFF_HTML).toContain("Strict whitelist doğrulandı");
-    expect(STAFF_HTML).toContain("Meta imzalı webhook'u VetAI'ye iletir.");
+    expect(STAFF_HTML).toContain("Meta imzalı webhook'u Pati Hattı'na iletir.");
     expect(STAFF_APP_JS).toContain("automationPolicyRegion.hidden = true;");
     expect(STAFF_APP_JS).toContain("automationPolicyRegion.hidden = false;");
     expect(STAFF_APP_JS).toContain(
@@ -381,10 +383,10 @@ describe("handleStaffScript: WhatsApp otomasyonu (Task 033)", () => {
 
   it("states the exact manual and personal retention boundaries in Turkish", () => {
     expect(STAFF_HTML).toContain(
-      "Bu numaradan gelen mesajlar klinik için VetAI'de kaydedilir; VetAI otomatik yanıt vermez ve OpenAI çağırmaz.",
+      "Bu numaradan gelen mesajlar klinik için Pati Hattı'nda kaydedilir; Pati Hattı otomatik yanıt vermez ve OpenAI çağırmaz.",
     );
     expect(STAFF_HTML).toContain(
-      "Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası VetAI'de saklanır; listede olmayan numara için rota kaydı tutulmaz.",
+      "Açık bir Kişisel kaydı seçerseniz yönlendirme için telefon numarası Pati Hattı'nda saklanır; listede olmayan numara için rota kaydı tutulmaz.",
     );
     expect(STAFF_HTML).toContain(
       "Bu numara için özel ayar silinir; gelecekteki mesajlar kişisel varsayılana döner.",
