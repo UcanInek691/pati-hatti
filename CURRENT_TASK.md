@@ -1,4 +1,733 @@
-# Current task — 060 Project-scoped Graphify workspace integration
+# Current task — 061 Pati Hattı game-like interactive 3D homepage slice
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-11 after Task 060 closure and after directly
+inspecting the owner's three X references plus the two linked live sites. The
+owner wants the public homepage to feel like an animated 3D story rather than
+a generic SaaS landing page: a Golden Retriever begins in its garden kennel,
+tracks the pointer with its gaze, walks to the lower-right on activation, and
+reveals the partner-veterinarian view; activating it again returns home.
+
+## Goal
+
+Implement the first complete, locally reviewable homepage slice at `/` on the
+existing Worker project. It must establish the original Pati Hattı visual
+world and the full two-state dog interaction without changing the authenticated
+staff/admin panels, backend behavior, database or live environments.
+
+## Reference reading and visual thesis
+
+- `https://do-smoothie.pages.dev/` uses one dominant character, oversized
+  typography, palette changes and layered depth rather than generic cards.
+- `https://portfolio.kaori-dododo.com/` uses a cinematic opening frame,
+  character movement to connect sections, restrained navigation and a visible
+  motion toggle.
+- `https://x.com/maarcoofdezz/status/2096680325761913021` is a tutorial/example
+  of AI-assisted 3D web work, not a source of code or assets.
+- Do not copy any character, composition, text, asset or code from these
+  references. The Pati Hattı world must be original.
+- Visual thesis: **a stylized, game-like 3D garden world** matching the spirit
+  of the supplied references: bold silhouettes, expressive character posing,
+  clean toy-like materials, saturated but controlled colour, oversized type
+  and UI composed as part of the scene. The Golden must remain recognizable
+  and appealing, but must not look photorealistic, painterly, stock-photo-like
+  or like a conventional corporate landing-page mascot.
+- Movement should feel like a polished game menu or character-led interactive
+  title screen: clear anticipation, walk cycle, arrival pose and reversible
+  scene change. Avoid a realistic garden photograph with text placed over it.
+
+## Fixed experience contract
+
+1. `/` is a public narrative homepage. Existing `/staff`, `/admin`, `/privacy`,
+   `/health`, `/ready`, webhook and Queue behavior must remain unchanged.
+2. The initial viewport shows the Pati Hattı name, concise truthful clinic-facing
+   copy, one primary `Nasıl çalışır?` action, a `Veteriner girişi` link to
+   `/staff`, and the Golden Retriever sitting in its garden kennel.
+3. Pointer movement makes the dog's gaze follow within a deliberately small,
+   natural range. Leaving the scene returns the gaze to neutral. The effect
+   must not capture, store or transmit pointer data.
+4. Activating either the dog or `Nasıl çalışır?` moves one finite state machine
+   through `home -> walking -> network`. The dog exits the kennel, crosses the
+   scene and sits at the lower-right while the veterinarian-network content is
+   revealed. Double activation during a transition is ignored.
+5. Activating the seated dog again moves `network -> returning -> home`, reverses
+   the scene transition and restores focus predictably.
+6. Mouse, touch, `Enter` and `Space` must expose the same transition. The dog is
+   a real button with a changing accessible label, not a clickable `div`.
+7. `prefers-reduced-motion: reduce` disables gaze tracking, parallax, walking
+   and smooth scrolling; state changes use an immediate or short cross-fade.
+   The page remains complete without JavaScript: brand, product explanation,
+   staff link and veterinarian-network text are readable.
+8. The section revealed in the second state may show clearly labelled staging
+   demo profile cards, but it must not invent or imply real veterinarians,
+   clinics, testimonials, specialties or partnerships. Production publication
+   requires approved names, photos, consent and copy.
+9. Product copy must remain inside the verified boundary: Pati Hattı organizes
+   WhatsApp intake, gathers appointment requests and hands safety-sensitive
+   conversations to clinic staff. It is not a veterinarian and must not claim
+   diagnosis, treatment, medical availability or guaranteed response times.
+10. Desktop, tablet and 375 px mobile layouts must keep the main action and dog
+    usable without horizontal overflow. At 200% text zoom, copy and controls
+    must remain reachable.
+
+## Smallest supported implementation
+
+- Use Cloudflare Workers Static Assets with a `public/` directory and the
+  asset-first default. Do not add an `ASSETS` runtime binding or change
+  `src/index.ts`; unmatched API/panel routes must continue falling through to
+  the existing Worker.
+- Use original, optimized **stylized game-art 3D renders** as separable raster
+  layers plus native HTML/CSS/JS transforms for the requested interactive 2.5D
+  effect. Character frames must preserve a coherent cartoon/game model and
+  readable poses rather than simulating motion by sliding one realistic photo.
+  Do not add React,
+  Three.js, Spline, GSAP, model-viewer, a CDN script or another dependency in
+  this task. A later true free-camera WebGL scene is justified only if this
+  reviewed lightweight path measurably fails the desired experience.
+- Keep all browser assets same-origin. Add a strict `public/_headers` policy;
+  no `unsafe-inline`, remote fonts, analytics, cookies, forms or trackers.
+- Keep the initial transfer bounded: responsive WebP/AVIF where supported,
+  explicit dimensions, one eager hero image and only the assets needed for the
+  transition. Preserve a legible CSS-color fallback while images load.
+- The earlier realistic Golden/garden concept generated by Codex is explicitly
+  rejected as the visual style. Do not use or commit it. It may not guide the
+  final materials, lighting or character treatment; the supplied interactive
+  sites are the style benchmark, while all final Pati Hattı assets remain
+  original and independently movable.
+
+## Allowed changes
+
+- `public/**` for the homepage, headers and original licensed assets
+- `wrangler.toml`
+- `wrangler.staging.toml`
+- `test/homePageAssets.test.ts` (new)
+- `docs/marketing-homepage.md` (new)
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md`, only this task's Observed context and Delivery record
+- `PROJECT_CONTEXT.md`, Codex only at closure
+
+No TypeScript runtime source, database migration/fixture, auth configuration,
+panel source/test, package manifest, lockfile or live service change is allowed.
+The owner's pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. Static Assets configuration is identical in production and staging configs,
+   emits no Wrangler warning and cannot shadow the existing dynamic routes.
+2. The root homepage is recognizable as Pati Hattı in the first viewport and
+   implements the exact reversible dog/network state machine.
+3. Accessibility, no-JS content, reduced motion, keyboard/touch behavior and
+   responsive layouts satisfy the fixed experience contract.
+4. The static security headers are strict and every runtime asset is same-origin.
+5. Automated tests prove the public files exist, contain no remote runtime
+   dependency or inline executable/style block, preserve truthful copy and pin
+   the state names/transition guards/reduced-motion path.
+6. Local Wrangler browser review passes at 1440, 768 and 375 px, including both
+   dog states, return transition, keyboard activation, reduced motion and no
+   horizontal overflow. This is local evidence only, not a staging activation.
+7. No real veterinarian/clinic identity, personal data, credential or
+   unapproved testimonial enters the repository.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+graphify update .
+```
+
+## Not authorized in Task 061
+
+- No staging or production deploy, DNS/domain change, Supabase/Meta/OpenAI/
+  Resend/Better Stack call, analytics, cookie banner or form submission.
+- No publication on `patihatti.com` or `app.patihatti.com`.
+- No copied X/live-site assets or code and no third-party asset whose commercial
+  license/provenance is not recorded.
+
+## Task 061 observed context
+
+Codex visually inspected the live reference states:
+the smoothie site swaps the full palette/character while retaining a stable
+layout; the portfolio site turns a small scroll into a protagonist walk through
+a theatrical scene. The root path currently falls through to the Worker's plain
+404, and neither Wrangler config currently declares Static Assets.
+
+Implementing agent (this session): ran `graphify query`/`graphify explain`
+first to confirm the above before touching anything — no `public/` directory
+existed, neither `wrangler.toml` nor `wrangler.staging.toml` declared
+`[assets]`, and no prior task owned `src/index.ts`'s root-path 404 fallthrough,
+so adding a binding-free `[assets]` block was safe and additive.
+
+No image-generation tool is available in this environment, so the "game-art
+3D render" character/scene the task asks for could not be produced as an
+actual rendered/raster asset. Built it instead as hand-authored inline SVG
+(`public/index.html`), leaning on strong `stroke="var(--ink)"` silhouette
+outlines and the site's existing hard-flat-shadow toy language
+(`--dog-fur`/`--dog-fur-dark`/`--kennel-*` custom properties already defined
+in `public/styles.css`) to approximate the "toy-like materials, controlled
+vivid colors, strong silhouettes" contract as closely as achievable without a
+renderer. This is a real, disclosed deviation from the literal "raster
+layers" wording in the task's smallest-supported-implementation note — see
+the delivery record and `docs/marketing-homepage.md` for the full rationale
+and the swap-in path if a rendered asset is produced later.
+
+During the mandatory local browser review (not from any user report — this
+session had no user messages, only the original assignment), the first
+rendered pass of the dog/kennel SVG was genuinely broken, not just
+under-styled: the tail sat on the wrong side of the body (`cx="18"`, the head
+side, instead of the rear), and the head/body ellipses fused into one
+indistinguishable shape because neither carried a stroke and they overlapped
+heavily. Fixed by repositioning the tail, reducing head/body overlap, and
+adding outlines to every shape (dog and kennel) for visual consistency;
+re-screenshotted before/after to confirm. `app.js`/`styles.css` selectors
+(`#legs`, `.leg-a/b/c/d`, `.ear-left/.ear-right`, `#head`, `#pupils`, `.tail`)
+were untouched — only internal SVG geometry/attributes changed.
+
+Two environment limitations were hit and worked around during that review,
+not silently skipped: `mcp__claude-in-chrome__resize_window` reported success
+but never actually changed the rendered viewport (`window.innerWidth` stayed
+at the native 1536px across 3 attempts, 2 tabs, 3 requested widths), so the
+768px/375px acceptance-criteria viewports were checked by static CSS analysis
+(`clamp()`, `%`, `max-width`, `aspect-ratio`, grid `auto-fit`, one `max-width:
+640px` breakpoint — no fixed widths that would break narrower) rather than an
+actual rendered screenshot. Separately, the automation tab ran with
+`document.visibilityState: "hidden"` (background tab), which made native
+Tab-key focus traversal unreliable; keyboard activation was instead verified
+by programmatic `#dog-trigger.focus()` + `Enter`, which correctly drove the
+walk-to-network transition and showed the `:focus-visible` outline, though
+real Tab-order traversal wasn't observed end-to-end through this tool.
+
+### Remediation pass (this session, addressing the Codex CHANGES_REQUIRED review below)
+
+Re-read `AGENTS.md`, `PROJECT_CONTEXT.md` and this file in full before
+touching anything, then addressed all six numbered findings in "Task 061
+Codex review — CHANGES_REQUIRED" below.
+
+Inspected the three Codex ImageGen candidates listed in that review section
+before deciding how to rebuild the character. None had genuine alpha
+transparency when checked pixel-by-pixel. The six-pose Golden
+character-strip candidate additionally had a checkerboard pattern baked
+directly into its opaque pixels (not real transparency, indistinguishable
+from a real alpha channel without inspection) — disqualified outright rather
+than shipped behind a manual matte cut, since that would have risked a
+visible checkerboard/rectangle artifact behind the character in production.
+Decision: rebuilt the dog entirely as a layered, gradient-shaded inline SVG
+(no raster asset used) rather than adopting any of the three candidates. See
+the delivery record below and `docs/marketing-homepage.md` for the full
+design approach.
+
+This environment still has no image-generation tool capable of producing a
+real-alpha raster/3D-rendered game-art asset, so the SVG-vs-raster
+substitution disclosed in the original observed-context note above remains
+in effect — but this pass rebuilt the SVG itself to directly answer Codex
+finding #2 (torso split into two overlapping gradient-shaded ellipses for
+volume, head rebuilt as its own group with floppy ears repositioned near the
+skull's edge, distinct muzzle/nose/mouth/brow), not merely restyled the
+previous flat shapes.
+
+During real-browser verification of the rebuilt scene (Chrome DevTools
+Protocol, headless Chrome driven over a raw WebSocket — see delivery record),
+two genuine bugs were found and fixed, neither reported by a user, both
+caught only by rendering the actual page rather than reading markup:
+
+- **Invisible ears**: the skull `<circle r="24">` was painted after the ear
+  ellipses in SVG source order, so it fully covered both ears (their centers
+  were well within its 24px radius). Fixed by repositioning the ear centers
+  near the skull's edge so a visible portion of each floppy ear extends past
+  the skull's silhouette. Confirmed via an isolated standalone render of the
+  extracted SVG markup, independent of any surrounding app layout/CSS.
+- **Network preview flash on first paint**: `html.js .network` declared both
+  its hidden target state (`opacity: 0`, `transform: translateX(-10px)`) and
+  a `transition` in the same CSS rule, so the CSS Transitions spec's
+  before/after-change style resolution animated the very first paint after
+  JS activation (observed as a mid-transition computed `opacity` like
+  `0.258723` immediately on load instead of `0`). Fixed by moving the
+  `transition` declaration into a separate `html.js.ready .network` rule,
+  with `.ready` added to `<html>` via a double-`requestAnimationFrame` in
+  `app.js` after the first `render()` call, so the JS-activated hidden state
+  applies instantly on load instead of animating from the pre-JS visible
+  state.
+
+Also confirmed, via real CDP key-event dispatch testing against a plain
+`data:text/html,<button>` page in isolation, that Chromium's native
+Enter/Space button-activation default action requires the 3-event sequence
+`rawKeyDown` → `char` (with `text`/`unmodifiedText` set) → `keyUp`; a
+`keyDown`/`rawKeyDown` + `keyUp`-only dispatch does not trigger it. This was
+a CDP-harness limitation, not an app bug — `app.js` has no custom key
+handling and relies entirely on native button semantics. Once the harness
+used the correct 3-event sequence, real keyboard verification (item 6 of the
+Codex review) completed successfully; see the delivery record for results.
+
+### Kling video remediation (2026-09-11, second visual review follow-up)
+
+The owner's explicit rejection of the SVG direction and the second Codex
+visual review required a real art/animation replacement rather than another
+SVG refinement. One Kling generation was made only after owner approval,
+using a fixed-camera garden/kennel composition, a custom Golden Retriever
+description and open copy space. Forty of the available 66 Kling credits were
+used; no second generation was made. The complete clip was inspected as a
+ten-frame contact sheet before repository use. It keeps the dog, kennel,
+lighting and camera coherent and contains a readable kennel exit, walk and
+seated arrival without an obvious limb discontinuity.
+
+The accepted clip was converted locally into two WebP settled-state posters
+and two muted H.264 transition files; the return file is the same clip reversed
+locally, avoiding another paid generation and identity drift. The four runtime
+assets total under 1.5 MiB. They replace the rejected inline SVG/pose sequence
+without changing the bounded state names, Static Assets model or backend.
+
+This evidence also exposed two real implementation faults. First, the strict
+CSP lacked `media-src`, so Chromium blocked the same-origin video and only the
+timeout fallback advanced the scene; `media-src 'self'` was added and both
+directions then played with a non-null media state and no error. Second, the
+CSS pupil layer was visibly offset from the generated dog's eyes; the mascot
+hit area and pupil coordinates were aligned to both settled posters and the
+artificial white eye discs were removed, leaving only subtle moving dark
+pupils.
+
+The initially downloaded free Kling export visibly carried a `KlingAI 3.0
+Omni` watermark and was retained intact during the first local review. On
+2026-09-12 the owner supplied `pati-hatti-walk-clean.mp4`, a visually clean
+master with matching 1916×1080/24 fps/H.264 characteristics and no visible
+watermark in the inspected contact sheet. Both posters and both transition
+clips were regenerated from that one clean master. This closes the visual
+watermark issue but not the publication gate: commercial usage permission and
+source/provenance remain unverified and must be recorded before publication.
+
+On 2026-09-11 the owner reported that a bright central light washed out the
+dog during the walk. Frame-by-frame inspection showed the exported clip itself
+remained coherent; the obstruction came from the homepage's own high-opacity
+radial `.scene-shade` overlay. The radial layer was removed while the existing
+subtle dark top gradient was retained. A free 1080p Adobe Firefly replacement
+was also inspected and rejected because it generated two dogs and lost the
+established mascot identity; it was not downloaded or wired into the product.
+
+### Deterministic layered-scene remediation (2026-09-12)
+
+The owner rejected the Pika/Kling direction after the generated transition
+changed background objects and lighting between frames. The failure was
+architectural, not a prompt-tuning issue: a full-frame generative video cannot
+guarantee an immutable garden. No further Pika credit was spent.
+
+The replacement separates scene and character. Built-in ImageGen produced one
+empty fixed garden and one real-alpha four-pose sheet derived from the already
+approved mascot identity; both were inspected before use and converted locally
+to bounded WebP assets. The page now renders no video at all. CSS moves only the
+transparent mascot layer and applies a deterministic camera-distance transform
+to the one fixed background. The three activations are: forward right-facing
+bound, forward-to-camera run with stable apparent dog size, and a genuinely
+left-facing forward bound home. Reverse playback and backward walking are no
+longer possible.
+
+The complete cycle was exercised in the real local Worker page. The initial,
+right-side, network and returned-home settled compositions were inspected, as
+was a mid-air frame; the kennel, tree, stones, light and landscape remained the
+same asset throughout. The network view kept all three placeholder cards in the
+scene without an internal scrollbar. The generated-video files were removed
+from `public/assets/` rather than left as unused deploy payload.
+
+## Task 061 delivery record
+
+**Changed files** (all within the task's allowed scope; no panel, backend,
+auth, or database behavior touched; no new dependency added to
+`package.json`):
+- `public/index.html`, `public/styles.css`, `public/app.js`, `public/_headers`
+  — new marketing homepage (state-machine-driven dog/kennel scene, network
+  preview section, strict CSP).
+- `wrangler.toml`, `wrangler.staging.toml` — added an identical,
+  binding-free `[assets] directory = "./public"` block to each.
+- `test/homePageAssets.test.ts` — new, pins the static-asset contract (no
+  inline script/style, no remote origins, CSP strictness, state-machine
+  string constants, reduced-motion handling, real `<button>` elements,
+  `[assets]` parity between the two Wrangler configs).
+- `docs/marketing-homepage.md` — new, implementation notes and disclosed
+  limitations.
+- `docs/production-readiness.md` — one new `- [ ]` item under "## 1. Human
+  gates" gating any future use of real clinic identity in the `#network`
+  placeholder cards.
+- `docs/staging-runbook.md` — new `## 32. Task 061 —  ...` entry (local only,
+  NOT RUN).
+- `docs/saas-urunlestirme-yol-haritasi.md` — new `## 10o. Task 061` entry.
+
+**Acceptance criteria satisfied:** game-like stylized-toy visual direction
+(strong silhouettes via consistent stroke outlines, saturated but controlled
+palette reusing existing `--dog-fur`/`--kennel-*` variables, large type,
+UI embedded in the scene, no photographic/realistic reference used or
+referenced); dog kennel-exit/walk/sit/return states driven by a real
+finite-state machine with CSS transitions (not a static image slide);
+homepage is not generic corporate SaaS or text-over-photo; only the allowed
+scope was touched; no new dependency; no commit/push/deploy performed.
+
+**Exact checks run and results:**
+- `pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts` — pass.
+- `pnpm typecheck` (`tsc --noEmit`) — clean, no errors.
+- `pnpm test` (full suite) — pass: 40 files, 2146/2148 tests (2 skipped are
+  pre-existing opt-in paid evals, unrelated to this task).
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — succeeds,
+  reads exactly the 4 files under `public/`, `Total Upload: 312.61 KiB / gzip:
+  65.94 KiB`.
+- `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir
+  .wrangler/dry-run-staging` — succeeds, identical upload size.
+- `git diff --check` — exit 0, no whitespace errors (only pre-existing
+  CRLF/LF autocrlf notices on unrelated files).
+- `graphify update .` — ran after all edits to refresh the knowledge graph.
+- Live local review via `pnpm exec wrangler dev` in a real browser: full dog
+  animation cycle (home → walking → network → returning → home) exercised by
+  click and by keyboard; `prefers-reduced-motion` path exercised; no
+  horizontal overflow at the native ~1536px viewport; `wrangler dev` process
+  confirmed stopped afterward (failed `curl` to its port).
+
+**Checks not fully run, and why:** the 768px/375px responsive viewports named
+in the acceptance criteria were **not** visually verified by an actual
+rendered screenshot — `resize_window` in this environment does not change the
+real viewport (confirmed via direct `window.innerWidth` inspection, 3
+attempts). Substituted with static CSS analysis showing no fixed-pixel
+layout that would break at those widths, which is a weaker guarantee than a
+rendered screenshot. Real native Tab-key focus traversal was likewise not
+observed end-to-end (automation tab is a hidden/background tab); keyboard
+activation was instead confirmed via programmatic focus + Enter. Both gaps
+are detailed in `docs/marketing-homepage.md`.
+
+**Known limitations:** the character/scene art is hand-authored inline SVG,
+not a rendered "game-art 3D" raster asset — no image-generation tool is
+available in this environment. It was built to satisfy the strong-silhouette
+/ toy-material / controlled-palette intent as closely as SVG line-art allows,
+explicitly without referencing the prior realistic garden/Golden-Retriever
+image. Swappable later for a rendered asset without touching `app.js`'s state
+machine, since animation targets stable classes/IDs, not path data.
+
+**Risks for Codex/Opus to inspect:** (1) confirm the SVG's visual quality
+reads as intended on an actual device/browser, not just this session's
+screenshots — this was self-corrected once already after a genuinely broken
+first pass, so a second independent look is warranted; (2) verify 768px/375px
+rendering directly, since this session could only confirm it statically; (3)
+confirm real Tab-key keyboard navigation end-to-end in a normal foreground
+browser tab; (4) decide whether the SVG-vs-raster deviation is acceptable for
+this task's closure or blocks it pending a rendered asset.
+
+### Remediation pass delivery record (this session, addressing all six CHANGES_REQUIRED findings below)
+
+**Changed files this pass** (all within the task's allowed scope; no panel,
+backend, auth, or database behavior touched; no new dependency):
+- `public/index.html` — hero restructured so `.hero-copy` and `.scene-wrap`
+  (`#scene`) are both children of one `<section class="stage">` (row layout
+  at `min-width: 860px`); dog SVG torso rebuilt as two overlapping
+  gradient-shaded ellipses (`.haunch`, `.chest`) instead of one flat body
+  shape; head rebuilt as its own `.head-group` with repositioned floppy
+  `.ear-left`/`.ear-right` ellipses, a distinct muzzle/nose/mouth/brow, an
+  `.eye-sclera` (light fill), a `.pupil-group`/`#pupils` containing only the
+  dark `.pupil`, and a separate static `.eye-glint`; `#network` remains a
+  DOM child of `#scene`, revealed in place at the `sit` pose instead of a
+  separate below-the-fold section.
+- `public/styles.css` — fixed the network load-flash bug by moving its
+  `transition` declaration behind a new `html.js.ready .network` rule (see
+  observed context above for the root cause); `.pupil-group` alone carries
+  the `--gaze-x`/`--gaze-y` transform binding, `.eye-sclera`/`.eye-glint` do
+  not.
+- `public/app.js` — added the `.ready` class via double-`requestAnimationFrame`
+  after first paint (network load-flash fix); `POSE_SEQUENCE`/`SETTLED_POSE`
+  (already present from the prior pass) now drive the rebuilt SVG's distinct
+  kennel-exit/prep/walk/stand-up/arrive/sit poses.
+- `test/homePageAssets.test.ts` — added a `describe("Task 061 hero scene
+  structure", ...)` block with 4 new structural tests (string/positional
+  `indexOf`/regex assertions, since the Vitest environment is `node` with no
+  DOM parser and none may be added): initial-viewport row composition,
+  `#network`'s DOM nesting inside `#scene` (not a sibling section), the
+  dark-pupil/light-sclera/static-glint eye structure including which CSS
+  rules do and don't carry the gaze transform, and multi-pose usage
+  (`POSE_SEQUENCE`'s distinct pose names each having a corresponding
+  `#scene[data-pose="..."]` transform rule in CSS).
+- `docs/marketing-homepage.md` — design-approach section rewritten to
+  document the layered/gradient-SVG rebuild and the three-candidate raster
+  rejection rationale; verification section replaced with this session's
+  real CDP-based results (see below); the two stale "known gaps" (unresizable
+  automation viewport, unreliable background-tab Tab traversal) removed now
+  that real viewport/keyboard verification succeeded.
+- `docs/staging-runbook.md`, `docs/saas-urunlestirme-yol-haritasi.md` —
+  Task 061 entries updated to describe the six-fix remediation and real
+  browser-verification results instead of the original static-only pass.
+
+**Real browser verification (Chrome DevTools Protocol, headless Chrome
+driven over a raw WebSocket by a small dependency-free script outside the
+repo)** — this supersedes the "Checks not fully run" / "Known limitations"
+caveats above for items (2) and (3) of the Risks list:
+- **Finding #1 (initial viewport)**: at 1280×720, `document.documentElement`
+  has `scrollHeight === innerHeight` and `scrollWidth === innerWidth` (zero
+  overflow); the dog, kennel and hero copy are all visible with no scrolling.
+- **Finding #2 (character quality)**: verified via three independent methods
+  — `getBoundingClientRect`/SVG-local `getBBox()` measurement and
+  `elementFromPoint()` grid hit-testing ruled out clipping/occlusion, and an
+  isolated standalone render of the extracted `#dog` SVG markup (own HTML
+  page, copied CSS custom properties) confirmed the shape reads as a
+  recognizable Golden Retriever with a visible floppy ear, distinct
+  head/neck/torso masses and correct eye anatomy, independent of any
+  surrounding app layout/CSS/cropping.
+- **Finding #3 (gaze/pupil)**: confirmed structurally (only `.pupil-group`
+  binds `--gaze-x`/`--gaze-y`; `.eye-sclera` and `.eye-glint` carry no gaze
+  transform — pinned by the new test) and behaviorally (moving the simulated
+  pointer moved only the dark pupil within the fixed light sclera).
+- **Finding #4 (multi-pose transition)**: the return animation was captured
+  as three staged screenshots showing distinct stand-up, walk and arrive
+  poses (not one image sliding); `walking`/`returning` step through 5
+  distinct named poses total, each with its own CSS transform rule, pinned
+  by the new multi-pose test.
+- **Finding #5 (network in-scene)**: confirmed via DOM-position inspection
+  that `#network` is nested inside `#scene`/`.scene-wrap` and is revealed in
+  place once the dog reaches its `sit` pose — no scroll to a separate
+  subsection is needed; pinned by the new nesting test.
+- **Finding #6 (real 1280×720/768/375, keyboard, touch, reduced-motion,
+  return-animation verification)**: 768px and 375px both show zero
+  horizontal overflow (375px has acceptable vertical scroll). Real Tab
+  traversal confirmed `#dog-trigger` is the last focusable element. Real
+  `Enter`/`Space` activation was confirmed using a CDP key-event dispatch
+  sequence (`rawKeyDown` → `char` → `keyUp`) discovered during this pass to
+  be required for Chromium's native button-activation default action — see
+  observed context above; both keys correctly drove `home → network` and
+  `network → home`. Touch-emulated activation at mobile viewport correctly
+  opened the network preview. `prefers-reduced-motion: reduce` emulation
+  showed the transition collapsing to near-instant with the state machine
+  settling correctly.
+
+**Updated verification command results (re-run in full this session):**
+- `pnpm install --frozen-lockfile` — up to date.
+- `pnpm typecheck` — clean (after adding non-null assertions the new tests'
+  regex-capture-group access needed under `strict` mode).
+- `pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts` —
+  pass, 119 tests.
+- `pnpm test` (full suite) — pass: 40 files, **2150/2152** tests (2 skipped
+  are the same pre-existing opt-in paid evals as before; the count rose from
+  2148 to 2152 because of the 4 new structural tests).
+- `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` and the
+  staging-config equivalent — both succeed, unchanged `Total Upload: 312.61
+  KiB / gzip: 65.94 KiB`.
+- `git diff --check` — exit 0, no whitespace errors.
+- `graphify update .` — ran after all edits.
+- No commit, push, staging/production deploy, or DNS change was performed.
+
+### Kling video remediation delivery record (2026-09-11)
+
+**Changed in this pass:** the rejected inline SVG and timer-driven pose table
+were replaced by `public/assets/pati-hatti-garden-home.webp`,
+`pati-hatti-garden-network.webp`, `pati-hatti-walk-forward.mp4` and
+`pati-hatti-walk-return.mp4`; `public/index.html`, `public/styles.css`,
+`public/app.js` and `public/_headers` now render and control those same-origin
+assets. `test/homePageAssets.test.ts` pins their presence, total size, DOM
+wiring, separate forward/return sources, native media completion, CSP and
+non-scrolling network layout. Task 061 sections in the three implementation/
+roadmap documents were corrected, and `docs/production-readiness.md` now has
+an unchecked commercial-permission/provenance publication gate.
+
+**Real-browser evidence:** through the local Worker, 1280×720 completed both
+video directions and restored focus; settled network dimensions were
+`scrollHeight === clientHeight` and `scrollWidth === clientWidth`, and document
+horizontal overflow was zero. At 375×812 both settled states had zero
+horizontal overflow, the three cards had no internal scroll, and native Enter
+on `Eve dön` returned to `home`. The temporary viewport override was reset.
+The initial CSP playback failure and misaligned gaze layer described in the
+observed-context addendum were fixed and rechecked.
+
+**Publication limitation:** on 2026-09-12 the owner supplied a watermark-free
+clean master and all four derived runtime assets were regenerated from it, so
+the visible-watermark defect is closed. The assets deliberately remain
+uncommitted/unpublished because commercial usage permission and source/
+provenance have not yet been verified. This task does not claim that the
+brand/licence gate is complete.
+
+**Final automated gate results:** frozen install succeeded; `pnpm typecheck`
+was clean; targeted homepage/Worker tests passed 121/121; the full suite passed
+40 files and 2152 tests with the same 2 pre-existing opt-in paid-eval skips;
+both Wrangler dry-runs succeeded, read 9 static files and reported `Total
+Upload: 312.61 KiB / gzip: 65.94 KiB`. `git diff --check` and `graphify update
+.` both completed successfully after the final edits; Graphify rebuilt the
+local graph without an LLM/API call. No migration, external-service mutation,
+commit, push or deploy was authorized or performed. `.gitignore` and
+`docs/043-opus-inceleme.md` remain pre-existing, out-of-task working-tree
+items and were not edited by this remediation.
+
+**Central-glare follow-up:** `public/styles.css` no longer draws the bright
+radial `.scene-shade` over the video, and `test/homePageAssets.test.ts` pins
+that regression. The local 1280×720 page was reloaded and inspected during the
+forward transition; the dog stayed visible through the centre of the scene.
+The full suite passed 40 files and 2153 tests with the same 2 pre-existing
+skips. Typecheck, both Wrangler dry-runs, and `git diff --check` also passed.
+The central-glare and visible-watermark issues are closed. The commercial-
+permission/provenance publication gate above remains open; nothing was deployed
+or committed.
+
+**Clean-master follow-up (2026-09-12):** the owner-supplied
+`C:/Users/mehme/Downloads/pati-hatti-walk-clean.mp4` was compared with the
+original Kling master: both are H.264 High, 1916×1080, 24 fps and approximately
+5 seconds; the clean file's measured video bitrate is slightly higher. Runtime
+assets were regenerated at 1280×720 with no audio and a combined size of about
+1.20 MiB. An SSIM comparison of the forward runtime clip against the clean
+master scaled to 1280×720 measured 0.986824. Contact-sheet inspection found no
+visible watermark or removal artifact. These are technical/visual quality
+checks only and do not establish commercial rights. After this replacement,
+the targeted homepage/Worker suite passed 122/122, the full suite passed 40
+files and 2153 tests with the same 2 pre-existing skips, typecheck and both
+Wrangler dry-runs succeeded, and `git diff --check` remained clean apart from
+line-ending notices.
+
+### Deterministic layered-scene remediation delivery record (2026-09-12)
+
+**Changed in this pass:** `public/index.html`, `public/styles.css` and
+`public/app.js` replace the full-frame video path with a six-state, three-click
+CSS animation over one immutable background. `public/assets/` now contains only
+`pati-hatti-garden-static.webp` (105,910 bytes) and
+`pati-hatti-dog-sprites.webp` (292,570 bytes); the five obsolete poster/video
+assets were removed. `test/homePageAssets.test.ts` pins the new states, fixed
+background, transparent pose-sheet reference, three keyframe phases, absence of
+video/reverse playback and the existing security/accessibility boundaries.
+Task-scoped documentation was updated to match the implementation.
+
+**Verification:** targeted homepage/Worker tests passed 122/122; `pnpm
+typecheck` was clean; the full suite passed 40 files and 2,153 tests with the
+same 2 pre-existing opt-in paid-eval skips; both production and staging Wrangler
+dry-runs succeeded and read 7 static files. Real local-browser review exercised
+all three activations, the mid-air bound and the final focus-restored home state.
+`git diff --check` and `graphify update .` are recorded after their final run.
+
+**Not done:** no commit, push, staging/production deploy, DNS change or database/
+external-service mutation. Commercial-permission/provenance remains an explicit
+unchecked publication gate; the two final assets are a local visual prototype,
+not the approved final logo.
+
+## Task 061 Codex review — CHANGES_REQUIRED
+
+Codex independently rendered the local page at 1280×720 on 2026-09-11. The
+security/static-assets skeleton and finite-state-machine logic are suitable,
+but the main visual and experience contract is not yet met:
+
+1. The initial 720px-high viewport ends at the top of the scene; the kennel
+   and dog begin around y=894 and are below the fold. This directly violates
+   the requirement that the initial viewport show the Golden in its kennel.
+2. The inline SVG reads as a flat, elementary cartoon with upright triangular
+   ears and a long low body, not a recognizable Golden Retriever or the
+   polished stylized 3D game-art direction of the owner-supplied references.
+   The disclosed SVG-for-rendered-art substitution is therefore not accepted.
+3. The elements named `#pupils` are white highlight dots inside dark eyes.
+   Moving them follows the pointer with eye highlights rather than moving dark
+   pupils inside visible sclera, so the requested gaze interaction is not
+   visually represented correctly.
+4. The transition merely slides the same dog SVG from left to right while
+   toggling crude leg rectangles. It does not provide a readable kennel exit,
+   walk cycle, arrival/sit pose or game-menu-quality reversible movement.
+5. The network content is a conventional card section below the scene. At the
+   settled `network` state the dog sits in the scene above while the cards
+   begin below it; this is not the requested same-viewport scene reveal with
+   the dog persistently seated at the lower-right.
+6. The required 768px and 375px rendered checks and real Tab traversal remain
+   NOT RUN. Static CSS inspection and programmatic focus do not satisfy the
+   explicit visual acceptance gate.
+
+The existing native HTML/CSS/JS and binding-free Static Assets approach should
+be retained. Remediation must replace the visual composition and character
+assets, not add a framework or WebGL dependency. The original realistic Codex
+concept remains rejected; Codex generated a new game-art direction reference
+separately for the remediation pass, but it is not itself a production-ready
+layered asset.
+
+Codex ImageGen candidates available for that remediation pass (preview/style
+inputs, not automatic acceptance):
+
+- game-art hero direction:
+  `C:/Users/mehme/.codex/generated_images/019fd290-604b-74c3-b0fe-9b65feedb0bd/exec-17f917c7-0d3f-4dfc-9db3-2a3b435e2be6.png`;
+- empty garden/kennel background candidate:
+  `C:/Users/mehme/.codex/generated_images/019fd290-604b-74c3-b0fe-9b65feedb0bd/exec-7bbdb003-c222-4d32-b06a-35a2fb44d019.png`;
+- six-pose Golden character-strip candidate:
+  `C:/Users/mehme/.codex/generated_images/019fd290-604b-74c3-b0fe-9b65feedb0bd/exec-ce788f11-3c18-4eb5-a866-1e3c2cc83c96.png`.
+
+Before project use, inspect actual alpha/background, identity consistency,
+cropping and optimized transfer size. Copy only accepted assets into
+`public/assets/`; do not reference files outside the repository at runtime.
+
+### Task 061 Codex second visual re-review — CHANGES_REQUIRED
+
+Codex independently rendered the remediation in the real in-app Chromium
+browser on 2026-09-11 at an explicit 1280x720 viewport and again at 375x812.
+The remediation closes findings 1, 3, 5 and 6 from the first review: the
+initial desktop viewport no longer scrolls, the eye now has a fixed light
+sclera/glint with a separately moving dark pupil, the network is a descendant
+of `#scene`, and the explicit desktop/mobile viewport checks can be reproduced.
+
+Two visual blockers remain:
+
+1. The hero still does not meet the fixed stylized 3D game-art thesis. At
+   1280x720 the scene is about 644x362 pixels, while the dog is only about
+   142x97 pixels. The rendered character is a small collection of basic SVG
+   ellipses and paths, visually secondary to a mostly empty sky/grass box. It
+   does not read as the dominant, polished Golden Retriever character shown
+   by the task's reference direction. Gradient fills and corrected floppy ears
+   improve the first draft but do not turn the flat construction into the
+   required game-art character. The task's separable rendered-asset decision
+   remains unmet, and the earlier review explicitly did not accept an SVG-for-
+   render substitution.
+2. The transition still moves one base SVG horizontally. The named poses alter
+   the same torso/head/leg groups by small transforms (roughly 1-7% translation,
+   rotation and a two-step leg cycle); they are not distinct readable character
+   frames for kennel exit, walk, arrival and sit. In the settled 1280x720
+   network view the preview panel is about 361x319 pixels with a 411-pixel
+   scroll height, so it shows an internal scrollbar and hides the third card
+   until the user scrolls. The result feels like a small dashboard panel placed
+   over a flat illustration rather than the requested scene transformation.
+
+The new structural tests are useful regression guards for DOM/CSS wiring, but
+they cannot prove visual quality: they only prove that pose names and transform
+rules exist. Documentation that says all six visual findings are resolved or
+that the SVG is a recognizable, polished game character therefore overstates
+the verified result and must be corrected together with the visual replacement.
+
+Required remediation remains narrow: retain the dependency-free state machine,
+security headers and binding-free Static Assets setup; replace the dog with one
+coherent original game-art character across genuinely distinct exit/walk/sit/
+return frames, make it a dominant scene element, and redesign the network state
+so the full placeholder set is composed into the scene without a nested desktop
+scrollbar. Logo and final brand assets remain a separate approval step; none of
+the generated visual candidates is automatically accepted as the final logo or
+production artwork.
+
+## Task 061 Codex closure record — 2026-09-13
+
+Codex reviewed the final deterministic layered-scene implementation and the
+owner explicitly accepted the current homepage animation as sufficient for the
+next content phase. The two earlier visual-review blocks above are superseded by
+the fixed-background/four-pose remediation: no full-frame generated video or
+reverse playback remains, the garden cannot morph between states, and the
+three-activation interaction stays inside the dependency-free Static Assets
+boundary.
+
+Final checks run by Codex on the working tree:
+
+- `pnpm install --frozen-lockfile` — PASS, already up to date.
+- `pnpm typecheck` — PASS.
+- `pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts` — PASS,
+  122 tests.
+- `pnpm test` — PASS, 40 files; 2,153 passed and the same two opt-in paid evals
+  skipped.
+- Production and staging Wrangler dry-runs — PASS; both read the same seven
+  static files and reported 312.61 KiB / 65.94 KiB gzip Worker upload.
+- `git diff --check` — PASS apart from line-ending notices.
+
+No staging/production deploy, DNS change, database/service mutation, secret or
+external message was part of closure. The unchecked provenance/commercial-use
+gate in `docs/production-readiness.md` remains mandatory before publication;
+closure accepts the interaction prototype, not final trademark/logo rights.
+The pre-existing `.gitignore` edit and `docs/043-opus-inceleme.md`, plus the new
+out-of-task incident report `docs/olaylar/2026-09-13-triyaj-oncesi-devir.md`,
+are excluded from the Task 061 commit.
+
+---
+
+# Completed task — 060 Project-scoped Graphify workspace integration
 
 Status: `COMPLETE` (closed 2026-09-11 after Codex verified the isolated CLI,
 project-only integration, tracked-source graph and bounded query)

@@ -2,6 +2,12 @@ name = "vetai"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
+# Task 061: serves public/** (the marketing homepage) ahead of the Worker.
+# No `binding` is set, so no ASSETS runtime binding exists; a request with no
+# matching static file still falls through to `src/index.ts` unchanged.
+[assets]
+directory = "./public"
+
 [vars]
 APP_TIMEZONE = "Europe/Istanbul"
 WHATSAPP_GRAPH_API_VERSION = "v25.0"

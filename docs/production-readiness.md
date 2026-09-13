@@ -162,6 +162,20 @@ real-clinic operation or an SLA claim. No production box was closed by this
 investigation; staff-send rate-limit verification and the existing operational
 gates remain outstanding.
 
+- [ ] Task 061's homepage `#network` section ships three static placeholder
+      profile cards ("Örnek Klinik A/B/C"), each labeled "Staging örneği" /
+      "Yer tutucu profil" with copy stating they represent no real vet,
+      clinic, or partnership. Before any real clinic identity, name, photo,
+      or credential is used in this section, a named person must confirm
+      that clinic's real-world veterinary licensure/registration and their
+      consent to be listed publicly.
+- [ ] Record the source/provenance of Task 061's ImageGen-produced fixed garden
+      and transparent mascot pose sheet, including the owner-approved clean scene
+      frames used as references, and confirm commercial usage before any staging/
+      production publication. If permission is insufficient, replace both assets
+      with one coherent licensed/commissioned set and rerun responsive,
+      accessibility, motion, CSP and transfer-budget checks.
+
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
 

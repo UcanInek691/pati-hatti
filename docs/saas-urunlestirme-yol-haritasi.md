@@ -582,3 +582,30 @@ Marka notu: `Pati Hattı` adı pilot satış için seçildi; TÜRKPATENT'te 9, 3
 42 ve 44. sınıflarda profesyonel benzerlik araştırması yapılmadan resmî marka
 tescili kesinleştirilmemelidir. Ürün veterinerlik hizmeti veya teşhis
 vermediği için iletişimde "acil veteriner hattı" izlenimi oluşturulmamalıdır.
+
+## 10o. Task 061 (yalnızca yerel, NOT RUN)
+
+Task 061, `public/**` altında bağımlılıksız bir statik tanıtım anasayfası
+ekledi: tek bir 16:9 oyun sahnesinde Golden Retriever, kulübe, ürün metni,
+`home -> hopping-right -> right -> approaching -> network -> returning -> home`
+durum makinesi ve üç açıkça yer tutucu klinik kartı. Tam-kare üretilmiş video,
+arka plan nesnelerini değiştirdiği için çıkarıldı; tek değişmez WebP bahçe ile
+aynı maskotun dört şeffaf pozunu taşıyan WebP sayfası bağlandı. Sağa ve sola
+ileri zıplama ile kamera-yaklaşma hissi deterministik CSS'tir; geri sarma yoktur.
+Göz takibi yalnız küçük koyu göz bebeklerinde kalır.
+
+1280×720 ve 375×812 gerçek yerel tarayıcı kontrollerinde iki yönlü oynatma,
+klavye aktivasyonu, odak dönüşü ve sıfır yatay/iç panel taşması doğrulandı.
+`wrangler.toml`/`wrangler.staging.toml`'daki binding'siz `[assets]` bloğu mevcut
+Worker yollarını değiştirmez; yeni bağımlılık yoktur. Doğrulama tamamen yerel
+kaldı; staging veya production'a **hiçbir deploy yapılmadı**.
+
+Sabit bahçe ile poz sayfası, sahibin onayladığı temiz sahne kareleri referans
+alınarak yerleşik ImageGen akışında üretildi. Ticari kullanım izni ve köken kaydı
+hâlâ doğrulanmadı. İlk yayından önce bu kayıt ve izin tamamlanmalı; izin yetersizse
+iki varlık lisanslı veya sipariş edilmiş eşdeğerlerle yenilenmelidir. Bu kapı
+logo/kalıcı maskot kararından da ayrıdır.
+Ayrıntılar
+[`docs/marketing-homepage.md`](marketing-homepage.md)'de; ilerideki gerçek
+klinik profil kartı kullanımı için üretim kapısı
+[`production-readiness.md`](production-readiness.md) §1'e eklendi.

@@ -4,6 +4,10 @@ compatibility_date = "2025-01-01"
 workers_dev = true
 routes = [{ pattern = "staging.patihatti.com", custom_domain = true }]
 
+# Task 061: identical to wrangler.toml's [assets] block; see the comment there.
+[assets]
+directory = "./public"
+
 [vars]
 APP_TIMEZONE = "Europe/Istanbul"
 WHATSAPP_GRAPH_API_VERSION = "v25.0"

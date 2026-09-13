@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pati Hattı — WhatsApp'tan klinik karşılama</title>
+<meta name="description" content="Pati Hattı, hasta sahipleriyle WhatsApp üzerinden konuşur, randevu taleplerini toplar ve güvenlik gerektiren durumları klinik ekibine yönlendirir." />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="brand-bar">
+  <span class="brand-mark">Pati Hattı</span>
+  <a class="staff-link" href="/staff">Veteriner girişi</a>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="scene-wrap">
+      <div class="scene" id="scene" data-state="home">
+        <div class="scene-media">
+          <img
+            class="scene-background"
+            src="/assets/pati-hatti-garden-static.webp"
+            width="1280"
+            height="720"
+            alt=""
+            aria-hidden="true"
+          />
+          <div class="scene-shade" aria-hidden="true"></div>
+
+          <button type="button" class="dog-button" id="dog-trigger" aria-label="Pati Hattı'nın nasıl çalıştığını gör">
+            <span class="dog-sprite" aria-hidden="true"></span>
+            <span class="gaze-eyes" id="pupils" aria-hidden="true">
+              <span class="gaze-eye"><span class="gaze-pupil"></span></span>
+              <span class="gaze-eye"><span class="gaze-pupil"></span></span>
+            </span>
+            <span class="visually-hidden">Pati Hattı maskotu</span>
+          </button>
+        </div>
+
+        <div class="hero-copy">
+          <p class="eyebrow">Pati Hattı</p>
+          <h1>WhatsApp'ta dostane bir karşılama hattı</h1>
+          <p class="lede">
+            Hasta sahipleriyle konuşur, şikayeti ve randevu talebini toplar,
+            hassas durumları klinik ekibinize yönlendirir.
+          </p>
+          <p class="boundary-note">
+            Pati Hattı bir veteriner hekim değildir; teşhis koymaz, tedavi ya da
+            ilaç önermez ve tıbbi müsaitlik veya yanıt süresi garantisi vermez.
+          </p>
+          <button type="button" class="cta-primary" id="how-it-works">Nasıl çalışır?</button>
+          <p class="hint" aria-hidden="true"></p>
+        </div>
+
+        <section class="network" id="network">
+          <h2>Klinik ağı önizlemesi</h2>
+          <p class="network-note">
+            Aşağıdaki kartlar yalnızca tasarım örneğidir; gerçek bir veteriner
+            hekimi, kliniği veya iş birliğini temsil etmez.
+          </p>
+          <ul class="profile-cards">
+            <li class="profile-card">
+              <span class="badge">Staging örneği</span>
+              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
+                <circle cx="32" cy="26" r="12" fill="#fff" />
+                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
+              </svg>
+              <p class="profile-name">Örnek Klinik A</p>
+              <p class="profile-role">Yer tutucu profil</p>
+            </li>
+            <li class="profile-card">
+              <span class="badge">Staging örneği</span>
+              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
+                <circle cx="32" cy="26" r="12" fill="#fff" />
+                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
+              </svg>
+              <p class="profile-name">Örnek Klinik B</p>
+              <p class="profile-role">Yer tutucu profil</p>
+            </li>
+            <li class="profile-card">
+              <span class="badge">Staging örneği</span>
+              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
+                <circle cx="32" cy="26" r="12" fill="#fff" />
+                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
+              </svg>
+              <p class="profile-name">Örnek Klinik C</p>
+              <p class="profile-role">Yer tutucu profil</p>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

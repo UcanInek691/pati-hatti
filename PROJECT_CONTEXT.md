@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-09-11 by Codex.
+Last verified: 2026-09-13 by Codex.
 
 ## Product
 
@@ -1308,6 +1308,21 @@ occurred.
   and are not committed. A bounded authentication-to-tenant-isolation query
   returned repository file/line evidence. No runtime dependency, application
   source, database, Worker or external service changed.
+- Task 061 is complete at repository and local-browser gates as of 2026-09-13.
+  The public `/` path is a dependency-free, same-origin Pati Hattı homepage
+  served through identical binding-free Static Assets configuration in both
+  Wrangler files. One immutable garden and one transparent four-pose mascot
+  sheet drive a bounded three-activation interaction; no video, reverse
+  playback, remote runtime dependency, analytics or pointer-data persistence
+  remains. Existing panel, health, readiness, webhook and Queue paths continue
+  to fall through to the Worker.
+- The owner accepted the current local animation direction for the next
+  content phase. Codex reverified 122 affected tests, 2,153 full-suite tests
+  with two unchanged opt-in skips, typecheck, both Wrangler dry-runs and
+  whitespace checks. No staging/production deploy or DNS/service mutation was
+  made. The generated garden/mascot provenance and commercial-use decision,
+  and any real clinic identity shown publicly, remain explicit publication
+  gates; Task 061 closure does not approve a final logo or trademark asset.
 
 ## Context maintenance
 

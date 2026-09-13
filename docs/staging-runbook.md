@@ -1503,3 +1503,33 @@ regresyon getirmedi.
 Operasyonel alarmlar boyunca kapalı kaldı
 (`OPERATIONAL_ALERTS_ENABLED = "false"`); Task 059 hiçbir uyarı e-postası
 göndermedi ve production'a dokunulmadı.
+
+## 32. Task 061 — tanıtım anasayfası, statik varlıklar (2026-09-11, yalnızca yerel, NOT RUN)
+
+- `public/index.html`, `public/styles.css`, `public/app.js`, `public/_headers`
+  eklendi: bağımlılıksız statik tanıtım anasayfası; aynı sahnede çalışan
+  `home -> hopping-right -> right -> approaching -> network -> returning -> home`
+  durum makinesi, Golden Retriever tetikleyicisi ve kaydırmasız
+  klinik ağı önizlemesi. Ayrıntılar için
+  [`docs/marketing-homepage.md`](marketing-homepage.md).
+- `wrangler.toml` ve `wrangler.staging.toml`'a **kimlik doğrulama binding'i
+  olmayan** aynı `[assets] directory = "./public"` bloğu eklendi; eşleşmeyen
+  istekler hâlâ `src/index.ts`'e düşüyor.
+- Tam-kare üretilmiş video denemesi, arka plandaki nesne ve ışık değişimleri
+  nedeniyle reddedildi. Yerine tek ve değişmez boş bahçe ile aynı maskotun dört
+  şeffaf pozu bağlandı. Sağa zıplama, köpek aynı görünür boyutta kalırken
+  arka planın kontrollü uzaklaşması ve sola dönük ileri zıplayarak eve dönüş
+  yalnız CSS ile belirlenir; geri sarma yoktur. 1280×720 yerel tarayıcıda üç
+  tıklamalı tam döngü ve kaydırmasız ağ görünümü doğrulandı.
+- İki varlığın toplamı 400 KiB altındadır; çalışma zamanında uzak kaynak,
+  analitik veya depolama yoktur. Nihai otomatik kontrollerin kesin sonuçları
+  `CURRENT_TASK.md` teslim kaydındadır.
+- **Üretim kapısı:** Sabit bahçe ve şeffaf poz sayfası, sahibin onayladığı temiz
+  sahne kareleri referans alınarak yerleşik ImageGen akışında üretildi. Bu,
+  ticari kullanım iznini tek başına kanıtlamaz. Kaynak/köken kaydı ve ticari izin
+  doğrulanmadan staging veya production'a yayın yapılmayacaktır; izin yetersizse
+  iki varlık lisanslı ya da sipariş edilmiş eşdeğerlerle değiştirilip kontroller
+  yeniden çalıştırılacaktır.
+- **Staging'e veya production'a hiçbir deploy yapılmadı.** Bu görev commit,
+  push veya deploy içermiyor; tüm değişiklikler işlenmemiş çalışma dizini
+  durumunda bırakıldı.
