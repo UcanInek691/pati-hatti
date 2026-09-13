@@ -110,12 +110,57 @@ describe("evaluateSafetyDecision — human handoff", () => {
     expect(evaluateSafetyDecision(extraction)).toEqual({ kind: "human_handoff", reason: "user_requested_human" });
   });
 
-  it("routes medical_advice_request over unknown signals", () => {
+  it("routes medical_advice_request to human_handoff only once every signal is explicitly false", () => {
+    const extraction = baseExtraction({
+      intent: "medical_advice_request",
+      reported_safety_signals: allFalseSignals(),
+    });
+    expect(evaluateSafetyDecision(extraction)).toEqual({ kind: "human_handoff", reason: "medical_advice_request" });
+  });
+});
+
+describe("evaluateSafetyDecision — Task 062 medical-advice/unknown-signal ordering", () => {
+  it("asks safety questions before handing off a medical-advice request with unknown signals", () => {
     const extraction = baseExtraction({
       intent: "medical_advice_request",
       reported_safety_signals: allNullSignals(),
     });
+    expect(evaluateSafetyDecision(extraction)).toEqual({
+      kind: "needs_safety_check",
+      unknownSignals: [...CANONICAL_ORDER],
+    });
+  });
+
+  it("asks safety questions before handing off a medical-advice request with even one unknown signal", () => {
+    const signals = { ...allFalseSignals(), possible_toxin_exposure: null };
+    const extraction = baseExtraction({ intent: "medical_advice_request", reported_safety_signals: signals });
+    expect(evaluateSafetyDecision(extraction)).toEqual({
+      kind: "needs_safety_check",
+      unknownSignals: ["possible_toxin_exposure"],
+    });
+  });
+
+  it("still hands a medical-advice request to staff once all eight signals are explicitly false", () => {
+    const extraction = baseExtraction({ intent: "medical_advice_request", reported_safety_signals: allFalseSignals() });
     expect(evaluateSafetyDecision(extraction)).toEqual({ kind: "human_handoff", reason: "medical_advice_request" });
+  });
+
+  it("still hands off immediately on an explicit human request even with unknown signals and medical-advice intent", () => {
+    const extraction = baseExtraction({
+      intent: "medical_advice_request",
+      user_requested_human: true,
+      reported_safety_signals: allNullSignals(),
+    });
+    expect(evaluateSafetyDecision(extraction)).toEqual({ kind: "human_handoff", reason: "user_requested_human" });
+  });
+
+  it("still returns emergency_handoff for a positive signal even with medical-advice intent", () => {
+    const signals = { ...allNullSignals(), heavy_bleeding: true };
+    const extraction = baseExtraction({ intent: "medical_advice_request", reported_safety_signals: signals });
+    expect(evaluateSafetyDecision(extraction)).toEqual({
+      kind: "emergency_handoff",
+      positiveSignals: ["heavy_bleeding"],
+    });
   });
 });
 

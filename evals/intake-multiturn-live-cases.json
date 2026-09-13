@@ -2,13 +2,13 @@
   "$schema_note": "Engineering evaluation corpus for Task 029 bounded multi-turn interpretation. Not a database migration or runtime config.",
   "$disclaimer": "Bu korpus bir mühendislik beklentisidir; bir veteriner hekim tarafından onaylanmamıştır. Sonuçlar yalnızca kanıt niteliğindedir ve üretim modelini otomatik olarak değiştirmez.",
   "eval_version": "2026-08-28.2",
-  "prompt_version": "2026-08-28.2",
+  "prompt_version": "2026-09-13.1",
   "models": [
     "gpt-5.6-luna",
     "gpt-5.6-terra"
   ],
-  "generated_for": "Task 029 bounded multi-turn interpretation synthetic evidence; Task 039 ile patlamalı (burst) toplu güvenlik-olumsuz + ayrı belirti vakası eklendi",
-  "case_count": 47,
+  "generated_for": "Task 029 bounded multi-turn interpretation synthetic evidence; Task 039 ile patlamalı (burst) toplu güvenlik-olumsuz + ayrı belirti vakası eklendi; Task 062 ile tıbbi tavsiye/güvenlik sınırı takip vakası eklendi",
+  "case_count": 48,
   "cases": [
     {
       "id": "T029-001",
@@ -554,6 +554,16 @@
           "possible_foreign_object": false,
           "unable_to_urinate": false
         }
+      }
+    },
+    {
+      "id": "T029-048",
+      "category": "generic_distress_followup",
+      "previous_question": "Evcil hayvanınızla ilgili sizi endişelendiren durumu veya fark ettiğiniz belirtileri kısaca yazar mısınız?",
+      "message": "Bilmiyorum ki, ne yapmam gerektiğini söyleyin.",
+      "expected": {
+        "intent": "report_symptom",
+        "user_requested_human": false
       }
     }
   ]

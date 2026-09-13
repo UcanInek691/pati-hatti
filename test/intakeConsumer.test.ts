@@ -545,6 +545,103 @@ describe("processIntakeQueueMessage: planned outcomes reach finalization exactly
     expect(typeof finalizeBody.p_reply_text).toBe("string");
   });
 
+  it("Task 062: a medical-advice request with unknown safety signals asks safety questions, not an immediate handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),
+      extraction: extractionJson({ intent: "medical_advice_request", reported_safety_signals: ALL_NULL_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_next_stage).toBe("ready_for_triage");
+    expect(finalizeBody.p_reply_category).toBe("safety_questions");
+    expect(typeof finalizeBody.p_reply_text).toBe("string");
+  });
+
+  it("Task 062: a later positive safety answer on a persisted medical-advice request produces emergency_handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({
+              intent: "medical_advice_request",
+              reported_safety_signals: { ...ALL_FALSE_SIGNALS, heavy_bleeding: null },
+            }),
+          },
+        }),
+      extraction: extractionJson({
+        intent: "unknown",
+        reported_safety_signals: { ...ALL_FALSE_SIGNALS, heavy_bleeding: true },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("emergency_handoff");
+  });
+
+  it("Task 062: a completed all-false answer on a persisted medical-advice request hands off to staff only after triage", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: PET_ID,
+          intake_data: {
+            schema_version: 1,
+            ...extractionJson({
+              intent: "medical_advice_request",
+              reported_safety_signals: { ...ALL_FALSE_SIGNALS, heavy_bleeding: null },
+            }),
+          },
+        }),
+      extraction: extractionJson({ intent: "unknown", reported_safety_signals: ALL_FALSE_SIGNALS }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 5);
+    expect(finalizeBody.p_next_stage).toBe("human_handoff");
+    expect(finalizeBody.p_reply_category).toBe("human_handoff");
+  });
+
+  it("Task 062: preserveHumanHandledPetBoundary rewrites the pet id but never suppresses safety_questions or forces an early handoff", async () => {
+    const fetchMock = happyRoutes({
+      context: () =>
+        contextRow({
+          intake_stage: "safety_check",
+          pet_id: null,
+          pets: [{ id: PET_ID, name: "Pamuk", species: "cat" }],
+        }),
+      extraction: extractionJson({
+        intent: "medical_advice_request",
+        pet_name: "Pamuk",
+        reported_safety_signals: ALL_NULL_SIGNALS,
+        user_requested_human: false,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processIntakeQueueMessage(validBody, env);
+
+    expect(result).toBe("ack");
+    const finalizeBody = bodyOf(fetchMock, 4);
+    expect(finalizeBody.p_pet_id).toBeNull();
+    expect(finalizeBody.p_next_stage).toBe("safety_check");
+    expect(finalizeBody.p_reply_category).toBe("safety_questions");
+  });
+
   it("does not repeat the appointment invitation after ready_for_triage is already reached", async () => {
     const fetchMock = happyRoutes({
       context: () => contextRow({ intake_stage: "ready_for_triage", pet_id: PET_ID }),

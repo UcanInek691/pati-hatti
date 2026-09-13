@@ -19,6 +19,14 @@ iptali, art arda gelen mesajların birleştirilmesi) ile eklenen metin ve
 senaryolar bu belgede değil, ayrı ve henüz onaylanmamış bir taslakta yer
 alır: [`docs/onay-paketleri/task-039-veteriner-onay-senaryolari.md`](onay-paketleri/task-039-veteriner-onay-senaryolari.md).
 
+**Task 062 — yeniden inceleme notu (metin değil, sıra değişikliği):** V-02 ve
+V-03'ün metni değişmedi. Değişen, aynı mesajda ikisi de tetiklenebiliyorsa
+hangisinin önce gösterileceğidir: sahip açıkça ilaç/doz/teşhis/tedavi sorarken
+sekiz güvenlik sinyalinden biri bile bilinmiyorsa, bot artık önce V-03'ü
+gösterir; V-02 (tıbbi tavsiye nedeniyle insan desteği) yalnızca sekiz sinyalin
+tümü açıkça "hayır" olduktan sonra gösterilir. Daha önce bu sıra tersti. Bu
+belgeyi onaylayan veteriner hekimin bu yeni sırayı da onaylaması gerekir.
+
 ## Kısa sözlük
 
 - **İnsan desteği kaydı (`human_handoff`)**: Bot konuşmayı kendi başına

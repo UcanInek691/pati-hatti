@@ -1,6 +1,6 @@
 # VetAI project context
 
-Last verified: 2026-09-13 by Codex.
+Last verified: 2026-09-14 by Codex.
 
 ## Product
 
@@ -73,10 +73,12 @@ The secure Worker baseline is committed on `main`:
   been made.
 - A provider-neutral deterministic safety gate now routes the validated intake
   contract with fixed precedence: any explicit emergency signal stops normal
-  automation, human and medical-advice requests route to staff, unknown safety
-  facts require clarification, and only eight explicit false values may
-  continue. The canonical signal list is compile-time exhaustive, is reused by
-  the runtime intake planner, and both Codex and Claude Opus reviews passed.
+  automation; an explicit request for a person routes to staff; unknown safety
+  facts require clarification before a medical-advice handoff; an explicit
+  medical-advice request routes to staff only after all eight safety facts are
+  false; and only then may ordinary intake continue. The canonical signal list
+  is compile-time exhaustive, is reused by the runtime intake planner, and
+  both Codex and Claude Opus reviews passed.
 - Inbound persistence now returns a validated, tenant-scoped conversation ID
   for both newly processed and exact-duplicate WhatsApp messages. Unknown
   accounts return no locator; malformed Data API results and orphaned duplicate
@@ -1323,6 +1325,28 @@ occurred.
   made. The generated garden/mascot provenance and commercial-use decision,
   and any real clinic identity shown publicly, remain explicit publication
   gates; Task 061 closure does not approve a final logo or trademark asset.
+- Task 062 is complete at repository, deterministic-test and bounded-live-eval
+  gates as of 2026-09-14. Unknown safety facts now take precedence over a
+  medical-advice handoff, while an explicit request for a person remains an
+  immediate handoff and any positive signal remains an emergency. After all
+  eight safety facts are explicitly false, medical-advice requests still use
+  the existing conservative staff handoff; no diagnosis, medication, dose,
+  treatment copy or new persistence path was added.
+- Prompt version `2026-09-13.1` keeps generic Turkish distress/help wording as
+  `report_symptom` unless the user explicitly asks for diagnosis, disease
+  identification, medication/product guidance, dosage, a named substance or a
+  treatment/home-care protocol. Production Luna preserved the safety-critical
+  intent, human-request and eight-signal boundary in the three new single-turn
+  witnesses. Terra's comparison-only follow-up miss was a safe `unknown` with
+  `user_requested_human=false`, so triage still runs.
+- Task 062 passed the final 316-test affected suite, 2,166-test full suite with
+  two unchanged opt-in skips, typecheck, both Worker dry-runs, Codex review and
+  mandatory Claude Opus clinical-safety review. The additional owner-approved
+  four-case diagnostic cost USD 0.0079956; no expected output or prompt was
+  changed to chase its stochastic response. Exact complaint normalization,
+  the legacy medical-advice `missing_information` convention and prompt-seen
+  eval phrases remain later eval-quality work. No deploy or real WhatsApp
+  canary occurred, and renewed human veterinarian approval remains required.
 
 ## Context maintenance
 

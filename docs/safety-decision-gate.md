@@ -9,18 +9,27 @@ species, pet identity, or `missing_information`.
 
 ## Meaning of each outcome
 
-- `emergency_handoff`: one or more of the eight safety signals is explicitly
-  `true`. This stops normal automation and requires immediate
-  professional/emergency handling. It takes priority over every other
-  outcome, including an explicit human request or a medical-advice intent.
-- `human_handoff`: the user explicitly asked for a person
-  (`user_requested_human` or `intent: "human_handoff"`), or the intent is
-  `medical_advice_request`. Evaluated only after the emergency check.
-- `needs_safety_check`: no signal is `true`, but one or more of the eight
-  signals is `null` (unknown). `null` is never treated as safe — it requires
-  explicit clarification before intake can continue.
-- `continue_intake`: returned only when every one of the eight safety signals
-  is explicitly `false`.
+Five-step precedence, checked in this exact order (Task 062 moved unknown-signal
+triage ahead of the medical-advice handoff — see
+`docs/olaylar/2026-09-13-triyaj-oncesi-devir.md`):
+
+1. `emergency_handoff`: one or more of the eight safety signals is explicitly
+   `true`. This stops normal automation and requires immediate
+   professional/emergency handling. It takes priority over every other
+   outcome, including an explicit human request or a medical-advice intent.
+2. `human_handoff` (`reason: "user_requested_human"`): the user explicitly
+   asked for a person (`user_requested_human` or `intent: "human_handoff"`).
+   Evaluated only after the emergency check; not deferred by unknown signals.
+3. `needs_safety_check`: no signal is `true`, but one or more of the eight
+   signals is `null` (unknown). `null` is never treated as safe — it requires
+   explicit clarification before intake can continue. This includes an
+   `intent: "medical_advice_request"` turn: unresolved safety facts are asked
+   about before the medical-advice request is handed to staff.
+4. `human_handoff` (`reason: "medical_advice_request"`): the intent is
+   `medical_advice_request` and all eight signals are now explicitly `false`.
+   Reached only once step 3 no longer applies.
+5. `continue_intake`: returned only when every one of the eight safety signals
+   is explicitly `false` and the intent is not `medical_advice_request`.
 
 ## Rule basis
 
@@ -46,8 +55,13 @@ wording, legal/privacy review, or production validation.
 
 ## Status
 
-Unapproved for production. No user-facing response text or runtime wiring
-exists yet — this module is not called from the Worker, webhook, or any
-provider adapter. It must pass Codex's implementation review and Claude
-Opus's read-only safety review, and still requires separate clinic
-veterinarian approval, before any wiring work begins.
+Wired into the real intake path: `planIntakeTurn` (`src/intakeTurn.ts`) calls
+`evaluateSafetyDecision` on every turn, and the Queue consumer
+(`src/intakeConsumer.ts`) turns its outcome into the stage transition and
+outbound reply category (`safety_questions`, `emergency_handoff`, or
+`human_handoff`). This is not the same as being live for real owners: no
+staging/production deploy or real WhatsApp canary has been authorized (Task
+062 explicitly withholds that), and the exact Turkish safety-copy wording
+still requires clinic veterinarian and Turkish legal/privacy approval before
+activation. Activating real traffic is a separate, explicitly owner-approved
+step — see the current task's "Mandatory review and activation boundary".

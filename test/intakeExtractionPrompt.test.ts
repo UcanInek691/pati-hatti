@@ -64,7 +64,21 @@ describe("intake extraction prompt", () => {
   it("covers human handoff and medical advice identification", () => {
     expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("human_handoff");
     expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("medical_advice_request");
-    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("identify the request, do not\nanswer it");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("identify the request, do not answer it");
+  });
+
+  it("keeps generic distress phrasing as report_symptom, not medical advice (Task 062)", () => {
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("kurt hasta ne yapmalıyım");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("kedim kusuyor ne yapayım");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain(
+      'report a\nsymptom and remain "report_symptom"',
+    );
+  });
+
+  it("keeps explicit treatment/medication requests as medical_advice_request (Task 062)", () => {
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("evde kendim tedavi etmek istiyorum");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("köpeğime insan ağrı kesicisi versem zararı");
+    expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain('remain\n"medical_advice_request"');
   });
 
   it("routes a new or unregistered pet request to the existing human_handoff intent (Task 030)", () => {
@@ -124,8 +138,8 @@ describe("intake extraction prompt", () => {
     expect(INTAKE_EXTRACTION_SYSTEM_PROMPT).toContain("never silently\noverwrite");
   });
 
-  it("is version 2026-08-28.2 and both synthetic corpora declare the same prompt version", () => {
-    expect(INTAKE_EXTRACTION_PROMPT_VERSION).toBe("2026-08-28.2");
+  it("is version 2026-09-13.1 and both synthetic corpora declare the same prompt version", () => {
+    expect(INTAKE_EXTRACTION_PROMPT_VERSION).toBe("2026-09-13.1");
     for (const file of ["intake-live-cases.json", "intake-multiturn-live-cases.json"]) {
       const corpus = JSON.parse(readFileSync(path.join(__dirname, "..", "evals", file), "utf8")) as {
         prompt_version: string;
@@ -156,5 +170,37 @@ describe("intake extraction prompt", () => {
     for (const category of ["new_symptom_not_registration", "new_object_not_registration"]) {
       expect(byCategory(category)?.expected.intent).toBe("report_symptom");
     }
+  });
+
+  it("pins complete Task 062 single-turn ground truth instead of intent-only witnesses", () => {
+    const corpus = JSON.parse(readFileSync(path.join(__dirname, "..", "evals", "intake-live-cases.json"), "utf8")) as {
+      cases: { id: string; expected: Record<string, unknown> }[];
+    };
+    const byId = (id: string) => corpus.cases.find((evalCase) => evalCase.id === id)?.expected;
+    const expectedKeys = [
+      "complaint",
+      "intent",
+      "missing_information",
+      "pet_name",
+      "reported_safety_signals",
+      "species",
+      "symptoms",
+      "user_requested_human",
+    ];
+
+    for (const id of ["T028-089", "T028-090", "T028-091"]) {
+      expect(Object.keys(byId(id) ?? {}).sort()).toEqual(expectedKeys);
+    }
+    expect(byId("T028-089")).toMatchObject({ pet_name: "kurt", complaint: "hasta", symptoms: [] });
+    expect(byId("T028-090")).toMatchObject({ species: "kedi", complaint: "kusuyor", symptoms: ["kusuyor"] });
+    expect(byId("T028-091")).toMatchObject({ species: "köpek", complaint: null, symptoms: [] });
+  });
+
+  it("pins the Task 062 multi-turn distress boundary against a false human-request escape", () => {
+    const corpus = JSON.parse(readFileSync(path.join(__dirname, "..", "evals", "intake-multiturn-live-cases.json"), "utf8")) as {
+      cases: { id: string; expected: Record<string, unknown> }[];
+    };
+    const boundary = corpus.cases.find((evalCase) => evalCase.id === "T029-048");
+    expect(boundary?.expected).toEqual({ intent: "report_symptom", user_requested_human: false });
   });
 });
