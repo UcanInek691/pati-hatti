@@ -1379,6 +1379,18 @@ occurred.
   375×812 with no horizontal overflow; 135 focused and 2,179 full-suite tests,
   typecheck, both Worker dry-runs, whitespace and Graphify checks passed. No
   staging/production deploy or external-service mutation occurred.
+- Task 065 is complete at repository and local-browser gates as of 2026-09-14.
+  The hero no longer stops at the obsolete 1280 px stage ceiling; it retains
+  its viewport-height-aware 16:9 limit and measured about 1770.66 px at
+  1920x1080, reducing each side gutter from about 312.4 px to 67.1 px without
+  horizontal overflow. Structured card grids now use a 1120 px desktop
+  container while FAQ and closing prose remain capped at 900 px.
+- Codex rendered 1920x1080, 1440x900, 768x1024 and 375x812 through the real
+  local Worker and completed the wide-screen `home -> right -> network -> home`
+  mascot journey. Focused 136/136 and full 2,180-test suites with two unchanged
+  skips, typecheck, both Worker dry-runs, whitespace and Graphify checks passed.
+  No JavaScript, asset, metadata, backend, deploy or external-service behavior
+  changed.
 
 ## Context maintenance
 

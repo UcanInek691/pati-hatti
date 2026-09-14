@@ -96,7 +96,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .staff-link:focus-visible { background: var(--ink); color: var(--paper); }
 
 main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
-.stage { position: relative; width: 100%; max-width: 1280px; margin: 0 auto; }
+.stage { position: relative; width: 100%; max-width: none; margin: 0 auto; }
 .scene-wrap {
   width: min(100%, calc((100vh - 84px) * 16 / 9));
   margin: 0 auto;
@@ -363,11 +363,13 @@ html:not(.js) .pilot-panel {
 }
 
 .content-section {
-  max-width: 900px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: clamp(40px, 6vw, 76px) 0;
   scroll-margin-top: 84px;
 }
+#sss,
+.closing-section { max-width: 900px; }
 .content-section h2 {
   max-width: 20ch;
   margin: 0 0 0.6em;

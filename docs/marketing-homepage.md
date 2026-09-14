@@ -185,3 +185,17 @@ pnpm exec wrangler dev
 
 Open the printed local URL. `/` comes directly from `public/**`; there is no
 homepage build step.
+
+## Wide-desktop composition
+
+Task 065 removes the hero stage's obsolete 1280 px ceiling while retaining the
+existing viewport-height-aware 16:9 limit. The garden therefore grows to use a
+wide desktop confidently without becoming taller than the first viewport. At
+1920×1080 the rendered scene grows from 1280 px to roughly 1770 px and remains
+centered with no horizontal overflow.
+
+Structured card sections use a 1120 px desktop container. The FAQ and closing
+copy remain capped at 900 px, and headings, notes and paragraphs retain their
+existing character-based measures, so the extra width benefits the grids
+without creating hard-to-read long lines. Tablet and phone breakpoints are
+unchanged.

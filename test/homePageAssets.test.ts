@@ -184,6 +184,13 @@ describe("Task 063 hero scene structure", () => {
     expect(css).toMatch(/html\.js \.pilot-panel\s*\{[^}]*position:\s*absolute/);
   });
 
+  test("uses wide desktop space without stretching long-form copy", () => {
+    expect(css).toMatch(/\.stage\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none/);
+    expect(css).toMatch(/\.scene-wrap\s*\{[^}]*width:\s*min\(100%,\s*calc\(\(100vh - 84px\) \* 16 \/ 9\)\)/);
+    expect(css).toMatch(/\.content-section\s*\{[^}]*max-width:\s*1120px/);
+    expect(css).toMatch(/#sss,\s*\.closing-section\s*\{[^}]*max-width:\s*900px/);
+  });
+
   test("pilot panel is nested inside the same #scene box, not a separate subsection", () => {
     const sceneOpen = html.indexOf('<div class="scene" id="scene"');
     const sceneWrapOpen = html.indexOf('<div class="scene-wrap">');

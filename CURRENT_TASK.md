@@ -1,4 +1,111 @@
-# Current task — 064 Homepage interaction clarity, paw cursor and launch-ready SEO
+# Current task — 065 Wide-desktop homepage composition
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 after Task 064 closed. The owner observed that
+the marketing homepage leaves conspicuously large empty side gutters on a wide
+desktop display.
+
+## Goal
+
+Use the available width more confidently on large desktop screens while
+preserving the accepted cinematic hero, mascot state machine, readable content
+line lengths, and all tablet/mobile behavior.
+
+## Fixed decisions
+
+- Remove the hero's obsolete 1280 px stage ceiling; keep its existing
+  viewport-height-aware 16:9 sizing so it grows without pushing the first scene
+  arbitrarily below the fold.
+- Widen the structured below-the-fold card area modestly, while retaining
+  narrower measure on prose, headings, notes and FAQ content.
+- Do not change copy, assets, animation states, JavaScript, SEO metadata,
+  backend routes, dependencies or external services.
+
+## Allowed changes
+
+- `public/styles.css`
+- `test/homePageAssets.test.ts`
+- `docs/marketing-homepage.md`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+The pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. At 1920x1080 the hero uses the viewport-height-derived width instead of
+   stopping at 1280 px, with no horizontal overflow or clipped interactive UI.
+2. Below-the-fold card grids use more of a wide display, while long prose and
+   FAQ rows remain comfortably readable.
+3. The accepted hero interaction, 1440 px desktop, 768 px tablet and 375 px
+   phone layouts do not regress.
+4. No JavaScript, asset, metadata, route, dependency or external-service
+   behavior changes.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+graphify update .
+```
+
+After deterministic gates, render `/` through the local Worker at 1920x1080,
+1440x900, 768x1024 and 375x812; verify width, overflow and the complete dog
+journey at the wide desktop size.
+
+## Task 065 observed context
+
+- Graphify scopes this composition issue to the static homepage CSS, its asset
+  contract tests and marketing-page documentation; no runtime or backend path
+  is involved.
+- A real 1920x1080 render measured the viewport at 1920 px, but `.stage` and
+  `.scene-wrap` at exactly 1280 px, leaving roughly 312 px empty on each side.
+  The existing height-aware expression would otherwise allow about 1770 px at
+  that viewport, so the old `.stage` cap is the direct cause.
+- The below-the-fold `.content-section` is also fixed at 900 px even for
+  four- and three-column card grids. Its headings and prose already carry their
+  own narrower measures, so the grid container can grow without creating
+  difficult text lines.
+
+## Task 065 delivery record
+
+- `public/styles.css` removes only the `.stage` 1280 px ceiling. The existing
+  height-derived `.scene-wrap` expression remains the limiting dimension, so
+  the hero grows across wide screens without an unbounded height change.
+- Structured content sections grow from 900 px to 1120 px for their four-,
+  three- and two-column grids. `#sss` and `.closing-section` remain at 900 px;
+  existing heading, note and paragraph measures are unchanged.
+- `test/homePageAssets.test.ts` now pins the uncapped stage, retained
+  height-aware scene width, wider structured-content container and narrower
+  long-form sections. No HTML, JavaScript, asset, metadata or Worker code was
+  changed.
+- Real local-Worker rendering passed at 1920x1080, 1440x900, 768x1024 and
+  375x812 with no horizontal overflow. At 1920x1080 the scene grew from exactly
+  1280 px to about 1770.66 px and its side gutter fell from about 312.4 px to
+  67.1 px. The complete wide-screen `home -> right -> network -> home` journey
+  passed and the control panel remained visible without clipping.
+- Verification passed: frozen install, typecheck, focused homepage/index tests
+  (136/136), full suite (40 files; 2,180 passed and 2 unchanged opt-in skips),
+  both production and staging Wrangler dry-runs (313.56 KiB / 66.34 KiB gzip),
+  `git diff --check` and `graphify update .` (2,486 nodes / 3,571 edges). The
+  first sandboxed Node invocations hit a local parent-directory permission
+  boundary; the same typecheck and focused tests were immediately rerun with
+  approved workspace execution and passed.
+- No dependency, backend, database, DNS, deploy, push or external-service
+  mutation occurred. The pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` remain untouched and excluded from closure.
+
+---
+
+# Completed task — 064 Homepage interaction clarity, paw cursor and launch-ready SEO
 
 Status: `COMPLETE`
 
