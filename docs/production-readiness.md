@@ -176,6 +176,13 @@ gates remain outstanding.
       production publication. If permission is insufficient, replace both assets
       with one coherent licensed/commissioned set and rerun responsive,
       accessibility, motion, CSP and transfer-budget checks.
+- [ ] At the public marketing-domain launch, finish Task 064's origin-dependent
+      SEO layer: add the exact production canonical and `og:url`, publish a
+      provenance-cleared share image, add a hostname-correct sitemap and robots
+      policy, and add Organization structured data only after the legal publisher
+      identity is approved. The current title, description and URL-independent
+      Open Graph/Twitter tags are locally verified; none of these launch-only
+      fields is inferred from staging or the reserved application hostname.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.
@@ -541,10 +548,11 @@ onto the owner's own hostname; it is referenced, not repeated, from
 into a shared native shell proves neither domain ownership nor production
 activation.
 
-1. **Hostname.** Owner supplies and confirms the exact production
-   application hostname. Recommended topology: one application origin, e.g.
-   `app.<owner-domain>/staff` and `app.<owner-domain>/admin`. Marketing
-   content, if any, stays outside this Worker and outside Task 058.
+1. **Hostname.** Owner supplies and confirms the exact production application
+   and public marketing hostnames. The reserved application topology is
+   `app.<owner-domain>/staff` and `app.<owner-domain>/admin`; Task 063 later
+   added same-Worker marketing content at `/`, but no public production
+   marketing hostname or route is activated yet.
 2. **Cloudflare binding.** Bind that hostname to the production Worker via a
    Cloudflare Workers custom domain/route only after confirming the zone and
    Worker target. Keep the `workers.dev` staging hostname separate from

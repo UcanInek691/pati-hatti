@@ -1,4 +1,153 @@
-# Current task — 063 Complete public Pati Hattı marketing website
+# Current task — 064 Homepage interaction clarity, paw cursor and launch-ready SEO
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 after Task 063 closed. The owner accepted the
+overall homepage and animation direction, but observed that the hero's
+"Nasıl çalışır" action duplicates the real below-the-fold workflow, the
+revealed content is not a strong interaction reward, and the pointer-following
+eye overlay does not visually work. The owner also supplied a transparent paw
+image for a site cursor and asked for the strongest truthful SEO work possible
+before production publication.
+
+## Goal
+
+Make the existing hero interaction clearer and more delightful without
+rewriting its accepted three-activation motion: replace the duplicated
+"Nasıl çalışır" hero action/reveal with a distinct clinic-value/control-center
+story, remove the ineffective gaze overlay completely, add a small warm-brown
+paw cursor for fine-pointer devices with native fallbacks, and complete all SEO
+metadata that is honest before the production hostname is activated.
+
+## Fixed decisions
+
+- Preserve the `home -> hopping-right -> right -> approaching -> network ->
+  returning -> home` state machine, timings, keyboard behavior, reduced-motion
+  fallback and fixed garden/mascot assets.
+- The first hero action is exploration, not another copy of the four-step
+  `#nasil-calisir` section. The reveal explains concrete clinic-side value and
+  control while retaining the honest closed-pilot status and no fabricated
+  customer/contact claim.
+- Remove the gaze DOM, CSS and pointer listeners rather than trying to tune an
+  overlay the owner has rejected. No pointer coordinates are stored or sent.
+- Use the owner's `C:/Users/mehme/Downloads/pati-removebg-preview.png` only as
+  the source for a compact, transparent, warm-brown cursor asset. Apply it only
+  on `(pointer: fine)`; retain `auto`/`pointer` fallbacks and do not make core
+  interaction depend on it.
+- Add title/description, Open Graph and Twitter metadata that require no
+  canonical URL or external image. Do not add canonical, sitemap, Organization
+  schema, indexability promises or production URLs before the public hostname
+  and legal/publication identity are activated. Record those as launch gates.
+- No dependency, remote font/runtime, analytics, cookie, form, backend,
+  database, Wrangler binding, DNS, deploy or external-service change.
+
+## Allowed changes
+
+- `public/index.html`
+- `public/app.js`
+- `public/styles.css`
+- `public/assets/pati-cursor.png` (new, derived only from the owner-supplied paw)
+- `test/homePageAssets.test.ts`
+- `docs/marketing-homepage.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+The pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. Hero action labels and reveal content no longer duplicate the four-step
+   workflow; the reveal communicates clinic organization, human control and
+   safety boundaries without unsupported promises.
+2. The exact three-activation dog journey and return still work with mouse,
+   touch and keyboard, including reduced-motion behavior.
+3. Gaze overlay/listeners/styles are absent; no dead pupil markup remains.
+4. The paw cursor is transparent, small, warm brown, scoped to fine-pointer
+   devices and has usable native fallbacks.
+5. Metadata is complete for a pre-launch page and contains no invented URL,
+   person, legal entity, partner, contact or unapproved medical claim.
+6. Desktop/tablet/phone rendering has no overlap or horizontal overflow; CSP,
+   no-JS readability and existing Worker routes remain unchanged.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+graphify update .
+```
+
+After deterministic gates, render `/` through the local Worker at 1440×900,
+768×1024 and 375×812; exercise the complete dog journey and inspect the cursor
+on a fine pointer. Record any unavailable media/input emulation as `NOT RUN`.
+
+## Task 064 observed context
+
+- Graphify connects the homepage implementation primarily to
+  `public/index.html`, `public/styles.css`, `public/app.js`,
+  `test/homePageAssets.test.ts` and `docs/marketing-homepage.md`; no backend
+  route or package dependency is required for this change.
+- The current hero CTA and accessible dog label both say "Nasıl çalışır" even
+  though a complete `#nasil-calisir` four-step section now follows the hero.
+  The revealed `#pilot` panel repeats the same three-party workflow rather than
+  rewarding the interaction with distinct clinic value.
+- The gaze feature is a separate DOM overlay (`#pupils`), ~35 CSS lines and two
+  pointer listeners. It does not modify the mascot raster and can be deleted
+  without touching the state machine.
+- The existing page has a good unique title, description, Turkish language,
+  semantic headings and crawlable copy, but no Open Graph/Twitter metadata.
+  Production canonical/sitemap/structured identity remain premature because
+  the repository still records public production publication as open.
+
+## Task 064 delivery record
+
+- `public/index.html` and `public/app.js` retain the exact six-state mascot
+  machine and its timings, but rename the first two actions to `Bahçeyi keşfet`
+  and `Kontrol merkezini gör`. The revealed panel now presents message
+  organization, clinic control and the medical-safety boundary instead of
+  repeating the four-step `#nasil-calisir` story. The closed-pilot statement
+  remains and no customer/contact claim was added.
+- The rejected `#pupils` markup, all gaze CSS and both pointer listeners were
+  deleted. No replacement listener or pointer-data path was introduced.
+- The owner-provided paw silhouette was edited with the built-in ImageGen tool
+  only to recolor it warm brown and remove its light edge, then mechanically
+  reduced to a transparent 32×32 PNG at `public/assets/pati-cursor.png`. CSS
+  applies it only under `(pointer: fine)` with native `auto`/`pointer`
+  fallbacks; the same local asset is the favicon.
+- The homepage has a more specific Turkish title/description plus `theme-color`,
+  URL-independent Open Graph fields and a Twitter summary card. Canonical,
+  `og:url`, share image, sitemap, robots/indexing policy and Organization schema
+  remain explicit public-production launch gates; no staging or reserved host
+  was presented as the canonical marketing origin.
+- Browser evidence through the real local Worker passed at 1440×900,
+  768×1024 and 375×812. The complete `home -> right -> network -> home` journey
+  passed; the new panel was visible and non-scrolling, horizontal overflow was
+  false at all three sizes, the gaze-node count was zero, and computed cursor
+  style resolved the same-origin paw PNG. The viewport override was reset and
+  the local preview was left open at its home state.
+- Verification passed: frozen install (`Already up to date`), typecheck, focused
+  `homePageAssets + index` tests (135/135), full suite (40 files; 2,179 passed,
+  2 pre-existing opt-in skips), both production and staging Wrangler dry-runs
+  (313.56 KiB / 66.34 KiB gzip), `git diff --check` and `graphify update .`
+  (2,477 nodes / 3,562 edges). Graphify reported only its known three zero-node
+  JSON-source warning and a non-blocking suggestion to refresh LLM labels.
+- No dependency, backend, database, DNS, Cloudflare/Meta/Supabase setting,
+  staging/production deploy or push occurred. The pre-existing `.gitignore`
+  modification and `docs/043-opus-inceleme.md` remain untouched and excluded
+  from the commit.
+
+---
+
+# Completed task — 063 Complete public Pati Hattı marketing website
 
 Status: `COMPLETE`
 

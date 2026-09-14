@@ -1365,6 +1365,21 @@ occurred.
   provenance, production publication, renewed veterinarian approval and the
   Task 062 three-outcome staging WhatsApp canary remain separate gates.
 
+- Task 064 is complete at repository and local-browser gates as of 2026-09-14.
+  The preserved hero now opens with `Bahçeyi keşfet` and reveals a distinct
+  clinic control-centre story instead of duplicating the below-the-fold
+  four-step workflow. The ineffective gaze overlay/listeners were removed;
+  the owner's paw silhouette is now a transparent warm-brown 32×32 cursor for
+  fine-pointer devices and a same-origin favicon.
+- Task 064 also added a focused Turkish title/description and URL-independent
+  Open Graph/Twitter metadata. Canonical URL, `og:url`, share image, sitemap,
+  robots/indexing policy and Organization structured data remain public-
+  production launch gates rather than being inferred from staging. Codex
+  rendered the unchanged three-activation journey at 1440×900, 768×1024 and
+  375×812 with no horizontal overflow; 135 focused and 2,179 full-suite tests,
+  typecheck, both Worker dry-runs, whitespace and Graphify checks passed. No
+  staging/production deploy or external-service mutation occurred.
+
 ## Context maintenance
 
 After each verified task, Codex updates only durable facts here: completed behavior, verified commands, accepted decisions, known blockers, and the next phase. Verbose implementation notes stay in Git history and completed task records rather than accumulating in this file.

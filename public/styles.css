@@ -269,51 +269,6 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   88% { left: 19%; transform: translateY(-11%) rotate(-2deg); }
   100% { left: 14%; transform: translateY(0) rotate(0); }
 }
-.gaze-eyes {
-  --gaze-x: 0px;
-  --gaze-y: 0px;
-  position: absolute;
-  inset: 0;
-  opacity: 1;
-  transition: opacity 0.2s ease;
-}
-.gaze-eye {
-  position: absolute;
-  left: 49%;
-  top: 24%;
-  width: 5.2%;
-  aspect-ratio: 1;
-  overflow: hidden;
-  border-radius: 50%;
-  background: transparent;
-  transform: translate(-50%, -50%);
-}
-.gaze-eye + .gaze-eye { left: 61.5%; top: 24%; }
-.scene[data-state="hopping-right"] .gaze-eyes,
-.scene[data-state="approaching"] .gaze-eyes,
-.scene[data-state="returning"] .gaze-eyes { opacity: 0; }
-.gaze-pupil {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 62%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: #2c1d16;
-  transform: translate(calc(-50% + var(--gaze-x)), calc(-50% + var(--gaze-y)));
-  transition: transform 0.1s ease-out;
-}
-.gaze-pupil::after {
-  content: "";
-  position: absolute;
-  left: 16%;
-  top: 12%;
-  width: 24%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.96);
-}
-
 .pilot-panel {
   max-width: 670px;
   padding: clamp(14px, 2vw, 24px);
@@ -599,8 +554,19 @@ html:not(.js) .pilot-panel {
   .hero-copy,
   .pilot-panel,
   .dog-button,
-  .gaze-eyes,
-  .gaze-pupil,
   .scene-shade,
   .skip-link { transition-duration: 0.01ms !important; }
+}
+
+@media (pointer: fine) {
+  html,
+  body {
+    cursor: url("/assets/pati-cursor.png") 16 16, auto;
+  }
+
+  a,
+  button,
+  summary {
+    cursor: url("/assets/pati-cursor.png") 16 16, pointer;
+  }
 }

@@ -15,6 +15,7 @@ const headers = read("public/_headers");
 const mediaAssets = [
   "public/assets/pati-hatti-garden-static.webp",
   "public/assets/pati-hatti-dog-sprites.webp",
+  "public/assets/pati-cursor.png",
 ];
 
 describe("Task 063 homepage static assets", () => {
@@ -77,6 +78,29 @@ describe("Task 063 homepage static assets", () => {
     const pilotSection = html.match(/<section class="pilot-panel"[\s\S]*?<\/section>/);
     expect(pilotSection).not.toBeNull();
     expect(pilotSection![0]).not.toMatch(/<a\b|<form\b|<button\b/);
+  });
+
+  it("uses the hero reveal for clinic controls instead of duplicating the four-step explainer", () => {
+    const pilotSection = html.match(/<section class="pilot-panel"[\s\S]*?<\/section>/);
+    expect(pilotSection).not.toBeNull();
+    expect(pilotSection![0]).toContain("Klinik kontrol merkezi");
+    expect(pilotSection![0]).toContain("Mesajlar tek yerde");
+    expect(pilotSection![0]).toContain("Karar klinikte");
+    expect(pilotSection![0]).toContain("Güvenlik görünür");
+    expect(pilotSection![0]).not.toContain("Nasıl çalışır");
+    expect(html).toContain('id="nasil-calisir"');
+  });
+
+  it("ships useful pre-launch social metadata without inventing a production URL or share image", () => {
+    expect(html.match(/<title>/g)).toHaveLength(1);
+    expect(html.match(/<meta name="description"/g)).toHaveLength(1);
+    expect(html).toContain('<meta property="og:type" content="website" />');
+    expect(html).toContain('<meta property="og:locale" content="tr_TR" />');
+    expect(html).toContain('<meta property="og:site_name" content="Pati Hattı" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary" />');
+    expect(html).toContain('<meta name="theme-color" content="#f4eadb" />');
+    expect(html).toContain('<link rel="icon" type="image/png" href="/assets/pati-cursor.png" />');
+    expect(html).not.toMatch(/rel="canonical"|property="og:url"|property="og:image"|application\/ld\+json/i);
   });
 
   it("states appointment confirmation requires the owner's explicit EVET reply", () => {
@@ -211,15 +235,19 @@ describe("Task 063 hero scene structure", () => {
     expect(css).toContain("@keyframes hop-home");
   });
 
-  test("aligns two bounded irises and moving pupils with both settled dog poses", () => {
-    expect(html.match(/class="gaze-eye"/g)).toHaveLength(2);
-    expect(html.match(/class="gaze-pupil"/g)).toHaveLength(2);
-    expect(css).toMatch(/\.gaze-eye\s*\{[^}]*left:\s*49%[^}]*top:\s*24%/);
-    expect(css).toMatch(/\.gaze-eye \+ \.gaze-eye\s*\{[^}]*left:\s*61\.5%[^}]*top:\s*24%/);
-    expect(css).toMatch(/\.gaze-eye\s*\{[^}]*background:\s*transparent/);
-    expect(css).toMatch(/\.gaze-pupil\s*\{[^}]*background:\s*#2c1d16/);
-    expect(css).toMatch(/\.gaze-pupil\s*\{[^}]*var\(--gaze-x\)[^}]*var\(--gaze-y\)/);
-    expect(js).toContain("var GAZE_RANGE_PX = 2.2;");
+  test("removes the ineffective gaze overlay and all pointer-tracking code", () => {
+    expect(html + css + js).not.toMatch(/gaze-eyes|gaze-eye|gaze-pupil|GAZE_RANGE_PX|--gaze-[xy]|pupils/);
+    expect(js).not.toContain('addEventListener("pointermove"');
+    expect(js).not.toContain('addEventListener("pointerleave"');
+  });
+
+  test("uses the owner-provided paw as a warm-brown cursor only on fine-pointer devices", () => {
+    const cursorAsset = path.join(ROOT, "public/assets/pati-cursor.png");
+    expect(statSync(cursorAsset).size).toBeGreaterThan(0);
+    expect(statSync(cursorAsset).size).toBeLessThan(10_000);
+    expect(css).toMatch(/@media \(pointer: fine\)[\s\S]*url\("\/assets\/pati-cursor\.png"\) 16 16, auto/);
+    expect(css).toMatch(/@media \(pointer: fine\)[\s\S]*url\("\/assets\/pati-cursor\.png"\) 16 16, pointer/);
+    expect(css).not.toMatch(/@media \(pointer: coarse\)[\s\S]*pati-cursor/);
   });
 
   test("keeps the scene deterministic and free of generated-video background churn", () => {

@@ -8,7 +8,6 @@
   var dogButton = document.getElementById("dog-trigger");
   var ctaButton = document.getElementById("how-it-works");
   var pilotPanel = document.getElementById("pilot");
-  var pupils = document.getElementById("pupils");
   var hint = document.querySelector(".hint");
   var STATES = {
     HOME: "home",
@@ -22,8 +21,8 @@
   var transitionTimer = null;
   var transitionToken = 0;
 
-  var HOME_LABEL = "Pati Hattı'nın nasıl çalıştığını gör";
-  var RIGHT_LABEL = "Pati Hattı'nın klinik ağını gör";
+  var HOME_LABEL = "Pati Hattı bahçesini keşfet";
+  var RIGHT_LABEL = "Klinik kontrol merkezini gör";
   var NETWORK_LABEL = "Eve dön";
   var NETWORK_HINT = "Eve dönmek için köpeğe dokunun 🐾";
   var RIGHT_HINT = "Devam etmek için köpeğe tekrar dokunun 🐾";
@@ -41,7 +40,7 @@
     dogButton.setAttribute("aria-label", label);
     dogButton.disabled = transitioning;
     ctaButton.disabled = transitioning;
-    ctaButton.textContent = state === STATES.RIGHT ? "Klinik ağını gör" : "Nasıl çalışır?";
+    ctaButton.textContent = state === STATES.RIGHT ? "Kontrol merkezini gör" : "Bahçeyi keşfet";
     hint.textContent = state === STATES.NETWORK ? NETWORK_HINT : state === STATES.RIGHT ? RIGHT_HINT : "";
 
     var revealed = state === STATES.NETWORK;
@@ -104,24 +103,6 @@
 
   dogButton.addEventListener("click", activate);
   ctaButton.addEventListener("click", activate);
-
-  if (!reducedMotion) {
-    var GAZE_RANGE_PX = 2.2;
-    scene.addEventListener("pointermove", function (event) {
-      if (state !== STATES.HOME && state !== STATES.RIGHT && state !== STATES.NETWORK) return;
-      var rect = dogButton.getBoundingClientRect();
-      var cx = rect.left + rect.width / 2;
-      var cy = rect.top + rect.height / 2;
-      var dx = Math.max(-1, Math.min(1, (event.clientX - cx) / (rect.width || 1)));
-      var dy = Math.max(-1, Math.min(1, (event.clientY - cy) / (rect.height || 1)));
-      pupils.style.setProperty("--gaze-x", (dx * GAZE_RANGE_PX).toFixed(1) + "px");
-      pupils.style.setProperty("--gaze-y", (dy * GAZE_RANGE_PX).toFixed(1) + "px");
-    });
-    scene.addEventListener("pointerleave", function () {
-      pupils.style.setProperty("--gaze-x", "0px");
-      pupils.style.setProperty("--gaze-y", "0px");
-    });
-  }
 
   render();
   window.requestAnimationFrame(function () {

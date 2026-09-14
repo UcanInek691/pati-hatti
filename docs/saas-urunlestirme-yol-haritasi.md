@@ -51,6 +51,12 @@ gereksinim çıktığında değerlendirilir.
 | Provizyon/offboarding | `/admin` yalnız provision/suspend/resume sunuyor; Auth/Meta kurulumu ve yıkıcı offboarding kontrollü, elle yürütülüyor. |
 | Worker `/ready` ve gözlemlenebilirlik | Task 050 ile `/ready` gerçek PostgREST rota çözümleme çağrısını kontrol ediyor. Task 054 doğrulanmış Workers Observability yolunu ve Better Stack `/ready` takibini kurdu. Task 057, Task 055'in `$workers.outcome` sorgu şeklini gerçek staging hesabında, heartbeat'i canlı pencerede ve platform e-postası ile allowlist WhatsApp kanaryasını uçtan uca doğruladı. Final bayrak tekrar kapatıldı. Kalan alarm matrisi, klinik gönderici alan adı ve production değişiklikleri hâlâ açık; bkz. [`docs/staging-runbook.md`](staging-runbook.md) §29. |
 
+Tanıtım yüzeyi Task 064'te ayrıca sadeleştirildi: hero'daki yinelenen "Nasıl
+çalışır" anlatımı klinik kontrol merkezine dönüştürüldü, reddedilen gaze katmanı
+kaldırıldı, sahibin pati silueti yalnız fareli cihazlarda cursor yapıldı ve URL
+gerektirmeyen SEO/social metadata tamamlandı. Canonical, sitemap, robots,
+Organization ve paylaşım görseli gerçek public production yayın kapısındadır.
+
 Task 052 gecikme araştırması tamamlandı: eşleşen üç eski yanıtın 61–74
 dakikalık farkı başarılı kayıttan önce; kayıt sonrası kabul 18–23 saniyedir.
 Önceki 405/503 kesintisinden sonraki yeniden teslim açıklaması güçlü bir

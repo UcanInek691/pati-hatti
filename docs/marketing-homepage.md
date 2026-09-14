@@ -1,4 +1,4 @@
-# Task 061/063 — Marketing homepage
+# Task 061/063/064 — Marketing homepage
 
 The public `/` route is a dependency-free, same-origin marketing homepage
 served from `public/**` through the binding-free Static Assets configuration in
@@ -21,9 +21,10 @@ pilot-status panel.
   (native `<details>/<summary>` FAQ) complete the page, followed by a closing
   staff-login section and a footer linking `/privacy` and `/staff`.
 - `#pilot` (formerly `#network`) no longer shows any fake clinic name, portrait,
-  testimonial or partner count. It states plainly that public pilot
-  applications/contact are not yet open, and its only live action is the
-  existing `/staff` login for already-authorized clinic personnel.
+  testimonial or partner count. Task 064 also stopped using this reveal as a
+  second "Nasıl çalışır" explainer: it now introduces the clinic control
+  centre through message organization, human control and the medical-safety
+  boundary. Public pilot applications/contact remain explicitly closed.
 - `public/styles.css` supplies the responsive 16:9 game scene, text treatment,
   focus states, approximately 44px targets and the desktop/mobile layouts, plus
   the new content sections' layout (step list, control grid, boundary columns,
@@ -40,9 +41,10 @@ pilot-status panel.
 - `public/_headers` keeps the strict default-deny CSP and permits only same-origin
   scripts, styles, images and media. Unchanged by Task 063 — no new same-origin
   asset required a CSP addition.
-- `public/assets/` contains one immutable WebP garden and one transparent WebP
-  sheet with four coherent mascot poses. The browser never generates, swaps or
-  plays a background video.
+- `public/assets/` contains one immutable WebP garden, one transparent WebP
+  sheet with four coherent mascot poses, and the owner's paw silhouette reduced
+  to a 32×32 transparent warm-brown PNG cursor. The browser never generates,
+  swaps or plays a background video.
 
 The complete runtime art is under 400 KiB. No remote runtime asset, analytics
 call or storage is used.
@@ -75,9 +77,10 @@ movement.
 ## Interaction and accessibility
 
 - A skip link and header nav (`Nasıl çalışır`, `Klinikler için`, `Güvenlik`,
-  `SSS`, `/staff`) sit before the hero. `Nasıl çalışır?` and the mascot are
+  `SSS`, `/staff`) sit before the hero. `Bahçeyi keşfet` and the mascot are
   native buttons; mouse, touch, Enter and Space use the same transition
-  function.
+  function. The second step is labelled `Kontrol merkezini gör`; the actual
+  four-step product explanation remains exclusively below the hero.
 - The fixed scene and mascot layer are decorative. State changes update the
   button label for the three-step path and keep `#pilot` inert and
   `aria-hidden` until it is revealed.
@@ -88,8 +91,9 @@ movement.
   switches `.scene` to the same flex-column static-flow layout the mobile media
   query already used, so `#pilot` flows below the hero copy instead of
   overlapping it, at any viewport width.
-- Pointer movement changes only two small dark pupil overlays. No pointer
-  coordinates leave the page or enter storage.
+- The rejected pupil overlay and its pointer listeners were removed completely.
+  Fine-pointer devices use the small paw cursor with native `auto`/`pointer`
+  fallbacks; touch/coarse-pointer devices keep their platform cursor behavior.
 - Reduced-motion users receive immediate state changes without CSS travel.
 - The FAQ uses native `<details>/<summary>`, so every question is readable and
   independently expandable without JavaScript.
@@ -143,8 +147,9 @@ Task 061 results, still valid for the hero itself:
 - The last visual pass rejected full-frame video because its background changed
   between frames. Replacing it with one fixed background plus transparent poses
   removed that failure mode rather than hiding it.
-- The gaze hit area and pupil coordinates are aligned to the settled mascot;
-  only the dark pupils move and no pointer data leaves the page.
+- Task 064 deliberately removed the gaze hit area and pupil overlays after the
+  owner found the effect visually incorrect. The mascot raster and all three
+  accepted movement phases are unchanged.
 
 Automated verification pins the same-origin fixed background and pose sheet, the
 absence of video/reverse playback, all three CSS motion phases, bounded asset
@@ -156,6 +161,21 @@ Exact command results are recorded in `CURRENT_TASK.md` after the final gate run
 
 Task 063 is committed at repository closure. No push, staging/production
 deploy, DNS change or external-service activation is part of this task.
+
+## Task 064 pre-launch SEO boundary
+
+Task 064 added a focused Turkish page title and description plus Open Graph
+(`website`, `tr_TR`, site name, title, description) and Twitter summary-card
+metadata. These values contain no fabricated organization, customer, URL or
+medical promise and work without a third-party runtime.
+
+Canonical URL, `og:url`, share image, sitemap, robots/indexing policy and
+Organization structured data remain launch-time work. The same static files can
+be served by local/staging and later production origins; publishing a production
+canonical or legal entity before that public origin and identity are approved
+would be inaccurate. Add those fields only when the exact public marketing
+hostname, final share asset/provenance and legal publisher details are confirmed,
+then validate the deployed HTML and sitemap from the public origin.
 
 ## Local preview
 

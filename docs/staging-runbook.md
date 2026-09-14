@@ -1574,3 +1574,19 @@ göndermedi ve production'a dokunulmadı.
   değişmeyen kural ve fallback kaynak/test üzerinden doğrulandı.
 - **Staging'e veya production'a hiçbir deploy yapılmadı.** Task 063 Codex
   kapanışında repoya commit edildi; push veya deploy yapılmadı.
+
+## 34. Task 064 — ana sahne anlatımı, pati imleci ve yayın-öncesi SEO (2026-09-14, yalnızca yerel)
+
+- Hero eylemi `Bahçeyi keşfet` olarak ayrıştırıldı; ikinci adım artık tekrar bir
+  "Nasıl çalışır" özeti değil, klinik kontrol merkezini ve kliniğin elinde kalan
+  kontrolü gösterir. Alttaki gerçek dört-adımlı `#nasil-calisir` bölümü değişmedi.
+- Görsel olarak çalışmayan göz/pupil katmanı ve iki pointer dinleyicisi tamamen
+  kaldırıldı. Sahibin sağladığı pati silueti şeffaf, 32×32, sıcak-kahverengi bir
+  cursor varlığına dönüştürüldü ve yalnız `(pointer: fine)` altında etkinleşti.
+- Başlık/açıklama ile URL gerektirmeyen Open Graph/Twitter meta alanları eklendi.
+  Canonical, `og:url`, paylaşım görseli, sitemap, robots politikası ve Organization
+  şeması public production hostname + yasal kimlik + görsel provenance kapısına
+  bırakıldı; staging için production URL'si uydurulmadı.
+- Yerel gerçek tarayıcıda üç aşamalı hareket, dönüş, yeni panel metni, custom
+  cursor computed style'ı ve yatay taşma kontrol edildi. Bu kayıt staging veya
+  production deploy kanıtı değildir.
