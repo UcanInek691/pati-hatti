@@ -1391,6 +1391,17 @@ occurred.
   skips, typecheck, both Worker dry-runs, whitespace and Graphify checks passed.
   No JavaScript, asset, metadata, backend, deploy or external-service behavior
   changed.
+- Task 066 is complete as an artifact-production task as of 2026-09-14. A
+  24-page printable Turkish veterinary review package now binds the current
+  five-step Task 062 safety precedence, all eight questions, 25 user-facing
+  copy/templates and 20 synthetic end-to-end scenarios to repository HEAD
+  `15ff853` and clinical commit `2e14c89`. Every decision and signature field
+  is blank and the artifact is prominently marked `ONAY BEKLİYOR`.
+- The PDF passed extracted-text/page checks and full Poppler-rendered visual
+  inspection. Its creation does not constitute veterinarian or KVKK approval:
+  a licensed veterinarian must review and sign it, the signed/PII copy must be
+  stored outside Git, and the Task 062 three-outcome staging WhatsApp canary
+  remains required after a real approval result is recorded.
 
 ## Context maintenance
 
