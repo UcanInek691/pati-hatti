@@ -176,13 +176,15 @@ gates remain outstanding.
       production publication. If permission is insufficient, replace both assets
       with one coherent licensed/commissioned set and rerun responsive,
       accessibility, motion, CSP and transfer-budget checks.
-- [ ] Task 067 has prepared the origin-dependent repository layer for the
+- [x] Tasks 067-068 prepared and deployed the origin-dependent public-site
+      layer for the
       owner-confirmed apex `https://patihatti.com/`: exact canonical/`og:url`,
       an original 1200×630 typographic share card, a one-URL sitemap, robots
       policy, large-card social metadata and truthful `WebSite` JSON-LD. Staff,
-      admin and the staging privacy page are `noindex`. This box remains open
-      until the production route is authorized and the deployed HTML/image/
-      sitemap/robots responses are validated from the apex. `Organization`
+      admin and the staging privacy page are `noindex`. The isolated
+      marketing-only Worker was deployed and the HTML/image/sitemap/robots
+      responses were validated from the apex; product paths return 404.
+      `Organization`
       structured data remains intentionally absent until the legal publisher
       identity is approved; Task 067 does not invent that identity.
 
@@ -539,22 +541,26 @@ the code-level MVP. It does **not** check any box in this document.
 ## 8. Custom-domain activation checklist
 
 Written in Task 058 as documentation only. Task 059 then executed the
-**staging** half of it on the owner's own domain `patihatti.com`; the
-**production** half below remains `NOT RUN`. The per-step split is in §8.1 —
-read it before treating any item here as done.
+**staging application** half on the owner's own domain `patihatti.com`; Task
+068 separately launched a marketing-only apex with no product runtime. The
+**production application** half below remains `NOT RUN`. The per-step split is
+in §8.1 and the marketing record in §8.2 — read both before treating any
+application item here as done.
 
 This is the single source for moving the production Worker off `workers.dev`
-onto the owner's own hostname; it is referenced, not repeated, from
+onto the owner's own application hostname; it is referenced, not repeated, from
 [`docs/staging-runbook.md`](staging-runbook.md). Every item below is
 `NOT RUN` — writing this checklist and reorganizing `/staff` and `/admin`
-into a shared native shell proves neither domain ownership nor production
-activation.
+into a shared native shell proves neither application-domain ownership nor
+production application activation. The static marketing deployment recorded in
+§8.2 does not satisfy these application gates.
 
 1. **Hostname.** Owner supplies and confirms the exact production application
    and public marketing hostnames. The reserved application topology is
    `app.<owner-domain>/staff` and `app.<owner-domain>/admin`; Task 063 later
-   added same-Worker marketing content at `/`, but no public production
-   marketing hostname or route is activated yet.
+   added same-Worker marketing content at `/`. Task 068 now serves that public
+   content from a separate asset-only Worker at the apex; the reserved
+   application hostname remains inactive.
 2. **Cloudflare binding.** Bind that hostname to the production Worker via a
    Cloudflare Workers custom domain/route only after confirming the zone and
    Worker target. Keep the `workers.dev` staging hostname separate from
@@ -629,3 +635,16 @@ from the newly verified Resend domain, and production remains untouched. The
 Operational alerting stayed disabled throughout
 (`OPERATIONAL_ALERTS_ENABLED = "false"` in both Wrangler configs); Task 059
 sent no clinic or platform alert e-mail.
+
+### 8.2 Task 068 — isolated marketing apex (2026-09-14)
+
+`https://patihatti.com/` is live through the dedicated asset-only
+`pati-hatti-site` Worker. Its config has no application entry point, bindings,
+variables, secrets, queues, Cron or observability/runtime block and disables
+the `workers.dev` hostname. Live HTTPS checks passed for the page, robots,
+sitemap and share image; staff/admin/privacy/health/readiness/webhook paths and
+webhook POST all returned 404.
+
+This closes only the marketing publication gate. `app.patihatti.com` remains
+unbound, the production `vetai` Worker was not created, Supabase Auth and
+monitoring were not changed, and no clinical/product workflow is live.

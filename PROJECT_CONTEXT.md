@@ -1412,8 +1412,19 @@ occurred.
   `Organization` legal identity was invented. Focused 140/140 and full 2,184-
   test suites with two unchanged skips, typecheck, both Worker dry-runs,
   real-local-Worker asset/metadata checks, whitespace and Graphify gates passed.
-  The apex production route is still unbound: deployment, live crawler/social
-  validation and legal-publisher structured data remain separate gates.
+  Task 067 deliberately left the apex route unbound; its later deployment and
+  live validation are recorded under Task 068 below. Legal-publisher structured
+  data remains a separate gate.
+- Task 068 is complete at the public marketing-origin gate as of 2026-09-14.
+  `patihatti.com` is served by the dedicated Cloudflare asset-only Worker
+  `pati-hatti-site` (version `056c2946-6a39-468f-a1bd-dcc01fb3e3b2`), with no
+  application entry point, binding, secret, variable, Queue, Cron or
+  `workers.dev` hostname. Live HTTPS page/robots/sitemap/share-image and real
+  browser interaction checks passed.
+- Apex staff/admin/privacy/health/readiness/webhook GET paths and webhook POST
+  return 404. The production `vetai` Worker still does not exist,
+  `app.patihatti.com` remains unbound, and no production Auth, monitor,
+  database, messaging, alerting or clinical workflow was activated.
 
 ## Context maintenance
 

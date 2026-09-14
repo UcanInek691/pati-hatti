@@ -1,0 +1,10 @@
+name = "pati-hatti-site"
+compatibility_date = "2025-01-01"
+workers_dev = false
+routes = [{ pattern = "patihatti.com", custom_domain = true }]
+
+# Marketing-only deployment: no Worker entry point or product-system bindings.
+[assets]
+directory = "./public"
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"

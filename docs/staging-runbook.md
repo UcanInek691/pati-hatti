@@ -1590,3 +1590,18 @@ göndermedi ve production'a dokunulmadı.
 - Yerel gerçek tarayıcıda üç aşamalı hareket, dönüş, yeni panel metni, custom
   cursor computed style'ı ve yatay taşma kontrol edildi. Bu kayıt staging veya
   production deploy kanıtı değildir.
+
+## 35. Task 068 — ayrı statik Worker ile apex yayını (2026-09-14)
+
+- `patihatti.com`, uygulama Worker'ına değil yalnız `public/**` sunan ayrı
+  `pati-hatti-site` Worker'ına bağlandı. `workers.dev` kapalı; entry point,
+  binding, secret, değişken, Queue ve Cron yok.
+- Canlı HTTPS üzerinden anasayfa, `robots.txt`, `sitemap.xml` ve paylaşım PNG'si
+  200 döndü; canonical, `WebSite` JSON-LD, tek apex sitemap URL'si, içerik
+  türleri ve güvenlik başlıkları doğrulandı.
+- `/staff`, `/admin`, `/privacy`, `/health`, `/ready` ve webhook GET/POST canlı
+  olarak 404 döndü. `app.patihatti.com` bağlanmadı; Supabase Auth, staging,
+  izleme, e-posta, WhatsApp, veri tabanı ve klinik davranış değiştirilmedi.
+- Gerçek tarayıcıda ilk sahne ve `Bahçeyi keşfet` sonrası klinik kontrol
+  merkezi görünümü açıldı. Bu kayıt yalnız pazarlama sitesi yayınıdır; ürünün
+  production aktivasyonu veya veteriner onayı değildir.

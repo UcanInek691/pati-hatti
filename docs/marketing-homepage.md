@@ -180,9 +180,13 @@ The page now publishes `WebSite` JSON-LD only. `Organization` remains deferred
 because no approved legal publisher identity exists in repository evidence;
 inventing one would be less accurate than omitting it. Staff/admin and the
 staging privacy surface explicitly remain `noindex, nofollow, noarchive`.
-These are repository/local facts, not deployment proof: the apex production
-route is still unbound and the live HTML, image, robots and sitemap must be
-checked after the separately authorized production activation.
+Task 068 deployed these exact files through a separate asset-only Cloudflare
+Worker at the apex. The live HTML, image, robots and sitemap returned 200 over
+HTTPS, and non-marketing paths including `/staff`, `/admin`, `/privacy`,
+`/health`, `/ready` and `/webhooks/whatsapp` returned 404. This is public-site
+deployment proof only: `app.patihatti.com` remains unbound and no product
+runtime, authentication, webhook, queue, Cron, alert or clinical behavior was
+activated.
 
 ## Local preview
 

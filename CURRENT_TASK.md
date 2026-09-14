@@ -1,3 +1,125 @@
+# Current task — 068 Marketing-only apex launch
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 after Task 067 closed. The owner explicitly
+asked to continue with the announced controlled launch of the public marketing
+site at `https://patihatti.com/`.
+
+## Goal
+
+Publish the verified static Pati Hattı marketing assets on the apex through a
+dedicated Cloudflare asset-only Worker, without exposing or activating the
+production application, staff/admin panels, WhatsApp webhook, queues, Cron,
+Supabase Auth, operational alerting or clinical behavior.
+
+## Fixed decisions
+
+- Use a separate Worker named `pati-hatti-site`; do not deploy the full `vetai`
+  Worker merely to serve the homepage.
+- Bind only the exact apex `patihatti.com` as a Cloudflare custom domain and
+  keep the Worker `workers.dev` hostname disabled.
+- The deployment contains only `public/**`. It has no Worker entry point,
+  environment variables, secrets, queue bindings, Cron triggers or runtime
+  access to product systems.
+- Unknown paths, including `/staff`, `/admin`, `/privacy`, `/health`, `/ready`
+  and `/webhooks/whatsapp`, must return 404 rather than falling through to an
+  application shell.
+- Do not bind `app.patihatti.com`, change staging, alter Supabase Auth, enable
+  alerts, send messages/e-mails or claim that the clinical product is live.
+- `www.patihatti.com` remains unconfigured in this smallest launch; the single
+  public canonical remains the apex.
+
+## Allowed changes
+
+- `wrangler.marketing.toml` (new)
+- `test/homePageAssets.test.ts`
+- `docs/marketing-homepage.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+The pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. A checked-in asset-only Wrangler config names `pati-hatti-site`, binds only
+   `patihatti.com`, disables `workers.dev`, serves `public/**`, and contains no
+   `main`, bindings, vars, queues, Cron or observability/runtime configuration.
+2. Local/static tests fail if the marketing config begins exposing an
+   application runtime or a second hostname.
+3. The dedicated Worker deploys successfully without modifying `vetai`,
+   `vetai-staging`, staging DNS/routes, product secrets, queues or databases.
+4. From the public apex, `/`, `/robots.txt`, `/sitemap.xml` and the social image
+   return 200 over HTTPS with the expected content and security headers.
+5. `/staff`, `/admin`, `/privacy`, `/health`, `/ready` and
+   `/webhooks/whatsapp` return 404 from the apex; no product endpoint is live.
+6. Repository checks and a post-deploy live smoke pass before commit. Any
+   custom-domain or certificate failure stops the task without rerouting the
+   apex to the full product Worker.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts
+pnpm test
+pnpm exec wrangler deploy --config wrangler.marketing.toml --dry-run --outdir .wrangler/dry-run-marketing
+git diff --check
+graphify update .
+live HTTPS content/header/404 checks on https://patihatti.com
+```
+
+## Task 068 observed context
+
+- Before activation, DNS returned only the zone SOA for `patihatti.com` and
+  HTTPS had no endpoint. Cloudflare's API independently reported that the
+  repository's production `vetai` Worker did not exist in the owner's account;
+  deploying it would therefore have created and exposed the full product
+  runtime rather than merely publishing the site.
+- The installed Wrangler 4.128.0 schema supports an asset-only deployment with
+  explicit HTML and not-found handling. Repository `public/**` contains 11
+  bounded files and requires no build step or runtime binding.
+- The authenticated Cloudflare session has Worker/script/route write access.
+  No Pages, KV, database, queue or Supabase permission is required by the
+  selected static-only path.
+
+## Task 068 delivery record
+
+- Added `wrangler.marketing.toml`: the dedicated `pati-hatti-site` Worker has no
+  `main` entry point, `workers_dev = false`, one exact custom-domain route for
+  `patihatti.com`, and only an `[assets]` directory with explicit non-SPA
+  not-found handling. Tests fail on any application entry point, vars, queue,
+  Cron, observability/binding configuration or app/staging hostname leakage.
+- Cloudflare uploaded the 11 public assets, created the isolated Worker and
+  bound the apex successfully. Deployed version:
+  `056c2946-6a39-468f-a1bd-dcc01fb3e3b2`.
+- Live HTTPS checks returned 200 for `/`, `/robots.txt`, `/sitemap.xml` and the
+  1200×630 share PNG. The HTML has the exact apex canonical and `WebSite`
+  JSON-LD; robots points to the exact sitemap; the sitemap has exactly one apex
+  URL. HTML/text/XML/image responses carry the repository CSP and expected
+  content types.
+- Live GETs to `/staff`, `/admin`, `/privacy`, `/health`, `/ready` and
+  `/webhooks/whatsapp`, plus a POST to `/webhooks/whatsapp`, all returned 404.
+  The apex therefore exposes no application, health, authentication, webhook
+  or clinical runtime path.
+- Codex opened the public apex in a real browser, inspected the rendered hero,
+  activated `Bahçeyi keşfet`, and confirmed the settled clinic-control-centre
+  scene renders without deployment-specific layout breakage.
+- Verification passed: frozen install, typecheck, focused homepage tests
+  (39/39), full suite (40 files; 2,186 passed and two unchanged opt-in skips),
+  marketing dry-run (`No bindings found`), `git diff --check`, live smoke and
+  Graphify update.
+- No `vetai`/`vetai-staging` Worker, queue, secret, Cron, Supabase setting,
+  Resend setting, monitor, e-mail, WhatsApp message, database or clinical
+  behavior changed. `app.patihatti.com` remains unbound and the product is not
+  production-active.
+
+---
+
 # Current task — 067 Public-site SEO and indexing package
 
 Status: `COMPLETE`

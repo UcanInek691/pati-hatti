@@ -14,6 +14,7 @@ const js = read("public/app.js");
 const headers = read("public/_headers");
 const robots = read("public/robots.txt");
 const sitemap = read("public/sitemap.xml");
+const marketingWrangler = read("wrangler.marketing.toml");
 const mediaAssets = [
   "public/assets/pati-hatti-garden-static.webp",
   "public/assets/pati-hatti-dog-sprites.webp",
@@ -200,6 +201,30 @@ describe("Task 063 homepage static assets", () => {
     expect(headers).toContain("frame-ancestors 'none'");
     expect(headers).not.toContain("unsafe-inline");
     expect(headers).not.toContain("unsafe-eval");
+  });
+});
+
+describe("Task 068 marketing-only deployment boundary", () => {
+  it("binds only the apex to a dedicated asset-only Worker", () => {
+    expect(marketingWrangler).toContain('name = "pati-hatti-site"');
+    expect(marketingWrangler).toContain("workers_dev = false");
+    expect(marketingWrangler).toContain(
+      'routes = [{ pattern = "patihatti.com", custom_domain = true }]'
+    );
+    expect(marketingWrangler).toContain('[assets]');
+    expect(marketingWrangler).toContain('directory = "./public"');
+    expect(marketingWrangler).toContain('not_found_handling = "none"');
+  });
+
+  it("contains no application runtime or product-system binding", () => {
+    expect(marketingWrangler).not.toMatch(/^main\s*=/m);
+    expect(marketingWrangler).not.toMatch(/^\[vars\]/m);
+    expect(marketingWrangler).not.toMatch(/^\[triggers\]/m);
+    expect(marketingWrangler).not.toMatch(/^\[observability/m);
+    expect(marketingWrangler).not.toMatch(/^\[\[queues\./m);
+    expect(marketingWrangler).not.toMatch(/binding\s*=/);
+    expect(marketingWrangler).not.toContain("app.patihatti.com");
+    expect(marketingWrangler).not.toContain("staging.patihatti.com");
   });
 });
 
