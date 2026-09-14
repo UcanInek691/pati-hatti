@@ -188,6 +188,13 @@ deployment proof only: `app.patihatti.com` remains unbound and no product
 runtime, authentication, webhook, queue, Cron, alert or clinical behavior was
 activated.
 
+Task 069 removed the live page's remaining links to those intentionally closed
+paths. Header and closing actions are now non-interactive pilot-status text;
+the FAQ/footer state that the reviewed pilot privacy notice and clinic login
+will be published before the pilot opens. No staging link, legal identity,
+contact address or unapproved privacy promise was substituted for the broken
+links.
+
 ## Local preview
 
 ```text

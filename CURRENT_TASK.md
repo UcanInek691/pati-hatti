@@ -1,3 +1,102 @@
+# Current task — 069 Public navigation truthfulness
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 immediately after Task 068 live verification.
+The post-launch crawl found that the public homepage still linked to `/staff`
+and `/privacy`, even though the deliberately marketing-only apex correctly
+returns 404 for both product paths.
+
+## Goal
+
+Remove every broken product/privacy call-to-action from the live marketing
+page and state the current pilot boundary truthfully, without publishing an
+unreviewed legal notice or activating the product application.
+
+## Fixed decisions
+
+- Do not point public visitors to staging or bind `app.patihatti.com` merely to
+  make the links work.
+- Replace the staff links with non-interactive “pilot girişi yakında” status
+  text. Public applications and sales contact remain closed.
+- Do not invent a data controller, contact address, legal basis, retention
+  period or lawyer-approved KVKK notice. Replace the broken privacy link with a
+  factual note that this static page has no form/login/message submission and
+  that the reviewed pilot notice will be published before opening the pilot.
+- Keep the marketing Worker isolated and `/staff`/`privacy` returning 404.
+- No new dependency, analytics, cookie, form, e-mail, backend or external
+  integration.
+
+## Allowed changes
+
+- `public/index.html`
+- `public/styles.css`
+- `test/homePageAssets.test.ts`
+- `docs/marketing-homepage.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+The pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. The public HTML has no link to `/staff`, `/admin` or `/privacy` and no link
+   points to a path that the marketing Worker intentionally serves as 404.
+2. Header, closing section, FAQ and footer truthfully distinguish the live
+   marketing page from the unopened pilot/application.
+3. No legal identity, contact path, privacy promise or production-readiness
+   claim is invented; the future privacy notice remains an explicit legal gate.
+4. Existing same-page navigation, mascot interaction, SEO metadata, sitemap,
+   robots and isolated Worker boundary remain unchanged.
+5. Focused/full tests, marketing dry-run, live post-deploy link/404 checks,
+   whitespace and Graphify pass before commit.
+
+## Task 069 observed context
+
+- Task 068's post-deploy smoke correctly proved product paths return 404, but a
+  follow-up crawl found five live `href` values still pointing to `/staff` or
+  `/privacy`: header, closing section, footer and FAQ. The static site was
+  therefore technically isolated but its public navigation was not truthful.
+- The repository privacy page describes staging, names a provisional operator,
+  and explicitly says it is not a lawyer-approved production KVKK notice. No
+  approved production data-controller identity, contact channel, legal basis
+  or retention schedule exists, so copying it to the apex would create a new
+  legal accuracy problem rather than close the broken link.
+
+## Task 069 delivery record
+
+- Replaced all three public staff links with non-interactive pilot-status text,
+  and updated the clinic closing copy to state that neither the panel nor public
+  applications/sales contact are open on the apex.
+- Replaced the broken privacy link with a factual FAQ/footer boundary: the
+  marketing page has no login, form or message submission, and the pilot notice
+  will be published only after its controller, request channel, retention rules
+  and legal review are settled. No legal identity or contact address was
+  invented.
+- Added minimal muted status styling; same-page navigation, mascot interaction,
+  SEO metadata, sitemap, robots policy and marketing Worker configuration are
+  unchanged.
+- Cloudflare deployed two changed assets (`index.html`, `styles.css`) to
+  `pati-hatti-site`, version `87d407db-e2b0-4ecf-8a72-ec11dcf97bec`. The first
+  uncached verification distinguished the new edge version; the normal apex
+  subsequently returned the same 12,965-byte HTML.
+- Live crawling found zero `/staff`, `/admin` or `/privacy` hrefs, two visible
+  `Pilot girişi yakında` statuses and no form. Product/privacy/health/readiness/
+  webhook paths remain 404. A real-browser reload confirmed the final header,
+  hero and settled layout without a stale panel or broken public action.
+- Verification passed after updating one stale Task 063 test: typecheck,
+  focused homepage tests (40/40), full suite (40 files; 2,187 passed and two
+  unchanged opt-in skips), marketing dry-run (`No bindings found`), whitespace,
+  live link/404 checks and Graphify update.
+- No backend, app hostname, Auth, database, webhook, queue, alert, e-mail,
+  clinical behavior or legal approval changed. A real production privacy/KVKK
+  notice remains a pre-pilot legal gate.
+
+---
+
 # Current task — 068 Marketing-only apex launch
 
 Status: `COMPLETE`

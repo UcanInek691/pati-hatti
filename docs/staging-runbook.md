@@ -1605,3 +1605,15 @@ göndermedi ve production'a dokunulmadı.
 - Gerçek tarayıcıda ilk sahne ve `Bahçeyi keşfet` sonrası klinik kontrol
   merkezi görünümü açıldı. Bu kayıt yalnız pazarlama sitesi yayınıdır; ürünün
   production aktivasyonu veya veteriner onayı değildir.
+
+## 36. Task 069 — canlı bağlantı doğruluğu (2026-09-14)
+
+- Task 068 sonrası tarama, canlı sayfada 404 dönen `/staff` ve `/privacy`
+  yollarına hâlâ beş bağlantı bulunduğunu gösterdi.
+- Bu bağlantılar staging'e yönlendirilmedi ve ürün Worker'ı açılmadı. Giriş
+  eylemleri etkileşimsiz `Pilot girişi yakında` durumuna çevrildi; gizlilik
+  alanı onaylanmamış bir metin uydurmak yerine üretim veri sorumlusu, başvuru
+  kanalı, saklama kuralları ve hukuk incelemesi tamamlanana kadar ertelendi.
+- Yeni statik sürüm yayımlandı. Canlı apex taramasında kapalı ürün yollarına
+  sıfır href, sıfır form ve iki pilot-durum etiketi görüldü; ilgili yollar 404
+  kalmaya devam etti. Tarayıcıda nihai düzen de doğrulandı.

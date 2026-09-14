@@ -92,8 +92,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-radius: 999px;
   padding: 8px 18px;
 }
-.staff-link:hover,
-.staff-link:focus-visible { background: var(--ink); color: var(--paper); }
+a.staff-link:hover,
+a.staff-link:focus-visible { background: var(--ink); color: var(--paper); }
+.staff-status { background: #f2e7d6; color: #53616a; }
 
 main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
 .stage { position: relative; width: 100%; max-width: none; margin: 0 auto; }
@@ -479,6 +480,15 @@ html:not(.js) .pilot-panel {
 .faq-item p { margin: 10px 0 0; color: #44545e; }
 
 .closing-section p { max-width: 65ch; }
+.launch-status {
+  display: inline-block;
+  margin: 4px 0 0;
+  padding: 10px 18px;
+  border: 2px solid #c8b89f;
+  border-radius: 999px;
+  color: #53616a;
+  font-weight: 800;
+}
 
 .site-footer {
   display: flex;
@@ -502,6 +512,7 @@ html:not(.js) .pilot-panel {
 }
 .site-footer a:hover,
 .site-footer a:focus-visible { text-decoration: underline; }
+.footer-status { max-width: 52ch; color: #53616a; font-size: 0.9rem; }
 
 @media (max-width: 768px) {
   .brand-bar { padding-block: 9px; }

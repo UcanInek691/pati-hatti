@@ -72,7 +72,7 @@ describe("Task 063 homepage static assets", () => {
   it("keeps product copy inside the verified boundary", () => {
     expect(html).toContain("WhatsApp");
     expect(html).toContain("randevu");
-    expect(html).toContain("Veteriner girişi");
+    expect(html).toContain("Pilot girişi yakında");
     expect(html).toContain("teşhis koymaz");
     expect(html).toContain("ilaç önermez");
     expect(html).toContain("garantisi vermez");
@@ -88,8 +88,8 @@ describe("Task 063 homepage static assets", () => {
     expect(html).not.toMatch(/mailto:|@[a-z0-9.-]+\.[a-z]{2,}/i);
   });
 
-  it("states pilot applications are not yet open and keeps /staff as the only live action inside the reveal", () => {
-    expect(html).toContain("Herkese açık pilot başvurusu");
+  it("states pilot applications are not yet open and keeps the reveal non-interactive", () => {
+    expect(html).toMatch(/herkese açık pilot\s+başvurusu/iu);
     expect(html).toContain("henüz açık");
     const pilotSection = html.match(/<section class="pilot-panel"[\s\S]*?<\/section>/);
     expect(pilotSection).not.toBeNull();
@@ -363,7 +363,14 @@ describe("Task 063 completed page sections", () => {
 
     expect(html.match(/<header class="brand-bar">/g)).toHaveLength(1);
     expect(html.match(/<footer class="site-footer">/g)).toHaveLength(1);
-    expect(html).toMatch(/<footer[^>]*>[\s\S]*href="\/privacy"[\s\S]*href="\/staff"[\s\S]*<\/footer>/);
+    expect(html).toMatch(/<footer[^>]*>[\s\S]*Gizlilik metni ve klinik girişi pilot öncesinde yayımlanacak\.[\s\S]*<\/footer>/);
+  });
+
+  it("does not link the public page to intentionally unavailable product paths", () => {
+    expect(html).not.toMatch(/href="\/(?:staff|admin|privacy)(?:[/?#"])/);
+    expect(html.match(/Pilot girişi yakında/g)).toHaveLength(2);
+    expect(html).toContain("Bu tanıtım sayfasında hesap girişi, form veya mesaj gönderimi yoktur.");
+    expect(html).toContain("hukuk incelemesiyle kesinleştiğinde burada yayımlanacaktır");
   });
 
   it("keeps a logical heading order: one h1, then only h2/h3 below it", () => {

@@ -648,3 +648,9 @@ webhook POST all returned 404.
 This closes only the marketing publication gate. `app.patihatti.com` remains
 unbound, the production `vetai` Worker was not created, Supabase Auth and
 monitoring were not changed, and no clinical/product workflow is live.
+
+Task 069's live follow-up removed every homepage link to the intentionally
+closed staff/privacy paths. The apex now presents non-interactive pilot status
+and defers the privacy notice until the data controller, request channel,
+retention rules and legal review are real. This avoids both public 404 actions
+and a fabricated production notice; it does not complete the KVKK gate.

@@ -1425,6 +1425,15 @@ occurred.
   return 404. The production `vetai` Worker still does not exist,
   `app.patihatti.com` remains unbound, and no production Auth, monitor,
   database, messaging, alerting or clinical workflow was activated.
+- Task 069 is complete at the live public-navigation gate as of 2026-09-14.
+  Five homepage links to the intentionally closed staff/privacy paths were
+  removed from the marketing assets and deployed as `pati-hatti-site` version
+  `87d407db-e2b0-4ecf-8a72-ec11dcf97bec`. The apex now has zero product/privacy
+  hrefs or forms and uses non-interactive pilot status instead.
+- No provisional staging notice was presented as production legal text. The
+  public copy says the pilot privacy notice will follow only after the data
+  controller, request channel, retention rules and legal review are settled;
+  the actual KVKK/legal gate remains open.
 
 ## Context maintenance
 
