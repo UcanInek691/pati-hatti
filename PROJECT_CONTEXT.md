@@ -1402,6 +1402,18 @@ occurred.
   a licensed veterinarian must review and sign it, the signed/PII copy must be
   stored outside Git, and the Task 062 three-outcome staging WhatsApp canary
   remains required after a real approval result is recorded.
+- Task 067 is complete at repository and local-Worker gates as of 2026-09-14.
+  The marketing page now binds its canonical, `og:url`, large-card social image,
+  one-URL sitemap, robots policy and `WebSite` JSON-LD to the owner-confirmed
+  apex `https://patihatti.com/`. The original 1200×630 typographic share card
+  contains no hero/mascot or third-party asset and therefore does not inherit
+  the open hero-asset commercial-provenance decision.
+- Staff/admin and the staging privacy shell are explicitly `noindex`; no
+  `Organization` legal identity was invented. Focused 140/140 and full 2,184-
+  test suites with two unchanged skips, typecheck, both Worker dry-runs,
+  real-local-Worker asset/metadata checks, whitespace and Graphify gates passed.
+  The apex production route is still unbound: deployment, live crawler/social
+  validation and legal-publisher structured data remain separate gates.
 
 ## Context maintenance
 

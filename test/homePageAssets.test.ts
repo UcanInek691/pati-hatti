@@ -12,15 +12,18 @@ const html = read("public/index.html");
 const css = read("public/styles.css");
 const js = read("public/app.js");
 const headers = read("public/_headers");
+const robots = read("public/robots.txt");
+const sitemap = read("public/sitemap.xml");
 const mediaAssets = [
   "public/assets/pati-hatti-garden-static.webp",
   "public/assets/pati-hatti-dog-sprites.webp",
   "public/assets/pati-cursor.png",
+  "public/assets/pati-hatti-share.png",
 ];
 
 describe("Task 063 homepage static assets", () => {
   it("public/** files exist and are non-empty", () => {
-    for (const content of [html, css, js, headers]) {
+    for (const content of [html, css, js, headers, robots, sitemap]) {
       expect(content.length).toBeGreaterThan(0);
     }
     for (const asset of mediaAssets) {
@@ -36,16 +39,28 @@ describe("Task 063 homepage static assets", () => {
     expect(totalBytes).toBeLessThan(1_500_000);
   });
 
-  it("references no remote origin from any public file", () => {
-    for (const content of [html, css, js, headers]) {
-      expect(content).not.toMatch(/https?:\/\//);
-    }
+  it("uses absolute URLs only for the declared production origin and schema vocabularies", () => {
+    const urls = [html, css, js, headers, robots, sitemap]
+      .flatMap((content) => content.match(/https?:\/\/[^\s"'<>]+/g) ?? [])
+      .map((url) => url.replace(/[),.;]+$/, ""));
+    expect(new Set(urls)).toEqual(new Set([
+      "https://patihatti.com/",
+      "https://patihatti.com/assets/pati-hatti-share.png",
+      "https://patihatti.com/sitemap.xml",
+      "https://schema.org",
+      "http://www.sitemaps.org/schemas/sitemap/0.9",
+    ]));
   });
 
-  it("index.html has no inline script, style block, or inline event handler", () => {
+  it("has no inline executable script, style block, or inline event handler", () => {
     expect(html).not.toMatch(/<style[\s>]/i);
-    expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>[^<]/i);
     expect(html).not.toMatch(/\son[a-z]+\s*=\s*["']/i);
+    const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi)];
+    expect(scripts).toHaveLength(2);
+    const inline = scripts.filter((match) => !/\bsrc=/.test(match[1] ?? ""));
+    expect(inline).toHaveLength(1);
+    expect(inline[0]![1]).toContain('type="application/ld+json"');
+    expect(() => JSON.parse(inline[0]![2] ?? "")).not.toThrow();
   });
 
   it("loads app.js and styles.css only as same-origin external files", () => {
@@ -91,16 +106,50 @@ describe("Task 063 homepage static assets", () => {
     expect(html).toContain('id="nasil-calisir"');
   });
 
-  it("ships useful pre-launch social metadata without inventing a production URL or share image", () => {
+  it("binds production discovery metadata to the exact apex marketing URL", () => {
     expect(html.match(/<title>/g)).toHaveLength(1);
     expect(html.match(/<meta name="description"/g)).toHaveLength(1);
     expect(html).toContain('<meta property="og:type" content="website" />');
     expect(html).toContain('<meta property="og:locale" content="tr_TR" />');
     expect(html).toContain('<meta property="og:site_name" content="Pati Hattı" />');
-    expect(html).toContain('<meta name="twitter:card" content="summary" />');
+    expect(html).toContain('<link rel="canonical" href="https://patihatti.com/" />');
+    expect(html).toContain('<meta property="og:url" content="https://patihatti.com/" />');
+    expect(html).toContain('<meta property="og:image" content="https://patihatti.com/assets/pati-hatti-share.png" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(html).toContain('<meta name="twitter:image" content="https://patihatti.com/assets/pati-hatti-share.png" />');
     expect(html).toContain('<meta name="theme-color" content="#f4eadb" />');
     expect(html).toContain('<link rel="icon" type="image/png" href="/assets/pati-cursor.png" />');
-    expect(html).not.toMatch(/rel="canonical"|property="og:url"|property="og:image"|application\/ld\+json/i);
+    const jsonLd = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+    expect(jsonLd).toBeDefined();
+    expect(JSON.parse(jsonLd!)).toEqual({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Pati Hattı",
+      url: "https://patihatti.com/",
+      inLanguage: "tr-TR",
+      description: "Veteriner klinikleri için WhatsApp karşılama, bilgi toplama, randevu ve kontrollü insan devri deneyimi.",
+    });
+    expect(jsonLd).not.toContain("Organization");
+  });
+
+  it("ships an exact one-page sitemap and a conservative indexing policy", () => {
+    expect(sitemap.match(/<url>/g)).toHaveLength(1);
+    expect(sitemap).toContain("<loc>https://patihatti.com/</loc>");
+    expect(sitemap).not.toMatch(/\/staff|\/admin|\/privacy|staging|workers\.dev/i);
+    expect(robots).toContain("Allow: /");
+    expect(robots).toContain("Disallow: /staff");
+    expect(robots).toContain("Disallow: /admin");
+    expect(robots).toContain("Disallow: /privacy");
+    expect(robots).toContain("Sitemap: https://patihatti.com/sitemap.xml");
+  });
+
+  it("ships the original share card at the declared 1200x630 dimensions", () => {
+    const png = readFileSync(path.join(ROOT, "public/assets/pati-hatti-share.png"));
+    expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    expect(png.readUInt32BE(16)).toBe(1200);
+    expect(png.readUInt32BE(20)).toBe(630);
   });
 
   it("states appointment confirmation requires the owner's explicit EVET reply", () => {

@@ -643,8 +643,17 @@ describe("worker whatsapp persistence", () => {
     expect(body).toContain("Pati Hattı Staging Gizlilik Bildirimi");
     expect(body).toContain("Liste dışındaki numaraların mesaj içeriği incelenmez");
     expect(body).toContain("hukukçu onaylı KVKK aydınlatma metni");
+    expect(body).toContain('<meta name="robots" content="noindex, nofollow, noarchive">');
     expect(body).not.toContain("WHATSAPP_");
     expect(body).not.toContain("SUPABASE_");
+  });
+
+  it.each(["/staff", "/admin"])("GET %s keeps authenticated panels out of search results", async (path) => {
+    const res = await worker.fetch(new Request(`https://vetai.test${path}`), env);
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body).toContain('<meta name="robots" content="noindex, nofollow, noarchive">');
   });
 
   it("POST /privacy returns 405 and allows only GET", async () => {

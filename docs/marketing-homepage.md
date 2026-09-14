@@ -169,13 +169,20 @@ Task 064 added a focused Turkish page title and description plus Open Graph
 metadata. These values contain no fabricated organization, customer, URL or
 medical promise and work without a third-party runtime.
 
-Canonical URL, `og:url`, share image, sitemap, robots/indexing policy and
-Organization structured data remain launch-time work. The same static files can
-be served by local/staging and later production origins; publishing a production
-canonical or legal entity before that public origin and identity are approved
-would be inaccurate. Add those fields only when the exact public marketing
-hostname, final share asset/provenance and legal publisher details are confirmed,
-then validate the deployed HTML and sitemap from the public origin.
+Task 067 binds the public marketing identity to the owner-confirmed apex
+`https://patihatti.com/`: one canonical, matching `og:url`, a same-origin
+1200×630 social card, Twitter large-card metadata, a one-URL sitemap and a
+conservative robots policy. The social card is a deterministic typographic
+asset with no garden, mascot, customer, clinic or third-party material, so it
+does not inherit the hero assets' open commercial-provenance decision.
+
+The page now publishes `WebSite` JSON-LD only. `Organization` remains deferred
+because no approved legal publisher identity exists in repository evidence;
+inventing one would be less accurate than omitting it. Staff/admin and the
+staging privacy surface explicitly remain `noindex, nofollow, noarchive`.
+These are repository/local facts, not deployment proof: the apex production
+route is still unbound and the live HTML, image, robots and sitemap must be
+checked after the separately authorized production activation.
 
 ## Local preview
 

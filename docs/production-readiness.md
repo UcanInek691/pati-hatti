@@ -176,13 +176,15 @@ gates remain outstanding.
       production publication. If permission is insufficient, replace both assets
       with one coherent licensed/commissioned set and rerun responsive,
       accessibility, motion, CSP and transfer-budget checks.
-- [ ] At the public marketing-domain launch, finish Task 064's origin-dependent
-      SEO layer: add the exact production canonical and `og:url`, publish a
-      provenance-cleared share image, add a hostname-correct sitemap and robots
-      policy, and add Organization structured data only after the legal publisher
-      identity is approved. The current title, description and URL-independent
-      Open Graph/Twitter tags are locally verified; none of these launch-only
-      fields is inferred from staging or the reserved application hostname.
+- [ ] Task 067 has prepared the origin-dependent repository layer for the
+      owner-confirmed apex `https://patihatti.com/`: exact canonical/`og:url`,
+      an original 1200×630 typographic share card, a one-URL sitemap, robots
+      policy, large-card social metadata and truthful `WebSite` JSON-LD. Staff,
+      admin and the staging privacy page are `noindex`. This box remains open
+      until the production route is authorized and the deployed HTML/image/
+      sitemap/robots responses are validated from the apex. `Organization`
+      structured data remains intentionally absent until the legal publisher
+      identity is approved; Task 067 does not invent that identity.
 
 No later section may be executed against real clinic/owner/pet data until
 every box in this section is checked.

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /staff
+Disallow: /admin
+Disallow: /privacy
+
+Sitemap: https://patihatti.com/sitemap.xml

@@ -1,3 +1,128 @@
+# Current task — 067 Public-site SEO and indexing package
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 after Task 066 closed. The owner asked to
+continue completing the public website; Tasks 063-065 deliberately left the
+production canonical/share/sitemap/robots layer open.
+
+## Goal
+
+Make the static Pati Hattı marketing page technically ready for discovery and
+sharing at `https://patihatti.com/`, while keeping staff/admin and unfinished
+legal surfaces out of search results and leaving production routing/deployment
+as a separate controlled activation.
+
+## Fixed decisions
+
+- The public marketing canonical is `https://patihatti.com/`.
+- Use a provenance-clear, deterministic typographic share card; do not reuse
+  the garden/mascot assets whose final commercial-provenance decision remains
+  open.
+- Add `WebSite` structured data only. Do not invent a legal company/publisher
+  identity and do not publish `Organization` data before that identity exists.
+- Keep `/staff`, `/admin` and the staging-oriented privacy surface `noindex`.
+- Do not add a production Worker route, deploy, change DNS/Auth/monitoring or
+  claim that production is live in this task.
+
+## Allowed changes
+
+- `public/index.html`
+- `public/robots.txt` (new)
+- `public/sitemap.xml` (new)
+- `public/assets/pati-hatti-share.png` (new)
+- `src/staffPage.ts`
+- `src/adminPage.ts`
+- `src/privacyPage.ts`
+- `test/homePageAssets.test.ts`
+- `test/index.test.ts`
+- `docs/marketing-homepage.md`
+- `docs/production-readiness.md`
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+The pre-existing `.gitignore` modification and untracked
+`docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. The public page has one exact canonical, matching `og:url`, 1200x630
+   same-origin social image metadata, `summary_large_image` Twitter metadata
+   and valid Turkish `WebSite` JSON-LD without an invented legal entity.
+2. `robots.txt` allows the marketing page, points to the exact sitemap and
+   excludes staff/admin/privacy paths; `sitemap.xml` contains only the apex
+   marketing URL.
+3. Staff, admin and staging privacy HTML each carry explicit
+   `noindex, nofollow, noarchive` metadata.
+4. The share image is original, restrained, readable and contains no mascot,
+   clinic/customer claim, medical claim or third-party asset.
+5. Existing homepage interaction, Worker routes, bindings and product copy do
+   not change.
+6. Focused/full tests, both Worker dry-runs, rendered metadata checks,
+   whitespace and Graphify gates pass before commit.
+
+## Required verification
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+graphify update .
+```
+
+## Task 067 observed context
+
+- Tasks 063-065 completed the page, interaction, URL-independent metadata and
+  responsive composition, but repository evidence still explicitly deferred
+  canonical/`og:url`, the share image, sitemap, robots policy and structured
+  data until the public hostname was known.
+- Task 059 proves the owner acquired `patihatti.com`; `staging.patihatti.com`
+  is bound to staging while `app.patihatti.com` remains deliberately reserved.
+  The apex is therefore the truthful marketing canonical, not the staging or
+  reserved application hostname.
+- No approved legal publisher identity exists in the repository. Publishing
+  `Organization` JSON-LD would invent a legal assertion; `WebSite` accurately
+  describes the public property without doing so.
+- The hero garden/mascot commercial-provenance decision remains open. A share
+  card derived from those assets would inherit that gate, so the smallest safe
+  path is a new deterministic typographic card containing only Pati Hattı copy,
+  simple geometry and locally available system fonts.
+
+## Task 067 delivery record
+
+- `public/index.html` now has one exact `https://patihatti.com/` canonical and
+  matching `og:url`, 1200×630 Open Graph image dimensions/alt text, Twitter
+  large-card metadata and parseable Turkish `WebSite` JSON-LD. No legal entity,
+  clinic/customer, availability or medical claim was added.
+- Added `public/robots.txt` and a one-URL `public/sitemap.xml`; staff, admin and
+  the staging privacy surface are excluded by robots policy and each dynamic
+  HTML shell carries `noindex, nofollow, noarchive` metadata.
+- Added an original 1200×630 typographic share card at
+  `public/assets/pati-hatti-share.png`. It uses only brand copy, flat shapes and
+  system-font rendering; it contains no hero asset, mascot, third-party image,
+  clinic identity or fabricated proof. Codex inspected the full-resolution
+  render and confirmed readable safe margins and no clipping.
+- Tests now parse the JSON-LD, constrain every absolute public URL, pin the
+  one-page sitemap/robots rules, verify the PNG signature/dimensions and assert
+  noindex on all three non-marketing HTML surfaces. Existing executable-script
+  protection was narrowed truthfully to allow only the inert JSON-LD block.
+- Verification passed: frozen install, typecheck, focused homepage/index tests
+  (140/140), full suite (40 files; 2,184 passed and two unchanged opt-in skips),
+  both production and staging Wrangler dry-runs (11 static files, 313.73 KiB /
+  66.42 KiB gzip), `git diff --check` and Graphify update. The real local Worker
+  served `/`, `/robots.txt`, `/sitemap.xml` and the share PNG with HTTP 200;
+  canonical/JSON-LD/sitemap assertions and `image/png` content type passed.
+- No production route, deploy, DNS, Supabase Auth, monitor, external service or
+  clinical behavior changed. Apex deployment and live crawler/social-card
+  validation remain a separate controlled activation; `Organization` stays
+  deferred until an approved legal publisher identity exists.
+
+---
+
 # Current task — 066 Veteriner hekim inceleme ve onay PDF'i
 
 Status: `COMPLETE`
