@@ -1,4 +1,454 @@
-# Current task — 062 Safety triage before medical-advice handoff
+# Current task — 063 Complete public Pati Hattı marketing website
+
+Status: `COMPLETE`
+
+Created by Codex on 2026-09-14 after Task 062 closed. The owner accepted the
+current game-like garden/mascot animation direction and now wants the public
+website filled out as a complete, coherent product story before returning to
+the renewed veterinarian approval and staging-canary sequence.
+
+## Goal
+
+Turn the current single-scene `/` prototype into a complete Turkish public
+marketing website for Pati Hattı while preserving its existing original
+garden, Golden Retriever and three-activation interaction. The finished page
+must explain the product, clinic workflow, safety boundary, control model and
+pilot status clearly enough for a clinic visitor to understand the offering
+without inventing customers, availability, medical approval, pricing or a
+sales channel that does not yet exist.
+
+This is a content, information-architecture, responsive-layout and visual-
+polish task. It is not a backend, production-launch, logo-generation or new
+asset-generation task.
+
+## Confirmed starting point
+
+- `public/index.html`, `public/styles.css` and `public/app.js` currently form
+  one cinematic 16:9 hero scene plus a small header. There is no complete
+  below-the-fold product narrative, FAQ or footer.
+- The settled interaction is already accepted for this phase:
+  `home -> hopping-right -> right -> approaching -> network -> returning ->
+  home`, with bounded CSS motion, an immutable garden, a transparent four-pose
+  mascot sheet, pointer-following pupils and a reduced-motion path.
+- The current revealed network panel contains three explicit staging
+  placeholders (`Örnek Klinik A/B/C`). A finished public page must not present
+  fabricated clinics, people, partnerships or testimonials. No real partner
+  identity with publication consent exists in repository evidence.
+- `/privacy`, `/staff`, `/admin`, `/health`, `/ready`, webhook and Queue routes
+  remain Worker-owned. Static Asset fallthrough already preserves them.
+- There is no verified public sales mailbox, lead-form backend, pricing model,
+  final legal business identity, final logo or publication-cleared partner
+  roster. Do not invent any of them.
+- The current background and mascot are direction-setting prototype assets,
+  not a final logo. The owner explicitly does not want generic AI-generated
+  logo/element work presented as final branding.
+
+## Fixed page structure
+
+Keep the website as one dependency-free page and implement these sections in
+this order:
+
+1. **Accessible header/navigation** — text wordmark `Pati Hattı`, links to
+   `Nasıl çalışır`, `Klinikler için`, `Güvenlik`, `SSS`, and the existing
+   `/staff` veterinarian login. Add a skip link. Use a simple wrapping/native
+   responsive layout; do not add a JavaScript hamburger library.
+2. **Existing interactive hero** — preserve the garden, mascot identity,
+   pointer gaze and exact three-activation movement. Tighten copy/layout only
+   when needed to connect it to the completed page. The hero must remain the
+   dominant first impression and must not become a generic SaaS card grid.
+3. **How it works (`#nasil-calisir`)** — a concise four-step path:
+   WhatsApp intake; structured complaint/pet/safety clarification; explicit
+   appointment confirmation or staff handoff; clinic-side follow-up. Make it
+   clear that a message is not itself a confirmed appointment.
+4. **For clinics (`#klinikler-icin`)** — explain the currently implemented
+   operational value: organized intake, appointment/slot handling, clinic
+   hours and automation controls, staff queue/reply tools, and e-mail alert
+   preferences. Do not promise unsupported integrations, response times,
+   conversion gains, 24/7 clinical service or automatic medical judgment.
+5. **Safety boundary (`#guvenlik`)** — visually prominent `Yapar / Yapmaz`
+   treatment. State that the product gathers and structures information,
+   asks deterministic safety questions and can route to staff; it never
+   diagnoses, lists diseases, recommends medication/dose or creates treatment
+   plans. Tell urgent users not to wait for the bot and to contact an open
+   veterinary clinic. Do not claim the new Task 062 order has human veterinary
+   approval; renewed approval is still pending.
+6. **Pilot/network state (`#pilot`)** — replace the fake clinic/person cards
+   inside the interactive reveal with an honest, finished pilot-state panel.
+   It may explain the clinic-network model or show capability/role cards, but
+   it must contain no fake name, portrait, testimonial, partnership count or
+   implied customer. State plainly that public pilot applications/contact are
+   not yet open if no verified channel exists. The only live action may be the
+   existing `/staff` login for already-authorized clinic personnel.
+7. **FAQ (`#sss`)** — use native `<details>/<summary>` entries for at least:
+   what Pati Hattı does; whether it replaces a veterinarian; how appointment
+   confirmation works; what happens in an urgent situation; whether the clinic
+   can pause/control automation; and where privacy information lives. Answers
+   must match repository truth and link to `/privacy` where relevant.
+8. **Closing section and footer** — one clear message for clinics, the
+   existing staff-login link, and footer links to `/privacy` and `/staff`.
+   Do not add a dead form, fake waitlist, invented e-mail address, cookie
+   banner, social account or pricing link.
+
+## Visual direction
+
+- Extend the current playful game-menu world below the hero using the existing
+  ink/paper/coral/yellow palette, bold typography, route/path motifs, level
+  markers and layered depth. The page should feel authored and game-like, not
+  like a template assembled from identical SaaS cards.
+- Reuse the existing two raster assets only. Do not call an image/video model,
+  regenerate the mascot, add stock imagery, add an external font/CDN, or create
+  a supposed final logo. Text `Pati Hattı` remains the wordmark for now.
+- Use CSS and semantic HTML for decorative shapes/icons where they materially
+  improve hierarchy. Keep decorations subordinate to copy and exclude them
+  from the accessibility tree.
+- Keep the hero scene's accepted desktop composition. Below-the-fold content
+  must have intentional rhythm, generous whitespace and obvious section
+  transitions at desktop, tablet and phone widths.
+- Avoid internal scroll containers, carousels, auto-playing media, parallax,
+  scroll-jacking and animation that is required to understand content.
+
+## Interaction, accessibility and resilience
+
+- All content and navigation must remain usable without JavaScript. JavaScript
+  may continue to enhance only the bounded mascot state machine and gaze.
+- Preserve native buttons, keyboard Enter/Space behavior, focus restoration,
+  transition re-entry guard and bounded timeout fallback.
+- Add visible `:focus-visible` states for every new interactive element, keep
+  touch targets near 44 px, maintain logical heading order and landmark names,
+  and honor `prefers-reduced-motion` across every new transition.
+- Anchor navigation must not leave headings hidden beneath the header. The page
+  must have no horizontal overflow at 1440×900, 768×1024 and 375×812.
+- The page must stay readable if either raster asset fails to load: core copy,
+  section headings, actions and safety boundary cannot depend on imagery.
+- Do not store or transmit pointer/scroll/interaction data. No analytics,
+  cookies, local/session storage, beacon, fetch or third-party runtime origin.
+
+## Security, privacy and claim boundaries
+
+- Preserve the strict same-origin `public/_headers` CSP with no inline
+  script/style/handler, no `unsafe-inline`, no `unsafe-eval`, no forms and no
+  remote runtime origin.
+- No patient/owner/clinic data, real person identity, credential or analytics
+  identifier may enter public assets.
+- Marketing copy may describe only behavior verified in `PROJECT_CONTEXT.md`.
+  Use `pilot`/`hazırlanıyor` language where activation or human approval is
+  outstanding. Do not claim general availability, regulatory compliance,
+  medical approval, guaranteed escalation, guaranteed delivery, uptime or
+  response-time SLA.
+- Do not add canonical production URLs, structured Organization data or a
+  production search-indexing promise while the public production hostname and
+  legal identity are not activated. Social-title/description metadata without
+  invented URLs or identities is allowed.
+
+## Required tests
+
+Extend `test/homePageAssets.test.ts` with non-vacuous structural assertions
+that prove:
+
+1. Header, skip link, the six named content destinations and footer exist once
+   with logical headings and working same-page/same-origin hrefs.
+2. All required product, appointment-confirmation, clinic-control and safety
+   boundary statements exist, while forbidden diagnosis/medication/guarantee
+   claims do not appear as product promises.
+3. `Örnek Klinik A/B/C`, fake portraits, staging badges, testimonials, fake
+   partner counts, invented contact addresses and forms are absent.
+4. FAQ uses native details/summary and is readable without JavaScript.
+5. The existing state names, three transitions, pointer privacy, reduced-
+   motion path, asset budget and strict CSP remain pinned.
+6. No remote origin, inline executable/style content, analytics/storage/fetch,
+   autoplay media, new raster/video or runtime dependency appears.
+7. Responsive CSS includes explicit tablet/phone behavior, focus styles,
+   anchor scroll margin and no internal content scrollbar.
+8. Existing `/staff`, `/admin`, `/privacy`, `/health`, `/ready`, webhook and
+   Queue route tests stay unchanged and pass in the full suite.
+
+Static string assertions must target meaningful structure and claims, not
+implementation trivia. Do not add a DOM dependency for this page.
+
+## Mandatory visual verification
+
+After deterministic tests pass, run the real local Worker and inspect `/` in
+the browser at all three viewports: **1440×900, 768×1024 and 375×812**. Record:
+
+- initial hero composition and readable fallback;
+- every header anchor landing on the intended section;
+- complete three-activation dog journey and return;
+- keyboard access to header, hero, FAQ, footer and staff login;
+- reduced-motion behavior;
+- no clipped text, overlapping controls, hidden headings, internal scrollbar
+  or horizontal document overflow;
+- safety and pilot-state copy visible without relying on animation.
+
+If the environment cannot actually render one viewport or input mode, record
+it as `NOT RUN`; static CSS inspection is not a substitute for rendered proof.
+Do not alter browser zoom to disguise overflow.
+
+## Allowed changes
+
+- `public/index.html`
+- `public/styles.css`
+- `public/app.js`, only where required to preserve the state machine while
+  integrating the completed page; do not rewrite working motion for style
+- `public/_headers`, only if an added same-origin static asset requires a
+  narrow CSP directive (no weakening is otherwise expected)
+- `test/homePageAssets.test.ts`
+- `docs/marketing-homepage.md`
+- `docs/production-readiness.md`
+- `docs/staging-runbook.md`
+- `docs/saas-urunlestirme-yol-haritasi.md`
+- `CURRENT_TASK.md`, implementing agent only inside Task 063 `Observed context`
+  and `Delivery record`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+No new image, video, font, icon package, npm dependency, build pipeline,
+service Worker, form backend, analytics, cookie, database/migration, Worker
+runtime route, staff/admin panel, Wrangler binding/configuration, secret, DNS,
+external account or deployment change is allowed. The pre-existing modified
+`.gitignore` and untracked `docs/043-opus-inceleme.md` remain out of scope.
+
+## Acceptance criteria
+
+1. `/` reads as a complete, coherent Turkish product website rather than one
+   prototype viewport, while the accepted hero remains the dominant visual.
+2. A clinic visitor can understand what the product does, the four-step
+   workflow, available clinic controls, appointment confirmation, safety
+   limits, pilot state and next valid action without fabricated information.
+3. The interactive dog journey, gaze, no-JS fallback, reduced-motion path and
+   security/privacy boundaries do not regress.
+4. No fake clinic/partner/person/contact/pricing/testimonial remains, and no
+   unapproved medical, legal, availability or performance claim is introduced.
+5. Desktop, tablet and phone rendered checks pass with no overflow or hidden
+   content; keyboard and native FAQ behavior are visibly verified.
+6. Existing Worker routes and authenticated panels are unchanged; no new
+   dependency, external request, persistence or deployment surface is added.
+7. Documentation clearly distinguishes a locally complete marketing page from
+   publication clearance, production launch and the still-pending renewed
+   veterinarian approval.
+
+## Required verification
+
+Run affected checks first, then the broad gate once after implementation is
+stable:
+
+```text
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts
+pnpm test
+pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run --outdir .wrangler/dry-run-staging
+git diff --check
+graphify update .
+```
+
+No real API, e-mail, WhatsApp, database, DNS or deploy call belongs to this
+task.
+
+## Review and sequencing boundary
+
+- Claude Opus is not mandatory for ordinary HTML/CSS composition. Codex must
+  still review every public claim, accessibility/security boundary and the
+  rendered result before committing.
+- Do not ask a reviewer to approve current prototype assets as a final logo or
+  permanent mascot identity. Publication provenance/commercial permission
+  remains a separate gate.
+- After Task 063 closes, return to the already-recorded Task 062 activation
+  sequence: obtain renewed human veterinarian approval for the new safety
+  ordering, then create a separately authorized staging deploy and three-
+  outcome WhatsApp canary task. Finishing the website must not erase or bypass
+  that clinical gate.
+
+## Task 063 observed context
+
+- Before this task, `public/index.html` (Task 061) contained only the hero
+  `#scene`: garden background, Golden Retriever trigger/state machine, hero
+  copy, and an in-hero reveal panel `id="network"` holding three static cards
+  labeled "Örnek Klinik A/B/C", each marked "Staging örneği" / "Yer tutucu
+  profil". There was no header/nav, no `#nasil-calisir` /`#klinikler-icin`
+  /`#guvenlik` /`#sss` section, and no footer.
+  `docs/production-readiness.md` already tracked an open gate on these
+  placeholder cards (real clinic identity requires named-person consent
+  before public use).
+- `public/app.js`'s state machine (`home -> hopping-right -> right ->
+  approaching -> network -> returning -> home`) and its `STATES.NETWORK:
+  "network"` constant were confirmed pinned by this same contract (section 6
+  literally titles the reveal "Pilot/network state (`#pilot`)" and instructs
+  replacing the cards "inside the interactive reveal" — i.e. `#pilot` is a
+  rename of the existing `#network` panel, not a new section).
+- Reasoning through the CSS before editing surfaced a pre-existing, in-scope
+  no-JS bug: `.network`'s absolute-overlay positioning was scoped only under
+  `html.js`, so with JavaScript disabled the panel was never hidden and, being
+  absolutely positioned inside the fixed-aspect-ratio `.scene` box, rendered
+  directly on top of `.hero-copy` (measured overlap at a representative
+  ~1280px container width: roughly x=486–584px and full vertical extent). The
+  existing `@media (max-width: 760px)` mobile query already solved the same
+  underlying problem for narrow viewports by switching `.scene` to
+  `aspect-ratio: auto; display: flex; flex-direction: column`.
+- `test/index.test.ts` was checked for coupling to homepage DOM structure;
+  it has none (its only "network" hits are unrelated mocked-fetch error
+  strings), so it needed no changes for the `#network` → `#pilot` rename.
+- Every new marketing/product claim was traced to specific `PROJECT_CONTEXT.md`
+  evidence before being written: 30-minute appointment slots with a 10-minute
+  hold and atomic hold-switching; "EVET" as the literal confirmation keyword,
+  gated on the current unexpired hold token; Europe/Istanbul-rendered times;
+  per-contact `ai`/`manual`/`personal` automation modes with E.164 overrides;
+  the urgent-first, RLS-scoped staff open-work queue; nullable per-clinic
+  phone/address plus per-weekday operational hours and full-day closures,
+  evaluated in Europe/Istanbul; e-mail and browser alert preferences; and
+  Red-priority triage stopping normal automation for human/emergency
+  direction. No pricing, customer, vet-approval, SLA, 24/7-service, delivery
+  guarantee, or sales-contact claim exists anywhere in `PROJECT_CONTEXT.md`, so
+  none was added to the page.
+
+## Task 063 delivery record
+
+**Changed files** (all on the contract's allowed list):
+- `public/index.html` — rewritten. Header with skip link + nav (`Nasıl
+  çalışır`, `Klinikler için`, `Güvenlik`, `SSS`, `/staff`); unchanged hero
+  markup/state machine; `#network` renamed to `#pilot`/`.pilot-panel` with its
+  three fake clinic cards replaced by an honest pilot-status panel (three
+  role/capability cards: hasta sahibi / Pati Hattı / klinik ekibi) stating
+  plainly that public pilot applications/contact are not yet open and that
+  `/staff` is the only live action; new `#nasil-calisir` (4-step flow,
+  explicit "a message alone is not a confirmed appointment"),
+  `#klinikler-icin` (6 clinic-control cards + a no-unsupported-promises note),
+  `#guvenlik` (visible Yapar/Yapmaz grid, urgent-user note, explicit pending-
+  veterinary-approval disclosure), `#sss` (6 native `<details>/<summary>` FAQ
+  items, one linking `/privacy`), and a closing section + footer
+  (`/privacy`, `/staff`).
+- `public/app.js` — only the `#network` → `#pilot` DOM lookup/rename
+  (`document.getElementById("pilot")`, `pilotPanel` variable) and its three
+  `render()` uses. `STATES.NETWORK: "network"` and all other state-machine
+  logic are byte-for-byte unchanged.
+- `public/styles.css` — rewritten. Preserves all existing scene/dog/gaze
+  keyframes and rules (renamed selectors only where the id/class changed);
+  adds header/nav/skip-link/footer styles, the new content sections' layout
+  (step list, control grid, boundary columns, FAQ list), `:focus-visible` and
+  `scroll-margin-top` rules, and the `html:not(.js)` no-JS layout fix
+  (`.scene` switches to the same flex-column static-flow layout the mobile
+  query uses, so `#pilot` flows below `.hero-copy` instead of overlapping it,
+  at any viewport width). Dead `.avatar` rule (leftover from the fake-portrait
+  cards) removed. `public/_headers` was not touched — no new same-origin asset
+  needed a CSP change.
+- `test/homePageAssets.test.ts` — rewritten (~30 tests): kept all still-valid
+  Task 061 pins (asset budget, no-remote-origin, no-inline-script/style,
+  state-machine/transition-guard/reduced-motion pins, strict-CSP, Wrangler
+  `[assets]` config); removed the obsolete "Staging örneği" placeholder test;
+  renamed `network`/`profile-card` references to `pilot-panel`/`role-card`;
+  replaced the broken combined CSS regex with two split-rule assertions
+  matching the new `.hero-copy` / `html.js .pilot-panel` rules; added new
+  assertions for header/nav/skip-link/footer structure and hrefs, heading
+  order, the four-step flow's "not a confirmed appointment" statement, clinic
+  controls, the Yapar/Yapmaz boundary and pending-approval disclosure, native
+  FAQ markup, absence of every fabricated-content marker (fake clinic names,
+  portraits, testimonials, partner/customer counts, forms, invented contact
+  addresses), and responsive/focus/scroll-margin/no-scrollbar rules.
+- `docs/marketing-homepage.md`, `docs/production-readiness.md`,
+  `docs/staging-runbook.md`, `docs/saas-urunlestirme-yol-haritasi.md` —
+  updated/appended to describe the completed page, the no-JS fix, and to keep
+  the still-open real-clinic-identity/consent gate intact.
+- `CURRENT_TASK.md` — only this task's `Observed context` and `Delivery
+  record` sections (this edit).
+
+**Verification commands run** (all from the contract, in order):
+1. `pnpm install --frozen-lockfile` — passed, already up to date.
+2. `pnpm typecheck` (`tsc --noEmit`) — initially failed
+   (`test/homePageAssets.test.ts(266,52): TS2532: Object is possibly
+   'undefined'`, `noUncheckedIndexedAccess` on array-index reads); fixed with
+   non-null assertions on in-bounds index reads and removal of an accidentally
+   dead/always-false conditional in the heading-order test. Passed clean after
+   the fix.
+3. `pnpm exec vitest run test/homePageAssets.test.ts test/index.test.ts` —
+   passed, 31 + 101 = 132 tests. One assertion needed a fix mid-run: the
+   fabricated-partner-count regex (`/\d+\+?\s*(klinik|partner|müşteri)/i`)
+   false-positived on the legitimate disclaimer "7/24 klinik hizmeti ...
+   vaat etmez" (the "4" in "24" read as a bare number before "klinik");
+   tightened to `/(?<![\d/])\d+\+?\s*(klinik|partner|müşteri)/i` so it no
+   longer matches digits that are part of a larger number/fraction.
+4. `pnpm test` — passed, 40 files, 2176 tests passed / 2 skipped (pre-existing
+   skips, unrelated to this task).
+5. `pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run` — passed;
+   7 files read from `public/**`, same bindings as before, no new binding.
+6. `pnpm exec wrangler deploy --config wrangler.staging.toml --dry-run
+   --outdir .wrangler/dry-run-staging` — passed; same 7-file asset directory,
+   no config drift.
+7. `git diff --check` — exit code 0. Output lists only Git's autocrlf
+   line-ending advisories ("LF will be replaced by CRLF") for the changed
+   files, not conflict markers or trailing-whitespace errors.
+8. `graphify update .` — passed, 85/85 (100%), no topology errors.
+
+**Real-browser visual verification — PASS with one explicitly unrendered input
+mode.** Codex started the real local Worker at `http://127.0.0.1:8789/` and
+rendered the page in the in-app Chromium browser at 1440×900, 768×1024 and
+375×812. The initial hero composition, the full below-the-fold page, header
+anchor landing, native FAQ Enter/Space behavior and the complete
+`home -> right -> network -> home` state journey passed. Document
+`scrollWidth === clientWidth` at tablet and phone widths; no internal content
+scrollbar, clipped text or hidden section heading was observed. Browser logs
+contained no warning or error.
+
+The first responsive pass found two real defects: the media query stopped at
+760 px and therefore excluded the exact 768 px acceptance viewport; and the
+desktop `html.js .pilot-panel` selector was more specific than the narrow-screen
+rule, leaving the revealed panel absolutely positioned and only ~149 px wide at
+375 px. Codex changed the breakpoint to 768 px and gave the mobile JS selector
+explicit normal-flow positioning/width. At 375 px the revealed panel then
+rendered ~339 px wide inside the ~360 px document viewport; at 768 px it
+rendered 732 px wide. Both states were rechecked with zero horizontal overflow.
+
+Codex also temporarily removed the external script tag and reloaded at
+768×1024 to exercise the actual no-JS layout. The root `<html>` had no `js`
+class, the pilot panel was `position: relative`, its top exactly followed the
+hero bottom, measured overlap was zero and the document had no horizontal
+overflow. The script tag was restored immediately after this check. The
+available browser surface did not expose reduced-motion media emulation, so
+the actual rendered `prefers-reduced-motion` input mode remains **NOT RUN**;
+the unchanged reduced-motion rule, finite-state fallback and privacy boundary
+were verified statically and by the automated tests, not represented as a
+rendered result.
+
+**Known limitations / risks for Codex and Opus to review:**
+- Rendered reduced-motion emulation remains unavailable as described above.
+  This is the only mandatory visual/input mode still recorded as `NOT RUN`;
+  the page remains fully understandable without any animation.
+- `#guvenlik` repeats the existing disclosure that renewed veterinarian
+  approval for the reordered safety questions (Task 062) is still pending —
+  this task does not resolve that gate and must not be read as doing so.
+- `#pilot` states pilot applications/contact are "not yet open"; if a real
+  outreach channel exists that was not surfaced in `PROJECT_CONTEXT.md`, that
+  statement should be checked against current fact by Codex before merge.
+- No push, deploy, or `.gitignore` / `docs/043-opus-inceleme.md` change was
+  made. Codex's closure commit contains only the allowed Task 063 files.
+
+### Task 063 Codex review and closure
+
+Codex independently reviewed the changed HTML/CSS/JavaScript, public claims,
+route/security boundaries and rendered output. The fake clinic cards are gone;
+the page contains no form, remote runtime, analytics, storage, new dependency
+or invented contact/customer/pricing claim. The accepted mascot state machine
+is unchanged apart from the panel DOM rename. One overly absolute sentence
+(`Gelen her konuşma kayıt altında tutulur`) was narrowed to the observable
+panel behavior, and the safety list now distinguishes urgent automation-stop
+from unknown-signal questions without claiming guaranteed delivery.
+
+The responsive defects found during real-browser review were fixed at their
+CSS source and protected by a targeted structural assertion. After the final
+documentation/claim adjustments Codex reran the required verification gates,
+updated `PROJECT_CONTEXT.md`, and committed only Task 063's allowed files.
+Staging/production publication, final brand-asset provenance, renewed
+veterinarian approval and the Task 062 three-outcome WhatsApp canary remain
+separate gates; this closure does not imply any of them.
+
+Final Codex gate: frozen install passed; typecheck passed; the targeted
+homepage/index run passed 132/132; the full suite passed 2,176 with two
+unchanged opt-in skips; production and staging Wrangler dry-runs each read the
+same seven public assets and passed; `git diff --check` and
+`graphify update .` passed. No database, DNS, external API, e-mail, WhatsApp,
+push or deploy action occurred.
+
+---
+
+# Completed task — 062 Safety triage before medical-advice handoff
 
 Status: `COMPLETE`
 

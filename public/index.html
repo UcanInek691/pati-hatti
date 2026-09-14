@@ -8,12 +8,20 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+<a class="skip-link" href="#main-content">İçeriğe geç</a>
+
 <header class="brand-bar">
   <span class="brand-mark">Pati Hattı</span>
+  <nav class="site-nav" aria-label="Site içi gezinme">
+    <a href="#nasil-calisir">Nasıl çalışır</a>
+    <a href="#klinikler-icin">Klinikler için</a>
+    <a href="#guvenlik">Güvenlik</a>
+    <a href="#sss">SSS</a>
+  </nav>
   <a class="staff-link" href="/staff">Veteriner girişi</a>
 </header>
 
-<main>
+<main id="main-content">
   <section class="stage">
     <div class="scene-wrap">
       <div class="scene" id="scene" data-state="home">
@@ -53,49 +61,193 @@
           <p class="hint" aria-hidden="true"></p>
         </div>
 
-        <section class="network" id="network">
-          <h2>Klinik ağı önizlemesi</h2>
-          <p class="network-note">
-            Aşağıdaki kartlar yalnızca tasarım örneğidir; gerçek bir veteriner
-            hekimi, kliniği veya iş birliğini temsil etmez.
+        <section class="pilot-panel" id="pilot" aria-labelledby="pilot-heading">
+          <h2 id="pilot-heading">Pilot durumu</h2>
+          <p class="pilot-note">
+            Pati Hattı şu anda seçili klinik hesaplarıyla birlikte hazırlanıyor.
+            Herkese açık pilot başvurusu veya satış iletişimi henüz açık
+            değildir. Zaten yetkilendirilmiş klinik ekipleri üstteki
+            "Veteriner girişi" bağlantısından giriş yapabilir.
           </p>
-          <ul class="profile-cards">
-            <li class="profile-card">
-              <span class="badge">Staging örneği</span>
-              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
-                <circle cx="32" cy="26" r="12" fill="#fff" />
-                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
-              </svg>
-              <p class="profile-name">Örnek Klinik A</p>
-              <p class="profile-role">Yer tutucu profil</p>
+          <ul class="role-cards">
+            <li class="role-card">
+              <span class="badge">Rol</span>
+              <p class="role-name">Hasta sahibi</p>
+              <p class="role-desc">WhatsApp'tan yazar, şikayetini ve randevu talebini iletir.</p>
             </li>
-            <li class="profile-card">
-              <span class="badge">Staging örneği</span>
-              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
-                <circle cx="32" cy="26" r="12" fill="#fff" />
-                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
-              </svg>
-              <p class="profile-name">Örnek Klinik B</p>
-              <p class="profile-role">Yer tutucu profil</p>
+            <li class="role-card">
+              <span class="badge">Rol</span>
+              <p class="role-name">Pati Hattı</p>
+              <p class="role-desc">Bilgiyi toplar, sabit güvenlik sorularını sorar, uygun saati önerir.</p>
             </li>
-            <li class="profile-card">
-              <span class="badge">Staging örneği</span>
-              <svg class="avatar" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-                <circle cx="32" cy="32" r="32" fill="#eee0cc" />
-                <circle cx="32" cy="26" r="12" fill="#fff" />
-                <path d="M12 58 Q32 38 52 58 Z" fill="#fff" />
-              </svg>
-              <p class="profile-name">Örnek Klinik C</p>
-              <p class="profile-role">Yer tutucu profil</p>
+            <li class="role-card">
+              <span class="badge">Rol</span>
+              <p class="role-name">Klinik ekibi</p>
+              <p class="role-desc">Onaylar, gerektiğinde devralır, otomasyonu duraklatabilir.</p>
             </li>
           </ul>
         </section>
       </div>
     </div>
   </section>
+
+  <section class="content-section" id="nasil-calisir" aria-labelledby="nasil-calisir-heading">
+    <p class="eyebrow">Nasıl çalışır</p>
+    <h2 id="nasil-calisir-heading">Mesajdan klinik takibine dört adım</h2>
+    <ol class="step-list">
+      <li class="step">
+        <p class="step-title">WhatsApp'tan mesaj</p>
+        <p class="step-desc">Hasta sahibi kliniğin WhatsApp hattına yazar.</p>
+      </li>
+      <li class="step">
+        <p class="step-title">Bilgi ve güvenlik taraması</p>
+        <p class="step-desc">
+          Pati Hattı şikayeti ve hasta bilgisini toplar, sabit güvenlik
+          sorularını sorar; acil bir işaret varsa konuşmayı klinik ekibine
+          yönlendirir.
+        </p>
+      </li>
+      <li class="step">
+        <p class="step-title">Randevu veya devir</p>
+        <p class="step-desc">
+          Uygun bir randevu saati önerilir. Hasta sahibi açıkça "EVET" yazıp
+          onaylamadan randevu kesinleşmez; bir mesaj tek başına onaylanmış bir
+          randevu değildir.
+        </p>
+      </li>
+      <li class="step">
+        <p class="step-title">Klinik takibi</p>
+        <p class="step-desc">
+          Klinik ekibi personel panelinden açık konuşmaları görür, gerekirse
+          otomasyonu duraklatıp kendisi yanıtlar.
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="content-section" id="klinikler-icin" aria-labelledby="klinikler-icin-heading">
+    <p class="eyebrow">Klinikler için</p>
+    <h2 id="klinikler-icin-heading">Klinik ekibinin elindeki kontroller</h2>
+    <ul class="control-grid">
+      <li class="control-card">
+        <p class="control-title">Düzenli mesaj trafiği</p>
+        <p class="control-desc">Kaydedilen konuşmalar personel panelinden tek bir yerde izlenebilir.</p>
+      </li>
+      <li class="control-card">
+        <p class="control-title">Randevu ve slot yönetimi</p>
+        <p class="control-desc">
+          Randevular Europe/Istanbul saatiyle gösterilir, bir slot geçici
+          olarak tutulur ve yalnızca hasta sahibinin açık onayıyla kesinleşir.
+        </p>
+      </li>
+      <li class="control-card">
+        <p class="control-title">Çalışma saatleri ve kapalı günler</p>
+        <p class="control-desc">
+          Klinik haftalık çalışma saatlerini ve tam gün kapanışlarını
+          tanımlar; otomasyon buna göre davranır.
+        </p>
+      </li>
+      <li class="control-card">
+        <p class="control-title">Otomasyon kontrolü</p>
+        <p class="control-desc">
+          Her sohbet için otomatik, manuel veya kişisel mod arasında geçiş
+          yapılabilir; klinik ekibi istediği an devralabilir.
+        </p>
+      </li>
+      <li class="control-card">
+        <p class="control-title">Öncelikli personel kuyruğu</p>
+        <p class="control-desc">Personel panelinde acil işler öne alınır ve elle çözümlenir.</p>
+      </li>
+      <li class="control-card">
+        <p class="control-title">Uyarı tercihleri</p>
+        <p class="control-desc">Önemli olaylar için e-posta ve tarayıcı uyarı tercihleri ayarlanabilir.</p>
+      </li>
+    </ul>
+    <p class="control-note">
+      Pati Hattı desteklenmeyen entegrasyon, garanti edilen yanıt süresi, 7/24
+      klinik hizmeti veya otomatik tıbbi karar vaat etmez.
+    </p>
+  </section>
+
+  <section class="content-section" id="guvenlik" aria-labelledby="guvenlik-heading">
+    <p class="eyebrow">Güvenlik</p>
+    <h2 id="guvenlik-heading">Pati Hattı'nın sınırı nettir</h2>
+    <div class="boundary-grid">
+      <div class="boundary-col boundary-does">
+        <h3>Yapar</h3>
+        <ul>
+          <li>Bilgiyi toplar ve yapılandırır.</li>
+          <li>Sabit, deterministik güvenlik sorularını sorar.</li>
+          <li>Acil durumda normal otomasyonu durdurur; belirsizlikte güvenlik soruları sorar.</li>
+        </ul>
+      </div>
+      <div class="boundary-col boundary-does-not">
+        <h3>Yapmaz</h3>
+        <ul>
+          <li>Teşhis koymaz, hastalık listelemez.</li>
+          <li>İlaç veya doz önermez.</li>
+          <li>Tedavi planı oluşturmaz.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="urgent-note">
+      Acil bir durumdaysanız botu beklemeyin; açık bir veteriner kliniğine
+      doğrudan ulaşın.
+    </p>
+    <p class="pending-note">
+      Güvenlik sorularının sırası yakın zamanda güncellendi; bu yeni sıralama
+      için yenilenmiş veteriner onayı hâlâ beklenmektedir.
+    </p>
+  </section>
+
+  <section class="content-section" id="sss" aria-labelledby="sss-heading">
+    <p class="eyebrow">SSS</p>
+    <h2 id="sss-heading">Sık sorulan sorular</h2>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>Pati Hattı ne yapar?</summary>
+        <p>WhatsApp üzerinden hasta sahipleriyle konuşur, şikayeti ve randevu talebini toplar, sabit güvenlik sorularını sorar ve gerektiğinde klinik ekibine yönlendirir.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Veterinerin yerine mi geçiyor?</summary>
+        <p>Hayır. Pati Hattı teşhis koymaz, tedavi ya da ilaç önermez; tıbbi kararları her zaman klinik ekibi ve veteriner hekim verir.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Randevu onayı nasıl çalışır?</summary>
+        <p>Önerilen bir saat için slot geçici olarak tutulur. Randevu, hasta sahibi açıkça "EVET" yazıp onaylayana kadar kesinleşmez.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Acil bir durumda ne olur?</summary>
+        <p>Acil işaret taşıyan konuşmalar klinik ekibine yönlendirilir. Acil bir durumdaysanız botu beklemeyin, açık bir veteriner kliniğine doğrudan ulaşın.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Klinik otomasyonu duraklatabilir mi?</summary>
+        <p>Evet. Klinik ekibi her sohbeti otomatik, manuel veya kişisel moda alabilir ve istediği an kendisi devralabilir.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Gizlilik bilgisine nereden ulaşırım?</summary>
+        <p>Gizlilik uygulamaları için <a href="/privacy">gizlilik sayfasına</a> bakabilirsiniz.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="content-section closing-section" aria-labelledby="closing-heading">
+    <h2 id="closing-heading">Klinik ekibiyseniz</h2>
+    <p>
+      Zaten yetkilendirilmiş bir klinik hesabınız varsa personel panelinden
+      giriş yapabilirsiniz. Herkese açık pilot başvurusu henüz açık değildir.
+    </p>
+    <a class="cta-primary" href="/staff">Veteriner girişi</a>
+  </section>
 </main>
+
+<footer class="site-footer">
+  <span class="brand-mark">Pati Hattı</span>
+  <nav aria-label="Alt bilgi bağlantıları">
+    <a href="/privacy">Gizlilik</a>
+    <a href="/staff">Veteriner girişi</a>
+  </nav>
+</footer>
 
 <script src="/app.js" defer></script>
 </body>

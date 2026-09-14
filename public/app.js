@@ -7,7 +7,7 @@
   var scene = document.getElementById("scene");
   var dogButton = document.getElementById("dog-trigger");
   var ctaButton = document.getElementById("how-it-works");
-  var network = document.getElementById("network");
+  var pilotPanel = document.getElementById("pilot");
   var pupils = document.getElementById("pupils");
   var hint = document.querySelector(".hint");
   var STATES = {
@@ -45,9 +45,9 @@
     hint.textContent = state === STATES.NETWORK ? NETWORK_HINT : state === STATES.RIGHT ? RIGHT_HINT : "";
 
     var revealed = state === STATES.NETWORK;
-    network.dataset.revealed = String(revealed);
-    network.setAttribute("aria-hidden", String(!revealed));
-    network.inert = !revealed;
+    pilotPanel.dataset.revealed = String(revealed);
+    pilotPanel.setAttribute("aria-hidden", String(!revealed));
+    pilotPanel.inert = !revealed;
   }
 
   function clearTransitionTimer() {

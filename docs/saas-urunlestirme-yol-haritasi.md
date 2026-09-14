@@ -609,3 +609,41 @@ Ayrıntılar
 [`docs/marketing-homepage.md`](marketing-homepage.md)'de; ilerideki gerçek
 klinik profil kartı kullanımı için üretim kapısı
 [`production-readiness.md`](production-readiness.md) §1'e eklendi.
+
+## 10p. Task 063 (yalnızca yerel)
+
+Task 063, Task 061'in sahne/köpek etkileşimini ve reduced-motion davranışını
+aynen koruyarak tanıtım anasayfasını eksiksiz bir ürün sitesine dönüştürdü:
+üstte gezinme çubuğu ve atla bağlantısı, sahnenin içinde artık sahte klinik/kişi
+kartı yerine dürüst bir pilot durumu paneli (`#pilot`, eski `#network`), ardından
+`#nasil-calisir` (dört adım), `#klinikler-icin` (klinik kontrolleri),
+`#guvenlik` (görsel Yapar/Yapmaz ve bekleyen veteriner onayı uyarısı), `#sss`
+(altı native `<details>/<summary>` sorusu) ve personel girişine bağlanan bir
+kapanış/alt bilgi bölümü. Durum makinesinin sabit `network` durum adı
+değişmedi; yalnızca panonun DOM id/sınıfı yeniden adlandırıldı. JavaScript
+kapalıyken panonun sahne üzerine bindiği önceden var olan bir masaüstü düzeni
+hatası, mobil medya sorgusunun zaten kullandığı flex-column statik akış
+düzeni `html:not(.js)` seçicisiyle yeniden kullanılarak düzeltildi.
+
+Yeni metnin tamamı `PROJECT_CONTEXT.md`'de doğrulanmış davranışa dayanır
+(10 dakikalık tutma ile 30 dakikalık slotlar, "EVET" onayı, Europe/Istanbul
+saati, ai/manual/personal otomasyon modları, öncelikli personel kuyruğu,
+klinik çalışma saatleri/kapanışları, e-posta/tarayıcı uyarı tercihleri,
+Red-öncelik otomasyon durdurma); doğrulanmamış fiyat, müşteri, SLA, 7/24
+hizmet, teslim garantisi veya satış iletişimi eklenmedi. Yeni AI görseli,
+video, font, ikon paketi, npm bağımlılığı, form backend'i veya analytics
+eklenmedi; `wrangler.toml`/`wrangler.staging.toml`'a dokunulmadı.
+
+`pnpm typecheck`, `pnpm exec vitest run test/homePageAssets.test.ts
+test/index.test.ts`, `pnpm test`, her iki `wrangler deploy --dry-run` ve
+`graphify update .` yerel olarak çalıştırıldı ve geçti. Codex gerçek yerel
+Worker'ı 1440×900/768×1024/375×812 tarayıcı görünümlerinde doğruladı; bulunan
+768 px breakpoint ve dar-ekran `#pilot` konumlandırma hatalarını düzelttikten
+sonra tablet/telefon görünümlerini yeniden kontrol etti. JavaScript kapalı
+768×1024 render da sıfır çakışmayla geçti. Tarayıcı reduced-motion medya
+emülasyonu sunmadığı için yalnız render edilmiş `prefers-reduced-motion` modu
+**NOT RUN** kaldı. Doğrulama tamamen yerel kaldı; staging veya production'a
+hiçbir deploy yapılmadı.
+Ayrıntılar [`docs/marketing-homepage.md`](marketing-homepage.md)'de; üretim
+kapısı [`production-readiness.md`](production-readiness.md) §1 değişmeden
+kalır (gerçek klinik kimliği/onayı hâlâ gerekiyor).

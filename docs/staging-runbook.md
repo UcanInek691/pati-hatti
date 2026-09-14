@@ -1533,3 +1533,44 @@ göndermedi ve production'a dokunulmadı.
 - **Staging'e veya production'a hiçbir deploy yapılmadı.** Bu görev commit,
   push veya deploy içermiyor; tüm değişiklikler işlenmemiş çalışma dizini
   durumunda bırakıldı.
+
+## 33. Task 063 — tanıtım anasayfasının ürünleşmesi (2026-09-14, yalnızca yerel)
+
+- `public/index.html`, `public/styles.css`, `public/app.js` güncellendi:
+  Task 061'in sahne/köpek etkileşimi aynen korunarak, sahte klinik/kişi
+  kartları içeren eski `#network` önizlemesi dürüst bir `#pilot` panosuyla
+  değiştirildi ve sayfa `#nasil-calisir`, `#klinikler-icin`, `#guvenlik`,
+  `#sss` bölümleriyle ve bir üst bilgi/alt bilgiyle tamamlandı. Durum
+  makinesinin `network` durum adı (`STATES.NETWORK`) sabitlendiği için
+  değiştirilmedi; yalnızca panonun DOM id/sınıfı `pilot` / `pilot-panel`
+  olarak yeniden adlandırıldı. Ayrıntılar için
+  [`docs/marketing-homepage.md`](marketing-homepage.md).
+- JavaScript kapalıyken `#pilot`'ın `.hero-copy` üzerine bindiği önceden var
+  olan bir masaüstü düzeni hatası düzeltildi: `html:not(.js)` artık mobil
+  medya sorgusunun zaten kullandığı flex-column statik akış düzenini yeniden
+  kullanıyor.
+- `wrangler.toml` ve `wrangler.staging.toml`'a dokunulmadı; `[assets]` bloğu
+  Task 061'den değişmeden kalıyor.
+- Yeni AI görseli, video, font, ikon paketi, npm bağımlılığı, form backend'i
+  veya analytics eklenmedi. Tüm yeni pazarlama metni `PROJECT_CONTEXT.md`'de
+  doğrulanmış davranışa dayanıyor (10 dakikalık tutma ile 30 dakikalık slotlar,
+  "EVET" onay anahtar kelimesi, Europe/Istanbul saati, ai/manual/personal
+  otomasyon modları, önceliklendirilmiş personel kuyruğu, klinik çalışma
+  saatleri/kapanışları, e-posta/tarayıcı uyarı tercihleri, Red-öncelik
+  otomasyon durdurma).
+- `pnpm typecheck`, `pnpm exec vitest run test/homePageAssets.test.ts
+  test/index.test.ts`, `pnpm test`, her iki `wrangler deploy --dry-run` ve
+  `graphify update .` yerel olarak çalıştırıldı ve geçti; kesin sonuçlar
+  `CURRENT_TASK.md` teslim kaydındadır.
+- Codex gerçek yerel Worker'ı tarayıcıda 1440×900, 768×1024 ve 375×812
+  boyutlarında doğruladı: başlangıç kahraman sahnesi, tüm bölümler, başlık
+  bağlantıları, native SSS klavye davranışı ve `home -> right -> network ->
+  home` yolculuğu çalıştı; yatay belge taşması ve iç içerik kaydırıcısı yoktu.
+  İncelemede bulunan 768 px breakpoint ve dar ekranda `#pilot` özgüllük
+  hataları düzeltildi; tablet/telefon görünümleri ve hedefli testler tekrarlandı.
+  JavaScript kapalı 768×1024 görünümde panel normal akışta ve sıfır çakışmayla
+  render edildi. Tarayıcı yüzeyi reduced-motion medya emülasyonu sunmadığı için
+  yalnız gerçek render edilmiş `prefers-reduced-motion` modu **NOT RUN** kaldı;
+  değişmeyen kural ve fallback kaynak/test üzerinden doğrulandı.
+- **Staging'e veya production'a hiçbir deploy yapılmadı.** Task 063 Codex
+  kapanışında repoya commit edildi; push veya deploy yapılmadı.

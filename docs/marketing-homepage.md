@@ -1,4 +1,4 @@
-# Task 061 — Marketing homepage
+# Task 061/063 — Marketing homepage
 
 The public `/` route is a dependency-free, same-origin marketing homepage
 served from `public/**` through the binding-free Static Assets configuration in
@@ -6,21 +6,40 @@ both Wrangler files. Unmatched requests still fall through to `src/index.ts`, so
 `/staff`, `/admin`, `/privacy`, `/health`, `/ready`, webhooks and Queue behavior
 remain Worker-owned.
 
+Task 063 turned the Task 061 hero prototype into a complete product page: a
+header with skip link and section nav, the existing hero, then `#nasil-calisir`,
+`#klinikler-icin`, `#guvenlik`, `#sss` and a closing/footer section — with the
+old fake clinic/person cards inside the hero reveal replaced by an honest
+pilot-status panel.
+
 ## Current implementation
 
-- `public/index.html` keeps the story, CTA, Golden Retriever trigger and clinic
-  preview in one `#scene`. The preview is not a separately scrolled page section.
+- `public/index.html` keeps the story, CTA, Golden Retriever trigger and the
+  `#pilot` reveal panel in one `#scene` (the reveal is not a separately scrolled
+  page section). Below the hero, `#nasil-calisir` (4-step flow), `#klinikler-icin`
+  (clinic controls), `#guvenlik` (Yapar/Yapmaz safety boundary) and `#sss`
+  (native `<details>/<summary>` FAQ) complete the page, followed by a closing
+  staff-login section and a footer linking `/privacy` and `/staff`.
+- `#pilot` (formerly `#network`) no longer shows any fake clinic name, portrait,
+  testimonial or partner count. It states plainly that public pilot
+  applications/contact are not yet open, and its only live action is the
+  existing `/staff` login for already-authorized clinic personnel.
 - `public/styles.css` supplies the responsive 16:9 game scene, text treatment,
-  focus states, approximately 44px targets and the desktop/mobile layouts. The
-  three clinic cards fit without an internal scrollbar at 1280×720 and 375×812.
+  focus states, approximately 44px targets and the desktop/mobile layouts, plus
+  the new content sections' layout (step list, control grid, boundary columns,
+  FAQ list, footer). The three pilot role cards fit without an internal
+  scrollbar at 1280×720 and 375×812.
 - `public/app.js` owns the bounded state machine
   `home -> hopping-right -> right -> approaching -> network -> returning ->
   home`. The first activation bounds right, the second keeps the mascot at a
   stable apparent size while the fixed scenery recedes, and the third uses a
   genuinely left-facing bound pose to return. Repeated activation while moving
   is ignored; `animationend` plus a bounded timeout settles every transition.
+  The pinned `STATES.NETWORK: "network"` state name is unchanged; only the DOM
+  id/class of the reveal panel it drives (`#pilot` / `.pilot-panel`) was renamed.
 - `public/_headers` keeps the strict default-deny CSP and permits only same-origin
-  scripts, styles, images and media.
+  scripts, styles, images and media. Unchanged by Task 063 — no new same-origin
+  asset required a CSP addition.
 - `public/assets/` contains one immutable WebP garden and one transparent WebP
   sheet with four coherent mascot poses. The browser never generates, swaps or
   plays a background video.
@@ -55,30 +74,63 @@ movement.
 
 ## Interaction and accessibility
 
-- `Nasıl çalışır?` and the mascot are native buttons; mouse, touch, Enter and
-  Space use the same transition function.
+- A skip link and header nav (`Nasıl çalışır`, `Klinikler için`, `Güvenlik`,
+  `SSS`, `/staff`) sit before the hero. `Nasıl çalışır?` and the mascot are
+  native buttons; mouse, touch, Enter and Space use the same transition
+  function.
 - The fixed scene and mascot layer are decorative. State changes update the
-  button label for the three-step path and keep the clinic preview inert and
+  button label for the three-step path and keep `#pilot` inert and
   `aria-hidden` until it is revealed.
-- With JavaScript disabled, the truthful product copy and placeholder clinic
-  preview remain readable. The three cards explicitly say they represent no real
-  clinic or partnership.
+- With JavaScript disabled, the full page — hero copy, `#pilot`, and every
+  content section below it — remains readable. Task 063 fixed a pre-existing
+  no-JS-only bug: without `html.js`, `#pilot` was never hidden and, being
+  absolutely positioned, rendered on top of the hero copy. `html:not(.js)` now
+  switches `.scene` to the same flex-column static-flow layout the mobile media
+  query already used, so `#pilot` flows below the hero copy instead of
+  overlapping it, at any viewport width.
 - Pointer movement changes only two small dark pupil overlays. No pointer
   coordinates leave the page or enter storage.
 - Reduced-motion users receive immediate state changes without CSS travel.
+- The FAQ uses native `<details>/<summary>`, so every question is readable and
+  independently expandable without JavaScript.
 
 ## Security and product boundaries
 
 There are no inline scripts/styles/handlers and no third-party runtime origins.
 The CSP is `default-src 'none'` with narrowly scoped same-origin opt-ins including
 `media-src 'self'`; `nosniff` and `Referrer-Policy: no-referrer` remain enabled.
-The page does not diagnose, promise medical availability, submit a form or name a
-real partner clinic.
+The page does not diagnose, promise medical availability, submit a form, or name
+a real partner clinic. Every product/clinic-control claim traces to a specific,
+already-shipped behavior recorded in `PROJECT_CONTEXT.md` (30-minute slots with a
+10-minute hold, the "EVET" confirmation keyword, Europe/Istanbul-rendered times,
+ai/manual/personal per-contact automation modes, the urgent-first staff queue,
+per-clinic operational hours/closures, e-mail/browser alert preferences, and
+Red-priority automation-stop behavior). No pricing, customer, SLA, 24/7-service,
+delivery guarantee or sales contact is stated because none is verified; `#guvenlik`
+explicitly discloses that renewed veterinary approval for the reordered safety
+questions is still pending.
 
 ## Verification
 
-The final remediation was exercised through the real local Worker in the in-app
-Chromium browser:
+Codex exercised Task 063 through the real local Worker in the in-app Chromium
+browser at 1440×900, 768×1024 and 375×812. The initial hero, all page sections,
+header anchors, native FAQ keyboard behavior and the complete
+`home -> right -> network -> home` interaction were rendered. No horizontal
+document overflow or internal content scrollbar was present. During that pass,
+Codex found and fixed two responsive defects: the tablet breakpoint excluded
+the exact 768 px acceptance viewport, and a higher-specificity desktop rule
+kept the revealed pilot panel absolutely positioned on narrow screens. The
+targeted tests and rendered tablet/phone states were repeated after the fix.
+
+JavaScript was also temporarily disabled at 768×1024 to render the no-JS path:
+the pilot panel followed the hero in normal document flow with zero overlap,
+and the application script was restored immediately afterward. This browser
+surface did not expose reduced-motion media emulation, so the actual rendered
+`prefers-reduced-motion` mode remains **NOT RUN**; the unchanged reduced-motion
+rules and state-machine fallback remain covered by source review and automated
+tests, not represented as rendered proof.
+
+Task 061 results, still valid for the hero itself:
 
 - At 1280×720 the kennel, Golden, copy and CTA are all in the first viewport.
   The complete three-activation flow reached `right`, `network` and then `home`;
@@ -96,12 +148,14 @@ Chromium browser:
 
 Automated verification pins the same-origin fixed background and pose sheet, the
 absence of video/reverse playback, all three CSS motion phases, bounded asset
-budget, no-JS content, accessibility labels, strict CSP and non-scrolling clinic
-panel.
+budget, no-JS content, accessibility labels, strict CSP and the non-scrolling
+pilot panel — plus, for Task 063, the header/nav/footer structure, the four new
+content sections' required statements, the absence of every fabricated-content
+marker, and the native FAQ markup.
 Exact command results are recorded in `CURRENT_TASK.md` after the final gate run.
 
-No commit, push, staging/production deploy, DNS change or external-service
-activation is part of Task 061.
+Task 063 is committed at repository closure. No push, staging/production
+deploy, DNS change or external-service activation is part of this task.
 
 ## Local preview
 

@@ -1347,6 +1347,23 @@ occurred.
   the legacy medical-advice `missing_information` convention and prompt-seen
   eval phrases remain later eval-quality work. No deploy or real WhatsApp
   canary occurred, and renewed human veterinarian approval remains required.
+- Task 063 is complete at repository and local-browser gates as of 2026-09-14.
+  The public `/` now forms a complete dependency-free Turkish Pati Hattı
+  marketing page: accessible navigation, the preserved three-activation hero,
+  four-step workflow, clinic controls, explicit safety boundary, native FAQ,
+  honest pilot state and footer. The previous fabricated `Örnek Klinik A/B/C`
+  cards were removed; no customer, partner, contact, price, SLA, medical
+  approval or general-availability claim replaced them.
+- Codex rendered Task 063 at 1440×900, 768×1024 and 375×812 through the real
+  local Worker, exercised the full mascot journey, anchors and FAQ keyboard
+  behavior, and rendered the 768×1024 no-JS fallback with zero overlap. The
+  review found and fixed the exact-768 breakpoint and a narrow-screen pilot-
+  panel specificity defect; targeted 132/132 and full 2,176-test suites,
+  typecheck, both Worker dry-runs, whitespace and Graphify checks then passed.
+  Rendered reduced-motion media emulation was unavailable and remains recorded
+  `NOT RUN`; no staging/production deploy occurred. Garden/mascot commercial
+  provenance, production publication, renewed veterinarian approval and the
+  Task 062 three-outcome staging WhatsApp canary remain separate gates.
 
 ## Context maintenance
 

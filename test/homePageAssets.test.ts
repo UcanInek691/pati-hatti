@@ -17,7 +17,7 @@ const mediaAssets = [
   "public/assets/pati-hatti-dog-sprites.webp",
 ];
 
-describe("Task 061 homepage static assets", () => {
+describe("Task 063 homepage static assets", () => {
   it("public/** files exist and are non-empty", () => {
     for (const content of [html, css, js, headers]) {
       expect(content.length).toBeGreaterThan(0);
@@ -61,11 +61,27 @@ describe("Task 061 homepage static assets", () => {
     expect(html).toContain("garantisi vermez");
   });
 
-  it("labels the network preview as a non-production placeholder", () => {
-    expect(html).toContain("Staging örneği");
-    expect(html).toContain("Yer tutucu profil");
-    expect(html).toContain("gerçek bir veteriner");
-    expect(html).toContain("kliniği veya iş birliğini temsil etmez");
+  it("contains no fabricated clinic, person, testimonial or contact content", () => {
+    expect(html).not.toContain("Örnek Klinik");
+    expect(html).not.toContain("Staging örneği");
+    expect(html).not.toContain("Yer tutucu profil");
+    expect(html).not.toMatch(/testimonial|referans|müşteri yorumu/i);
+    expect(html).not.toMatch(/(?<![\d/])\d+\+?\s*(klinik|partner|müşteri)/i);
+    expect(html).not.toMatch(/<form\b/i);
+    expect(html).not.toMatch(/mailto:|@[a-z0-9.-]+\.[a-z]{2,}/i);
+  });
+
+  it("states pilot applications are not yet open and keeps /staff as the only live action inside the reveal", () => {
+    expect(html).toContain("Herkese açık pilot başvurusu");
+    expect(html).toContain("henüz açık");
+    const pilotSection = html.match(/<section class="pilot-panel"[\s\S]*?<\/section>/);
+    expect(pilotSection).not.toBeNull();
+    expect(pilotSection![0]).not.toMatch(/<a\b|<form\b|<button\b/);
+  });
+
+  it("states appointment confirmation requires the owner's explicit EVET reply", () => {
+    expect(html).toContain('"EVET"');
+    expect(html).toContain("kesinleşmez");
   });
 
   it("pins the finite state machine's state names", () => {
@@ -98,10 +114,10 @@ describe("Task 061 homepage static assets", () => {
     expect(html).toMatch(/<button[^>]*id="how-it-works"/);
   });
 
-  it("keeps the network section readable without JavaScript", () => {
-    const openingTag = html.match(/<section class="network" id="network"[^>]*>/)?.[0];
+  it("keeps the pilot panel readable without JavaScript", () => {
+    const openingTag = html.match(/<section class="pilot-panel" id="pilot"[^>]*>/)?.[0];
     expect(openingTag).toBeDefined();
-    expect(openingTag).not.toMatch(/hidden|aria-hidden/);
+    expect(openingTag).not.toMatch(/hidden/);
   });
 
   it("ships a strict, same-origin-only security policy with no unsafe-inline", () => {
@@ -114,7 +130,7 @@ describe("Task 061 homepage static assets", () => {
   });
 });
 
-describe("Task 061 Static Assets Wrangler configuration", () => {
+describe("Task 063 Static Assets Wrangler configuration", () => {
   it("declares an identical, binding-free [assets] block in production and staging", () => {
     const prod = read("wrangler.toml");
     const staging = read("wrangler.staging.toml");
@@ -126,36 +142,37 @@ describe("Task 061 Static Assets Wrangler configuration", () => {
   });
 });
 
-describe("Task 061 hero scene structure", () => {
+describe("Task 063 hero scene structure", () => {
   test("composes the rendered garden, real copy and controls in one cinematic scene", () => {
     const sceneOpen = html.indexOf('<div class="scene" id="scene"');
     const sceneClose = html.indexOf("</div>\n    </div>", sceneOpen);
     const mediaOpen = html.indexOf('<div class="scene-media">', sceneOpen);
     const heroOpen = html.indexOf('<div class="hero-copy">', sceneOpen);
-    const networkOpen = html.indexOf('<section class="network" id="network"', sceneOpen);
+    const pilotOpen = html.indexOf('<section class="pilot-panel" id="pilot"', sceneOpen);
 
     expect(sceneOpen).toBeGreaterThan(-1);
     expect(mediaOpen).toBeGreaterThan(sceneOpen);
     expect(heroOpen).toBeGreaterThan(mediaOpen);
-    expect(networkOpen).toBeGreaterThan(heroOpen);
-    expect(sceneClose).toBeGreaterThan(networkOpen);
+    expect(pilotOpen).toBeGreaterThan(heroOpen);
+    expect(sceneClose).toBeGreaterThan(pilotOpen);
     expect(css).toMatch(/\.scene\s*\{[^}]*aspect-ratio:\s*16 \/ 9/);
-    expect(css).toMatch(/\.hero-copy,\s*\n\.network\s*\{[^}]*position:\s*absolute/);
+    expect(css).toMatch(/\.hero-copy\s*\{[^}]*position:\s*absolute/);
+    expect(css).toMatch(/html\.js \.pilot-panel\s*\{[^}]*position:\s*absolute/);
   });
 
-  test("network preview is nested inside the same #scene box, not a separate subsection", () => {
+  test("pilot panel is nested inside the same #scene box, not a separate subsection", () => {
     const sceneOpen = html.indexOf('<div class="scene" id="scene"');
     const sceneWrapOpen = html.indexOf('<div class="scene-wrap">');
     expect(sceneOpen).toBeGreaterThan(-1);
 
-    const networkMatches = [...html.matchAll(/<section class="network" id="network"[^>]*>/g)];
-    // Exactly one network section, and it must sit after the scene box opens.
-    expect(networkMatches).toHaveLength(1);
-    const networkOpen = networkMatches[0]!.index as number;
-    expect(networkOpen).toBeGreaterThan(sceneOpen);
+    const pilotMatches = [...html.matchAll(/<section class="pilot-panel" id="pilot"[^>]*>/g)];
+    // Exactly one pilot panel, and it must sit after the scene box opens.
+    expect(pilotMatches).toHaveLength(1);
+    const pilotOpen = pilotMatches[0]!.index as number;
+    expect(pilotOpen).toBeGreaterThan(sceneOpen);
 
     // Find the </div> that closes .scene-wrap by tracking div nesting depth
-    // from its opening tag, so we can prove the network section closes before
+    // from its opening tag, so we can prove the pilot panel closes before
     // the scene box does (i.e. it is a descendant of the scene, not a sibling
     // section placed after it).
     let depth = 0;
@@ -177,7 +194,7 @@ describe("Task 061 hero scene structure", () => {
       cursor = match.index;
     }
     expect(cursor).toBeGreaterThanOrEqual(sceneWrapOpen);
-    expect(sceneWrapClose).toBeGreaterThan(networkOpen);
+    expect(sceneWrapClose).toBeGreaterThan(pilotOpen);
   });
 
   test("uses one immutable background and one transparent character sheet", () => {
@@ -185,6 +202,8 @@ describe("Task 061 hero scene structure", () => {
       expect(html + css + js).toContain(asset.replace("public", ""));
     }
     expect(html).not.toContain("<video");
+    expect(html).not.toContain("<audio");
+    expect(html).not.toMatch(/autoplay/i);
     expect(js).not.toMatch(/\.play\(|currentTime|playbackRate/);
     expect(css).toContain('background: url("/assets/pati-hatti-dog-sprites.webp")');
     expect(css).toContain("@keyframes hop-right");
@@ -211,11 +230,87 @@ describe("Task 061 hero scene structure", () => {
     expect(js).not.toMatch(/\.src\s*=|setAttribute\(["']src/);
   });
 
-  test("reveals all three demo profiles without an internal desktop scrollbar", () => {
-    expect(html.match(/class="profile-card"/g)).toHaveLength(3);
-    expect(css).toMatch(/\.profile-cards\s*\{[^}]*grid-template-columns:\s*repeat\(3/);
-    const networkRule = css.match(/\.network\s*\{[^}]*\}/);
-    expect(networkRule).not.toBeNull();
-    expect(networkRule![0]).not.toMatch(/overflow-y:\s*(auto|scroll)/);
+  test("shows three capability/role cards, not fake identities, without an internal desktop scrollbar", () => {
+    expect(html.match(/class="role-card"/g)).toHaveLength(3);
+    expect(html).not.toMatch(/class="role-card"[\s\S]{0,200}<svg/);
+    expect(css).toMatch(/\.role-cards\s*\{[^}]*grid-template-columns:\s*repeat\(3/);
+    const panelRule = css.match(/\.pilot-panel\s*\{[^}]*\}/);
+    expect(panelRule).not.toBeNull();
+    expect(panelRule![0]).not.toMatch(/overflow-y:\s*(auto|scroll)/);
+  });
+});
+
+describe("Task 063 completed page sections", () => {
+  it("header, skip link and every named section exist once with matching same-page anchors", () => {
+    expect(html.match(/class="skip-link"/g)).toHaveLength(1);
+    expect(html).toContain('href="#main-content"');
+    expect(html.match(/id="main-content"/g)).toHaveLength(1);
+
+    const destinations = ["nasil-calisir", "klinikler-icin", "guvenlik", "sss"];
+    for (const id of destinations) {
+      expect(html.match(new RegExp(`href="#${id}"`, "g"))).toHaveLength(1);
+      expect(html.match(new RegExp(`id="${id}"`, "g"))).toHaveLength(1);
+    }
+
+    expect(html.match(/<header class="brand-bar">/g)).toHaveLength(1);
+    expect(html.match(/<footer class="site-footer">/g)).toHaveLength(1);
+    expect(html).toMatch(/<footer[^>]*>[\s\S]*href="\/privacy"[\s\S]*href="\/staff"[\s\S]*<\/footer>/);
+  });
+
+  it("keeps a logical heading order: one h1, then only h2/h3 below it", () => {
+    expect(html.match(/<h1[\s>]/g)).toHaveLength(1);
+    const afterH1 = html.slice(html.indexOf("<h1") + 1);
+    const headingLevels = [...afterH1.matchAll(/<h([1-6])[\s>]/g)].map((m) => Number(m[1]));
+    expect(headingLevels).not.toContain(1);
+    for (let i = 1; i < headingLevels.length; i += 1) {
+      expect(headingLevels[i]!).toBeLessThanOrEqual(headingLevels[i - 1]! + 1);
+    }
+  });
+
+  it("explains the four-step flow without claiming a message alone is a confirmed appointment", () => {
+    expect(html.match(/class="step"/g)).toHaveLength(4);
+    expect(html).toContain("bir mesaj tek başına onaylanmış bir\n          randevu değildir");
+  });
+
+  it("lists implemented clinic controls without unsupported promises", () => {
+    expect(html).toContain("Europe/Istanbul");
+    expect(html).toContain("çalışma saatlerini");
+    expect(html).toContain("kapalı günler");
+    expect(html).toContain("otomatik, manuel veya kişisel mod");
+    expect(html).toContain("desteklenmeyen entegrasyon");
+  });
+
+  it("presents a visible Yapar/Yapmaz safety boundary and flags pending veterinary approval", () => {
+    expect(html).toContain(">Yapar<");
+    expect(html).toContain(">Yapmaz<");
+    expect(html).toContain("hastalık listelemez");
+    expect(html).toContain("doz önermez");
+    expect(html).toContain("Tedavi planı oluşturmaz");
+    expect(html).toContain("botu beklemeyin");
+    expect(html).toContain("hâlâ beklenmektedir");
+  });
+
+  it("renders the FAQ as native, no-JS-readable details/summary entries", () => {
+    const items = html.match(/<details class="faq-item">/g) || [];
+    expect(items.length).toBeGreaterThanOrEqual(6);
+    const summaries = html.match(/<summary>/g) || [];
+    expect(summaries.length).toBe(items.length);
+    expect(html).toMatch(/<details class="faq-item">\s*<summary>[^<]+<\/summary>/);
+  });
+
+  it("defines explicit tablet/phone breakpoints, focus-visible states, anchor scroll margin, and no internal scrollbar", () => {
+    expect(css).toMatch(/@media \(max-width: 768px\)/);
+    expect(css).toMatch(/@media \(max-width: 420px\)/);
+    expect(css).toMatch(
+      /@media \(max-width: 768px\)[\s\S]*html\.js \.pilot-panel\s*\{[^}]*position:\s*relative[^}]*inset:\s*auto[^}]*width:\s*auto/
+    );
+    expect(css).toMatch(/:focus-visible/);
+    expect(css).toMatch(/scroll-margin-top/);
+    expect(css).not.toMatch(/overflow-y:\s*(auto|scroll)/);
+  });
+
+  it("does not add any new dependency, form backend, or third-party runtime", () => {
+    expect(html).not.toMatch(/<form\b/i);
+    expect(html + css + js).not.toMatch(/analytics|gtag|dataLayer|hotjar|sentry/i);
   });
 });
