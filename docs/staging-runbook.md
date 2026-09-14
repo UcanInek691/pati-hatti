@@ -511,10 +511,13 @@ alınmalıdır:
    endpoint'e teslimatı kısabilir; yani bu, kendi kendini besleyen bir arıza
    hâline gelebilir. Doğrusu `200` dönüp olayı sessizce yok saymaktır.
    Meta'nın `Test` düğmesi bu davranışı doğrudan tetikliyor.
-2. **Portföyde üç kopya "weosa" WABA'sı var** (`1747631286525524`,
-   `853733087706981`, `3647635165398837`); yalnız ilkinde numara var.
+2. **Portföyde üç kopya "weosa" WABA'sı var**; yalnız birinde numara bağlı.
    Bu duplikasyon teşhis sırasında ciddi kafa karışıklığı yarattı.
-   Temizlenmeli, ama numara bağlıyken silme işine girişilmemeli.
+   Temizlenmeli, ama numara bağlıyken silme işine girişilmemeli. Üç hesabın
+   gerçek kimlikleri WhatsApp Yöneticisi panelindedir ve **bilinçli olarak bu
+   depoya yazılmamıştır** (`AGENTS.md`: gerçek hesap kimliği depoya girmez);
+   2026-09-14 push öncesi denetiminde buradan çıkarıldılar, bkz.
+   [`olaylar/2026-09-14-github-push-oncesi-denetim.md`](olaylar/2026-09-14-github-push-oncesi-denetim.md).
 3. **İşletme-başlatmalı mesajlar bloklu:** Meta panelinde "Add payment"
    adımı tamamlanmadığı için şablon gönderimi devre dışı. Kullanıcı-başlatmalı
    24 saatlik pencere içindeki yanıtlar etkilenmiyor, ama hatırlatma/

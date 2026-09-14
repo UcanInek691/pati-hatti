@@ -4,4 +4,6 @@ node_modules
 .wrangler
 .claude
 dist
+tmp/
 supabase/.temp/
+graphify-out/

@@ -1,3 +1,116 @@
+# Current task — 070 Team handoff, gap audit and secure GitHub publication
+
+Status: `IN_REVIEW`
+
+Created by Codex on 2026-09-14 after Task 069 closure. The owner asked for a
+thorough inventory of missing, broken, disabled and unproven product behavior,
+one durable continuation document for teammates, and then a GitHub upload.
+
+## Goal
+
+Reconcile repository, staging and production evidence into one honest,
+priority-ordered teammate handoff; verify that the repository is safe to share;
+and publish only committed, reviewed history to a private GitHub repository
+after the owner confirms the final repository identity and GitHub login works.
+
+## Fixed decisions
+
+- Distinguish implemented code, disposable-database proof, staging proof,
+  production proof and external human approval. Never collapse these into a
+  single "done" status.
+- Treat `patihatti.com` as the live marketing origin only. Do not bind
+  `app.patihatti.com`, create/deploy the production Worker, migrate production,
+  enable alerting or open the pilot in this audit task.
+- Create one Turkish teammate handoff document, not a second competing roadmap.
+  It must point to the detailed source documents and state which one owns each
+  future gate.
+- Scan tracked content and Git history for likely secrets before any push. Do
+  not print secret values. Real signed approval artifacts and personal data
+  remain outside Git.
+- Preserve the pre-existing `.gitignore` modification and untracked
+  `docs/043-opus-inceleme.md` unless their disposition is explicitly decided.
+- Default GitHub recommendation is a private repository named `pati-hatti`;
+  repository creation/push waits for the owner's confirmation because
+  visibility and destination are externally consequential.
+
+## Allowed changes
+
+- `docs/proje-durum-ve-devam-plani.md` (new)
+- `README.md`, only to link the teammate handoff and correct the stale
+  pre-Task-050 `/ready` description
+- `docs/marketing-homepage.md`, only to correct Task 069 navigation drift
+- `CURRENT_TASK.md`
+- `PROJECT_CONTEXT.md`, Codex only at verified closure
+
+## Acceptance criteria
+
+1. The audit names every known live, staging-only, disabled, unproven, broken,
+   legally blocked and clinically blocked surface with repository evidence.
+2. The handoff gives teammates an ordered P0/P1/P2 continuation plan, owners,
+   prerequisites, verification evidence, stop/rollback conditions and explicit
+   non-goals.
+3. Current tests, TypeScript checks and all three Worker dry-runs pass; the two
+   opt-in paid/live eval skips are explained rather than counted as failures.
+4. A value-safe scan covers tracked files, sensitive filenames and Git history;
+   likely findings are classified without exposing any credential value.
+5. Stale documentation discovered during the audit is corrected narrowly.
+6. Only reviewed committed history is uploaded. The existing unrelated dirty
+   files are neither staged nor pushed. GitHub visibility, owner and remote are
+   recorded truthfully; teammate access is not claimed without usernames and
+   observed membership evidence.
+
+## Task 070 observed context
+
+- `main` began at `bc21507` with no Git remote. The only pre-existing dirty
+  paths were `.gitignore` (`tmp/`) and untracked
+  `docs/043-opus-inceleme.md`; both remain outside this task.
+- Graphify and direct source/document review separated four evidence layers:
+  the apex marketing page is production-live, the product Worker is staging-
+  only, most database behavior has disposable plus selective staging proof,
+  and the product production target does not yet exist.
+- A fresh public HTTP check returned 200 for the apex, robots and sitemap; 404
+  for apex `/staff`; 200 for staging `/health`, `/ready`, `/staff` and `/admin`;
+  and no reachable endpoint for `app.patihatti.com`.
+- The highest-risk runtime gap is Task 062: repository tests/evals/Opus review
+  passed, but the changed triage ordering was not deployed to staging and its
+  required three-outcome WhatsApp canary was not run. Renewed veterinarian
+  approval is also still absent.
+- Operational alerting is implemented but intentionally ends with the global
+  flag and clinic rollout gates off. Platform-owner delivery was proven in a
+  bounded window; the arbitrary-clinic-recipient path ended `send_failed`.
+- The production-readiness and legal packages still show open human ownership,
+  veterinarian, KVKK, production migration/resource, continuous monitoring and
+  clinic-onboarding gates. These are not local test failures.
+- Two stale documentation statements were confirmed: README still described
+  pre-Task-050 `/ready`, and the marketing document's opening still described
+  Task 069-removed product/privacy links. The live page itself was correct.
+- Value-safe sharing scan: 233 tracked files plus Git patch history produced
+  zero matches for common real OpenAI/Cloudflare/GitHub/Meta/Resend/JWT/private-
+  key shapes. Only placeholder env templates are tracked; the real local
+  `.dev.vars.live-ai` path is ignored.
+- GitHub CLI names account `UcanInek691` but its saved credential was invalid.
+  A fresh device-login flow was started; remote creation and push remain
+  pending successful user authorization.
+
+## Task 070 delivery record
+
+- Added `docs/proje-durum-ve-devam-plani.md` as the Turkish teammate entrypoint:
+  environment/feature matrices, actual broken/closed surfaces, P0/P1/P2 gaps,
+  sharing rules, source-of-truth map and Tasks 071–075 continuation order.
+- Updated README branding/entrypoint and corrected its `/ready` contract. Fixed
+  the marketing document's Worker-boundary, removed-link and already-published
+  visual-provenance drift without changing runtime assets or copy.
+- Fresh verification before the documentation-only edits: frozen install was
+  up to date; typecheck passed; all 40 test files passed with 2,187 tests and
+  two unchanged opt-in live-eval skips; production, staging and marketing
+  Wrangler dry-runs passed, with the marketing package reporting no bindings.
+- Live checks and the secret/history scan were read-only. No database, Meta,
+  OpenAI, Supabase, Resend or application deployment was changed.
+- Final whitespace, Graphify, staged-scope, commit, GitHub remote/push and
+  teammate-access evidence are recorded after the pending GitHub login.
+
+---
+
 # Current task — 069 Public navigation truthfulness
 
 Status: `COMPLETE`
