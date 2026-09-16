@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --ink: #25313a;
   --paper: #fff8ef;
   --accent: #ef7149;
@@ -6,6 +7,22 @@
   --accent-3: #ffd66b;
   --panel: rgba(255, 252, 244, 0.93);
   --font-display: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Task 071: the bright --accent is a scene/tint colour, never a text
+     background. White on #ef7149 measures 2.95:1, below the 4.5:1 AA floor for
+     the 16px bold CTA label, so the button uses its own darker fill. Keep these
+     two tokens together: --cta-press only reads as a pressed shadow under
+     --cta-fill. */
+  --cta-fill: #c04d28;   /* white text -> 4.85:1 */
+  --cta-press: #8f3a1f;  /* white text -> 7.52:1 */
+
+  /* One shell and one gutter for the header, every content section and the
+     footer, so their text edges line up. The hero stage is deliberately wider
+     than this shell; nothing else is. */
+  --shell: 1280px;
+  --gutter: clamp(16px, 4vw, 44px);
+  --stage-gutter: clamp(10px, 3vw, 34px);
+  --measure-narrow: 900px;
 }
 
 * { box-sizing: border-box; }
@@ -56,9 +73,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
   align-items: center;
   justify-content: space-between;
   gap: 10px 18px;
-  max-width: 1280px;
+  max-width: var(--shell);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 44px);
+  padding: 12px var(--gutter);
 }
 .brand-mark {
   font-weight: 900;
@@ -76,7 +93,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   align-items: center;
   min-height: 44px;
   color: var(--ink);
-  font-weight: 750;
+  font-weight: 700;
   text-decoration: none;
 }
 .site-nav a:hover,
@@ -94,10 +111,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 a.staff-link:hover,
 a.staff-link:focus-visible { background: var(--ink); color: var(--paper); }
-.staff-status { background: #f2e7d6; color: #53616a; }
+.staff-status { background: #f2e7d6; color: #4a585f; }
 
-main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
-.stage { position: relative; width: 100%; max-width: none; margin: 0 auto; }
+/* Horizontal space belongs to the blocks, not to <main>: the stage keeps its
+   own narrow inset while the text sections align to --gutter. */
+main { padding: 0 0 28px; }
+.stage { position: relative; width: 100%; max-width: none; margin: 0 auto; padding-inline: var(--stage-gutter); }
 .scene-wrap {
   width: min(100%, calc((100vh - 84px) * 16 / 9));
   margin: 0 auto;
@@ -125,10 +144,16 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
 .scene[data-state="approaching"] .scene-background,
 .scene[data-state="network"] .scene-background { transform: scale(0.9); }
 .scene[data-state="returning"] .scene-background { transform: scale(1.08); }
+/* Two stacked linear washes, no radial: the original top shade, plus a gentle
+   paper wash under the copy column (which starts at 38%) so hero text is not
+   relying on whichever sky pixel happens to fall behind it. Deliberately light
+   at 0.26 -- enough headroom for AA, not enough to flatten the garden. */
 .scene-shade {
   z-index: 1;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(32, 60, 71, 0.06), transparent 40%);
+  background:
+    linear-gradient(90deg, transparent 24%, rgba(255, 248, 239, 0.22) 40%, rgba(255, 248, 239, 0.26) 100%),
+    linear-gradient(180deg, rgba(32, 60, 71, 0.06), transparent 40%);
   transition: opacity 0.35s ease;
 }
 
@@ -146,18 +171,21 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   padding: 5px 11px;
   border: 2px solid currentColor;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.52);
-  font-size: 0.74rem;
-  font-weight: 900;
+  background: rgba(255, 255, 255, 0.62);
+  font-size: 0.78rem;
+  font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 .hero-copy h1 {
   max-width: 13ch;
-  margin: 0 0 0.25em;
+  margin: 0 0 0.3em;
   font-size: clamp(2rem, 4.4vw, 4.6rem);
-  line-height: 0.96;
-  letter-spacing: -0.055em;
+  /* Turkish needs real leading here: a dotted İ on one line sits directly
+     under the descender of Ş/Ç/Ğ on the line above. 0.96 collided. */
+  line-height: 1.04;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   text-wrap: balance;
 }
 .lede {
@@ -166,11 +194,15 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   font-size: clamp(0.96rem, 1.45vw, 1.16rem);
   font-weight: 600;
 }
+/* The medical-boundary disclaimer sits on photography, so it takes the full
+   ink colour rather than a soft grey: #44545e measured 3.16:1 against the
+   lightest sky pixels behind it, below the 4.5:1 AA floor. It was also the
+   smallest type in the hero, which is the wrong place to be smallest. */
 .boundary-note {
   max-width: 54ch;
   margin: 0 0 0.9em;
-  color: #44545e;
-  font-size: clamp(0.75rem, 1.05vw, 0.88rem);
+  color: var(--ink);
+  font-size: clamp(0.82rem, 1.05vw, 0.94rem);
 }
 .cta-primary {
   display: inline-block;
@@ -179,16 +211,16 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   cursor: pointer;
   border: 2px solid var(--ink);
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--cta-fill);
   color: #fff;
-  box-shadow: 0 6px 0 var(--accent-dark);
+  box-shadow: 0 6px 0 var(--cta-press);
   font: inherit;
-  font-weight: 900;
+  font-weight: 800;
   text-decoration: none;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .cta-primary:hover { transform: translateY(-2px); }
-.cta-primary:active { transform: translateY(3px); box-shadow: 0 3px 0 var(--accent-dark); }
+.cta-primary:active { transform: translateY(3px); box-shadow: 0 3px 0 var(--cta-press); }
 .cta-primary:focus-visible,
 .dog-button:focus-visible,
 .staff-link:focus-visible,
@@ -201,9 +233,9 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
 .hint {
   min-height: 1.3em;
   margin: 10px 0 0;
-  color: #40505a;
-  font-size: 0.82rem;
-  font-weight: 750;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .dog-button {
@@ -279,7 +311,7 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   box-shadow: 0 9px 0 rgba(37, 49, 58, 0.12);
 }
 .pilot-panel h2 { margin: 0 0 0.15em; font-size: clamp(1.2rem, 2.2vw, 2rem); line-height: 1.05; }
-.pilot-note { max-width: 65ch; margin: 0; color: #53616a; font-size: clamp(0.68rem, 0.85vw, 0.8rem); }
+.pilot-note { max-width: 65ch; margin: 0; color: #4a585f; font-size: clamp(0.78rem, 0.9vw, 0.86rem); }
 .role-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -296,19 +328,22 @@ main { padding: 0 clamp(10px, 3vw, 34px) 28px; }
   background: #fff;
   text-align: center;
 }
+/* Task 071: these three were the smallest type on the page -- the badge
+   resolved to 9.4px on desktop and about 6.9px under 420px. Nothing here goes
+   below 10px now. */
 .badge {
   display: inline-block;
-  padding: 3px 6px;
+  padding: 3px 7px;
   border-radius: 999px;
   background: var(--accent-3);
   color: #493a0f;
-  font-size: clamp(0.48rem, 0.65vw, 0.62rem);
-  font-weight: 850;
+  font-size: clamp(0.64rem, 0.7vw, 0.7rem);
+  font-weight: 800;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-.role-name { margin: 7px 0 0; font-size: clamp(0.7rem, 0.9vw, 0.9rem); font-weight: 800; }
-.role-desc { margin: 1px 0 0; color: #5b676e; font-size: clamp(0.6rem, 0.75vw, 0.74rem); }
+.role-name { margin: 7px 0 0; font-size: clamp(0.8rem, 0.95vw, 0.95rem); font-weight: 700; }
+.role-desc { margin: 2px 0 0; color: #55626a; font-size: clamp(0.72rem, 0.85vw, 0.8rem); }
 
 html.js .hero-copy,
 html.js .pilot-panel { transition: opacity 0.35s ease, transform 0.35s ease; }
@@ -363,18 +398,24 @@ html:not(.js) .pilot-panel {
   box-shadow: none;
 }
 
+/* Task 071: every section shares the header/footer shell and gutter, so all
+   text edges sit on one vertical line. Before this, the page ran five
+   different alignments (header 80px, stage 34px, three sections 160px, SSS and
+   closing 270px, footer 80px) and content appeared to drift right on scroll. */
 .content-section {
-  max-width: 1120px;
+  max-width: var(--shell);
   margin: 0 auto;
-  padding: clamp(40px, 6vw, 76px) 0;
+  padding: clamp(40px, 6vw, 76px) var(--gutter);
   scroll-margin-top: 84px;
 }
-#sss,
-.closing-section { max-width: 900px; }
+/* Long-form blocks keep a short measure via their own width, not a narrower
+   container, so shortening the line never moves the left edge. */
+.faq-list { max-width: var(--measure-narrow); }
 .content-section h2 {
   max-width: 20ch;
   margin: 0 0 0.6em;
   font-size: clamp(1.5rem, 3vw, 2.4rem);
+  font-weight: 800;
   letter-spacing: -0.03em;
   text-wrap: balance;
 }
@@ -411,8 +452,8 @@ html:not(.js) .pilot-panel {
   color: #493a0f;
   font-weight: 900;
 }
-.step-title { margin: 0 0 4px; font-weight: 800; }
-.step-desc { margin: 0; color: #44545e; font-size: 0.92rem; }
+.step-title { margin: 0 0 4px; font-size: 1.02rem; font-weight: 700; }
+.step-desc { margin: 0; color: #44545e; font-size: 0.95rem; }
 
 .control-grid {
   display: grid;
@@ -428,9 +469,9 @@ html:not(.js) .pilot-panel {
   border-radius: 16px;
   background: #fff;
 }
-.control-title { margin: 0 0 6px; font-weight: 800; }
-.control-desc { margin: 0; color: #44545e; font-size: 0.92rem; }
-.control-note { max-width: 65ch; margin: 20px 0 0; color: #53616a; font-size: 0.85rem; }
+.control-title { margin: 0 0 6px; font-size: 1.02rem; font-weight: 700; }
+.control-desc { margin: 0; color: #44545e; font-size: 0.95rem; }
+.control-note { max-width: 65ch; margin: 20px 0 0; color: #4a585f; font-size: 0.88rem; }
 
 .boundary-grid {
   display: grid;
@@ -456,9 +497,9 @@ html:not(.js) .pilot-panel {
   border: 2px solid var(--accent-dark);
   border-radius: 12px;
   background: rgba(239, 113, 73, 0.1);
-  font-weight: 750;
+  font-weight: 700;
 }
-.pending-note { max-width: 65ch; margin: 12px 0 0; color: #53616a; font-size: 0.85rem; }
+.pending-note { max-width: 65ch; margin: 12px 0 0; color: #4a585f; font-size: 0.88rem; }
 
 .faq-list { margin: 28px 0 0; }
 .faq-item {
@@ -469,15 +510,35 @@ html:not(.js) .pilot-panel {
 }
 .faq-item + .faq-item { margin-top: 12px; }
 .faq-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   cursor: pointer;
-  font-weight: 800;
+  list-style: none;
+  font-weight: 700;
 }
+/* Replace the default disclosure triangle with a chevron that matches the rest
+   of the card system. The <summary> element itself stays attribute-free. */
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::after {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-right: 2.5px solid currentColor;
+  border-bottom: 2.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.18s ease;
+}
+.faq-item[open] summary::after { transform: translateY(1px) rotate(-135deg); }
 .faq-item summary:focus-visible {
   outline: 4px solid #fff;
   outline-offset: 3px;
   box-shadow: 0 0 0 7px var(--ink);
 }
 .faq-item p { margin: 10px 0 0; color: #44545e; }
+.faq-item[open] summary { margin-bottom: 2px; }
 
 .closing-section p { max-width: 65ch; }
 .launch-status {
@@ -486,8 +547,8 @@ html:not(.js) .pilot-panel {
   padding: 10px 18px;
   border: 2px solid #c8b89f;
   border-radius: 999px;
-  color: #53616a;
-  font-weight: 800;
+  color: #4a585f;
+  font-weight: 700;
 }
 
 .site-footer {
@@ -496,9 +557,9 @@ html:not(.js) .pilot-panel {
   align-items: center;
   justify-content: space-between;
   gap: 10px 18px;
-  max-width: 1280px;
+  max-width: var(--shell);
   margin: 0 auto;
-  padding: 20px clamp(16px, 4vw, 44px) 34px;
+  padding: 20px var(--gutter) 34px;
   border-top: 2px solid #eadbc4;
 }
 .site-footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
@@ -512,21 +573,42 @@ html:not(.js) .pilot-panel {
 }
 .site-footer a:hover,
 .site-footer a:focus-visible { text-decoration: underline; }
-.footer-status { max-width: 52ch; color: #53616a; font-size: 0.9rem; }
+.footer-status { max-width: 52ch; color: #4a585f; font-size: 0.92rem; }
 
 @media (max-width: 768px) {
-  .brand-bar { padding-block: 9px; }
-  .staff-link { min-height: 40px; padding: 6px 13px; font-size: 0.88rem; }
-  main { padding-inline: 8px; }
+  /* Task 071: the bar used to wrap onto three rows (brand / nav / status) and
+     ate 154px -- 18% of a 844px viewport -- before any content. Brand and
+     status now share row one; the nav gets row two and scrolls sideways
+     instead of wrapping. */
+  .brand-bar { padding-block: 8px; gap: 4px 12px; }
+  .brand-mark { font-size: clamp(19px, 5.4vw, 24px); }
+  .staff-link { order: 2; min-height: 38px; padding: 5px 13px; font-size: 0.84rem; }
+  .site-nav {
+    order: 3;
+    flex-basis: 100%;
+    flex-wrap: nowrap;
+    gap: 0 18px;
+    margin-inline: 0;
+    padding-bottom: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .site-nav::-webkit-scrollbar { display: none; }
+  .site-nav a { min-height: 40px; white-space: nowrap; }
+  /* 8px let text sit almost on the screen edge; 16px is the floor. */
+  main { padding-inline: 0; }
+  .stage { padding-inline: 16px; }
+  .content-section { padding-inline: 16px; }
   .scene-wrap { width: 100%; overflow: visible; border-radius: 22px; }
   .scene { aspect-ratio: auto; display: flex; flex-direction: column; background: var(--paper); }
   .scene-media { position: relative; aspect-ratio: 16 / 9; flex: none; overflow: hidden; border-radius: 19px 19px 0 0; }
   .scene-shade { background: linear-gradient(180deg, transparent 52%, rgba(255, 248, 239, 0.2)); }
   .hero-copy,
   .pilot-panel { position: relative; inset: auto; width: auto; max-width: none; padding: 18px 18px 20px; transform: none; }
-  .hero-copy h1 { max-width: 15ch; font-size: clamp(1.8rem, 9vw, 2.6rem); }
-  .lede { font-size: 0.94rem; }
-  .boundary-note { font-size: 0.73rem; }
+  .hero-copy h1 { max-width: 15ch; font-size: clamp(1.8rem, 8.4vw, 2.5rem); }
+  .lede { font-size: 0.96rem; }
+  /* Was 0.73rem == 11.7px for the medical disclaimer. */
+  .boundary-note { font-size: 0.88rem; }
   .dog-button { left: 17%; bottom: 4%; width: 20%; }
   .scene[data-state="right"] .dog-button,
   .scene[data-state="network"] .dog-button,
@@ -553,11 +635,14 @@ html:not(.js) .pilot-panel {
 }
 
 @media (max-width: 420px) {
-  .role-cards { gap: 5px; }
-  .role-card { padding: 7px 4px; }
-  .badge { font-size: 0.43rem; }
-  .role-name { font-size: 0.66rem; }
-  .role-desc { font-size: 0.56rem; }
+  /* Task 071: one column for the role cards under 420px. The old three-up grid
+     only fitted by shrinking the badge to about 6.9px and the description to
+     about 9px, which is not readable text. */
+  .role-cards { grid-template-columns: 1fr; gap: 8px; }
+  .role-card { padding: 10px 12px; text-align: left; }
+  .badge { font-size: 0.66rem; }
+  .role-name { font-size: 0.92rem; }
+  .role-desc { font-size: 0.82rem; }
   .step-list { grid-template-columns: 1fr; }
   .control-grid { grid-template-columns: 1fr; }
 }
@@ -568,6 +653,8 @@ html:not(.js) .pilot-panel {
   .pilot-panel,
   .dog-button,
   .scene-shade,
+  .faq-item summary::after,
+  .cta-primary,
   .skip-link { transition-duration: 0.01ms !important; }
 }
 

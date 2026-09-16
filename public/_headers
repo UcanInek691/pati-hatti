@@ -2,3 +2,24 @@
   Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+
+# Task 071 caching. Deliberately no `preload` on HSTS: preload list removal
+# takes months and app.patihatti.com is still unrouted, so it stays out until
+# every subdomain that will ever exist is known to be HTTPS-only.
+# Assets are versioned by filename, so a change ships under a new name.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Stylesheet and script have stable names, so they get a day, not a year.
+/styles.css
+  Cache-Control: public, max-age=86400
+
+/app.js
+  Cache-Control: public, max-age=86400
+
+/
+  Cache-Control: public, max-age=300, must-revalidate

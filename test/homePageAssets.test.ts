@@ -261,8 +261,34 @@ describe("Task 063 hero scene structure", () => {
   test("uses wide desktop space without stretching long-form copy", () => {
     expect(css).toMatch(/\.stage\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none/);
     expect(css).toMatch(/\.scene-wrap\s*\{[^}]*width:\s*min\(100%,\s*calc\(\(100vh - 84px\) \* 16 \/ 9\)\)/);
-    expect(css).toMatch(/\.content-section\s*\{[^}]*max-width:\s*1120px/);
-    expect(css).toMatch(/#sss,\s*\.closing-section\s*\{[^}]*max-width:\s*900px/);
+  });
+
+  // Task 071 replaced the previous per-section max-widths. Before it, the page
+  // resolved to five different alignments at 1440px -- header text at 124px,
+  // stage at 34px, three sections at 160px, SSS and the closing section at
+  // 270px, footer at 124px -- so content visibly drifted right while
+  // scrolling. The invariant now is one shell and one gutter, asserted on the
+  // three blocks that must agree rather than on the numbers they happen to
+  // produce.
+  test("aligns header, every content section and the footer to one shell and gutter", () => {
+    expect(css).toMatch(/--shell:\s*1280px/);
+    expect(css).toMatch(/--gutter:\s*clamp\(16px, 4vw, 44px\)/);
+
+    for (const selector of [".brand-bar", ".content-section", ".site-footer"]) {
+      const block = css.match(new RegExp(`\\${selector}\\s*\\{[^}]*\\}`));
+      expect(block, `${selector} rule missing`).not.toBeNull();
+      expect(block![0], `${selector} must use the shared shell`).toContain(
+        "max-width: var(--shell)"
+      );
+      expect(block![0], `${selector} must use the shared gutter`).toMatch(
+        /padding(?:-inline)?:[^;]*var\(--gutter\)/
+      );
+    }
+
+    // Long-form blocks shorten their own line length instead of sitting in a
+    // narrower container, so shortening the measure never moves a left edge.
+    expect(css).toMatch(/\.faq-list\s*\{[^}]*max-width:\s*var\(--measure-narrow\)/);
+    expect(css).not.toMatch(/#sss,\s*\.closing-section\s*\{[^}]*max-width/);
   });
 
   test("pilot panel is nested inside the same #scene box, not a separate subsection", () => {

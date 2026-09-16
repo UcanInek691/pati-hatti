@@ -1,10 +1,10 @@
 # Task 061/063/064 — Marketing homepage
 
-The public `/` route is a dependency-free, same-origin marketing homepage
-served from `public/**` through the binding-free Static Assets configuration in
-both Wrangler files. Unmatched requests still fall through to `src/index.ts`, so
-`/staff`, `/admin`, `/privacy`, `/health`, `/ready`, webhooks and Queue behavior
-remain Worker-owned.
+The public `/` route is a dependency-free, same-origin marketing homepage.
+The product Worker configs serve it from `public/**` and let unmatched requests
+fall through to `src/index.ts`; the dedicated marketing Worker serves only the
+static assets and returns 404 for `/staff`, `/admin`, `/privacy`, `/health`,
+`/ready` and webhooks.
 
 Task 063 turned the Task 061 hero prototype into a complete product page: a
 header with skip link and section nav, the existing hero, then `#nasil-calisir`,
@@ -19,7 +19,8 @@ pilot-status panel.
   page section). Below the hero, `#nasil-calisir` (4-step flow), `#klinikler-icin`
   (clinic controls), `#guvenlik` (Yapar/Yapmaz safety boundary) and `#sss`
   (native `<details>/<summary>` FAQ) complete the page, followed by a closing
-  staff-login section and a footer linking `/privacy` and `/staff`.
+  pilot-status section and a footer that truthfully keeps clinic login and the
+  reviewed privacy notice pending rather than linking to closed paths.
 - `#pilot` (formerly `#network`) no longer shows any fake clinic name, portrait,
   testimonial or partner count. Task 064 also stopped using this reveal as a
   second "Nasıl çalışır" explainer: it now introduces the clinic control
@@ -59,13 +60,13 @@ moves. The mascot keeps the same face, cream-gold coat, floppy ears, red
 neckerchief and round tag in every pose. Motion is deterministic CSS, so trees,
 kennel, stones and light cannot morph or flicker.
 
-This is still a **local visual prototype, not yet a production-cleared brand
-asset**. The fixed background and transparent pose sheet were produced with the
-built-in ImageGen workflow using the owner-approved clean scene frames as visual
-references. Before publication on `patihatti.com`, staging or production, the
-owner must record that provenance and confirm commercial permission; otherwise
-the two assets must be replaced by a licensed or commissioned equivalent and the
-same visual and transfer-size checks rerun.
+The fixed background and transparent pose sheet were produced with the built-in
+ImageGen workflow using the owner-approved clean scene frames as visual
+references. They are now publicly deployed on `patihatti.com`, but the
+repository still lacks the explicit provenance/commercial-use decision that the
+pre-launch review required. The owner must record that decision promptly;
+otherwise the two assets must be replaced by a licensed or commissioned
+equivalent and the same visual and transfer-size checks rerun.
 
 The dog is therefore a direction-setting mascot prototype, not yet the final
 logo or permanent character sheet. A future clean export should preserve the
@@ -76,8 +77,9 @@ movement.
 
 ## Interaction and accessibility
 
-- A skip link and header nav (`Nasıl çalışır`, `Klinikler için`, `Güvenlik`,
-  `SSS`, `/staff`) sit before the hero. `Bahçeyi keşfet` and the mascot are
+- A skip link and same-page header nav (`Nasıl çalışır`, `Klinikler için`,
+  `Güvenlik`, `SSS`) sit before the hero; the former `/staff` action is a
+  non-interactive `Pilot girişi yakında` status. `Bahçeyi keşfet` and the mascot are
   native buttons; mouse, touch, Enter and Space use the same transition
   function. The second step is labelled `Kontrol merkezini gör`; the actual
   four-step product explanation remains exclusively below the hero.
@@ -217,3 +219,139 @@ copy remain capped at 900 px, and headings, notes and paragraphs retain their
 existing character-based measures, so the extra width benefits the grids
 without creating hard-to-read long lines. Tablet and phone breakpoints are
 unchanged.
+
+## Task 071 — accessibility, alignment and delivery pass (2026-09-16)
+
+Applied to the already-live apex site. No copy, no schema, no asset and no
+script change: this pass only touched `public/styles.css`, three attributes in
+`public/index.html`, `public/_headers`, and the alignment assertion in
+`test/homePageAssets.test.ts`.
+
+### One shell, one gutter
+
+The page previously resolved to five different alignments at 1440 px — header
+text at 124 px, the stage at 34 px, three content sections at 160 px, `#sss`
+and the closing section at 270 px, footer text at 124 px — so content appeared
+to drift right as the reader scrolled. `--shell: 1280px` and
+`--gutter: clamp(16px, 4vw, 44px)` are now shared by `.brand-bar`,
+`.content-section` and `.site-footer`, which puts every text edge on one line
+at 124 px. The hero stage stays deliberately wider on its own
+`--stage-gutter`; nothing else is.
+
+The narrow measure for long-form copy moved from the container to the block:
+`.faq-list` caps itself at `--measure-narrow` (900 px) instead of `#sss` and
+`.closing-section` sitting in a narrower box, so shortening a line no longer
+moves a left edge. The Task 065 rule that the grids get the extra width still
+holds; the numbers moved from 1120/900 to 1192/900.
+
+The replaced test asserted the old pixel values. Its replacement asserts the
+invariant instead — that those three blocks agree on the shell and the gutter —
+so the next width change cannot silently reintroduce the drift.
+
+### Two measured contrast failures, both fixed
+
+Measured with a headless Chromium probe that samples the actual painted
+backdrop, including the photographic hero, rather than reading declared
+colours:
+
+- **Primary CTA: 2.95:1.** White on `--accent` (`#ef7149`) at 16 px bold needs
+  4.5:1. `--accent` remains the scene and tint colour; the button now has its
+  own `--cta-fill: #c04d28` (4.85:1) with `--cta-press: #8f3a1f` beneath it.
+  The button is visibly deeper than before — that is the cost of the fix, and
+  it is recorded here rather than presented as a free win.
+- **Medical-boundary disclaimer: 3.16:1.** `.boundary-note` was `#44545e` over
+  open sky, and was also the smallest type in the hero (14.1 px desktop,
+  11.7 px phone) — the wrong place for the one sentence that legally matters
+  most. It is now full `--ink` at 15.0 px / 14.1 px, measuring 6.62:1. A second
+  linear wash in `.scene-shade` (paper at 0.26 alpha under the copy column,
+  still no radial gradient) gives the whole hero headroom without flattening
+  the garden.
+
+All 27 text styles across the home and revealed-panel states now pass AA.
+Five of them are reported as failures by a naive box-sampling probe because
+their bounding boxes include their own borders and rounded-corner gaps;
+`.urgent-note` (10.21:1 on its composited tint), `.cta-primary` (4.85:1),
+`.staff-status` (6.02:1), `.launch-status` (6.16:1) and `.faq-item p`
+(7.85:1) were each confirmed against their real fill instead.
+
+### Readability floors
+
+- Phone header was 154 px — 18 % of an 844 px viewport before any content.
+  Brand and status pill now share row one, the nav takes row two and scrolls
+  sideways rather than wrapping: **100 px**.
+- `main` had an 8 px phone gutter, below the 16 px floor, while the header and
+  footer were full-bleed with their own padding. Horizontal space now belongs
+  to the blocks; the measured minimum gutter is 16 px at every width from
+  320 px to 1920 px.
+- The role cards under 420 px only fitted three-up by shrinking the badge to
+  about 6.9 px and its description to about 9 px. They are one column there
+  now. The smallest type anywhere on the page is the uppercase badge at
+  **10.2 px** (7.96:1) — still small, and named here rather than rounded up.
+- `h1` ran `line-height: 0.96` with `-0.055em` tracking. Turkish puts a dotted
+  `İ` directly under the descender of `Ş`/`Ç`/`Ğ` on the line above; it is now
+  1.04 at `-0.03em`.
+- Weight hierarchy was inverted — `h2` at 700 under `.step-title`, `summary`
+  and `.control-title` at 800. Headings are 800 now and those labels 700.
+- The FAQ used the browser's default disclosure triangle. It has a chevron
+  built from borders on `summary::after`, included in the reduced-motion
+  block. `<summary>` itself stays attribute-free, as its test requires.
+
+### Delivery headers
+
+`public/_headers` gains `Strict-Transport-Security`, `Permissions-Policy`,
+`Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and explicit
+`Cache-Control`: a year and `immutable` for `/assets/*` (versioned by
+filename), a day for the two stable-named text files, five minutes for the
+document. The CSP is unchanged.
+
+HSTS deliberately omits `preload`: removal from the preload list takes months
+and `app.patihatti.com` is still unrouted, so it stays out until every
+subdomain that will ever exist is known to be HTTPS-only.
+
+`index.html` gains `fetchpriority="high"` and `decoding="async"` on the hero
+background, which is the LCP element.
+
+### Deliberately not done
+
+- **No `Organization` or `Service` schema.** This is the obvious SEO move and
+  it is the one to refuse: publishing it asserts which legal entity operates
+  the service, and "veri sorumlusu: klinik mi, WEOSA mı, her ikisi mi?" is
+  still an open question in
+  [`onay-paketleri/task-039-kvkk-inceleme-paketi.md`](onay-paketleri/task-039-kvkk-inceleme-paketi.md).
+  The test that forbids `Organization` in the JSON-LD stays as it is, and
+  should stay until legal review answers that question.
+- **No `FAQPage` schema.** It would require relaxing the single-JSON-LD-block
+  rule, and since 2023 Google shows FAQ rich results only for government and
+  health sites, so the expected gain is close to zero.
+- **Meta description and title left alone.** Measured at 147 and 57
+  characters; both already inside the truncation limits. An earlier eyeball
+  estimate of 172 characters was wrong.
+- **The paw cursor is unchanged.** Replacing the I-beam over body text costs
+  the reader the usual "this text is selectable" cue, but it is a deliberate
+  brand decision with a test pinning it, so it is raised here rather than
+  quietly altered.
+- **No `apple-touch-icon` or web manifest.** Both want a 180×180 source and
+  the only icon in the repo is the 32×32 cursor. Adding a new asset was out of
+  this pass's scope.
+- **The 292 KB sprite sheet is untouched.** It is 66 % of the runtime art and
+  loads above the fold as a CSS background, so it competes with LCP. Reducing
+  it means re-encoding art, which belongs in its own task with the owner
+  looking at the result.
+- **No dark mode.** `color-scheme: light` is now declared so browsers stop
+  guessing; an actual dark palette for this warm-paper design is a separate
+  piece of work.
+- **`robots.txt` still carries `Disallow: /privacy`.** Correct while the
+  notice is unpublished, and it must be removed the day the reviewed privacy
+  notice ships, or the page will be unindexable.
+
+### Verification
+
+- `test/homePageAssets.test.ts`: **41 passed**, run against an exact copy of
+  the edited `public/**` and the three Wrangler configs.
+- Headless Chromium at 1920×1080, 1440×900, 1280×720, 1024×768, 834×1112,
+  768×1024, 430×932, 390×844, 375×812, 360×740 and 320×568: no horizontal
+  overflow at any width, minimum gutter 16 px throughout, and the revealed
+  pilot panel has no internal scrollbar at any of them — including the
+  1280×720 and 375×812 sizes this document already named.
+- No console or page errors in the home state or after driving the state
+  machine to `network`.
